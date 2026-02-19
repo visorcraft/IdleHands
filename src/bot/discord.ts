@@ -7,7 +7,7 @@ import {
   type TextBasedChannel,
 } from 'discord.js';
 import { createSession, type AgentSession, type AgentHooks } from '../agent.js';
-import type { ApprovalMode, BotDiscordConfig, IdlehandsConfig, AgentPersona, AgentRouting } from '../types.js';
+import type { ApprovalMode, BotDiscordConfig, IdlehandsConfig, AgentPersona, AgentRouting, ModelEscalation } from '../types.js';
 import { DiscordConfirmProvider } from './confirm-discord.js';
 import { sanitizeBotOutputText } from './format.js';
 import { projectDir } from '../utils.js';
@@ -40,6 +40,10 @@ type ManagedSession = {
   antonAbortSignal: { aborted: boolean } | null;
   antonLastResult: import('../anton/types.js').AntonRunResult | null;
   antonProgress: import('../anton/types.js').AntonProgress | null;
+  // Escalation tracking
+  currentModelIndex: number;  // 0 = base model, 1+ = escalated
+  escalationCount: number;    // how many times escalated this turn
+  pendingEscalation: string | null;  // model to escalate to on next message
 };
 
 function parseAllowedUsers(cfg: BotDiscordConfig): Set<string> {
@@ -247,6 +251,9 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
       antonAbortSignal: null,
       antonLastResult: null,
       antonProgress: null,
+      currentModelIndex: 0,
+      escalationCount: 0,
+      pendingEscalation: null,
     };
     sessions.set(key, managed);
     
@@ -322,6 +329,40 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
     const turn = beginTurn(managed);
     if (!turn) return;
     const turnId = turn.turnId;
+
+    // Handle pending escalation - switch model before processing
+    if (managed.pendingEscalation) {
+      const targetModel = managed.pendingEscalation;
+      managed.pendingEscalation = null;
+      
+      // Find the model index in escalation chain
+      const escalation = managed.agentPersona?.escalation;
+      if (escalation?.models) {
+        const idx = escalation.models.indexOf(targetModel);
+        if (idx !== -1) {
+          managed.currentModelIndex = idx + 1;  // +1 because 0 is base model
+          managed.escalationCount += 1;
+        }
+      }
+      
+      // Recreate session with escalated model
+      const cfg: IdlehandsConfig = {
+        ...managed.config,
+        model: targetModel,
+      };
+      
+      try {
+        await recreateSession(managed, cfg);
+        console.error(`[bot:discord] ${managed.userId} escalated to ${targetModel}`);
+      } catch (e: any) {
+        console.error(`[bot:discord] escalation failed: ${e?.message ?? e}`);
+        // Continue with current model if escalation fails
+      }
+      
+      // Re-acquire turn after recreation
+      const newTurn = beginTurn(managed);
+      if (!newTurn) return;
+    }
 
     const placeholder = await sendUserVisible(msg, '⏳ Thinking...').catch(() => null);
     let streamed = '';
@@ -494,6 +535,8 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
         '/status — Session stats',
         '/agent — Show current agent',
         '/agents — List all configured agents',
+        '/escalate [model] — Use larger model for next message',
+        '/deescalate — Return to base model',
         '/dir [path] — Get/set working directory',
         '/model — Show current model',
         '/approval [mode] — Get/set approval mode',
@@ -738,6 +781,73 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
       }
       
       await sendUserVisible(msg, lines.join('\n')).catch(() => {});
+      return;
+    }
+
+    // /escalate - explicitly escalate to a larger model for next message
+    if (content === '/escalate' || content.startsWith('/escalate ')) {
+      const escalation = managed.agentPersona?.escalation;
+      if (!escalation || !escalation.models?.length) {
+        await sendUserVisible(msg, '❌ No escalation models configured for this agent.').catch(() => {});
+        return;
+      }
+
+      const arg = content.slice('/escalate'.length).trim();
+      
+      // No arg: show available models and current state
+      if (!arg) {
+        const currentModel = managed.config.model || config.model || 'default';
+        const lines = [
+          `**Current model:** \`${currentModel}\``,
+          `**Escalation models:** ${escalation.models.map(m => `\`${m}\``).join(', ')}`,
+          '',
+          'Usage: `/escalate <model>` or `/escalate next`',
+          'Then send your message - it will use the escalated model.',
+        ];
+        if (managed.pendingEscalation) {
+          lines.push('', `⚡ **Pending escalation:** \`${managed.pendingEscalation}\` (next message will use this)`);
+        }
+        await sendUserVisible(msg, lines.join('\n')).catch(() => {});
+        return;
+      }
+
+      // Handle 'next' - escalate to next model in chain
+      let targetModel: string;
+      if (arg.toLowerCase() === 'next') {
+        const nextIndex = Math.min(managed.currentModelIndex, escalation.models.length - 1);
+        targetModel = escalation.models[nextIndex];
+      } else {
+        // Specific model requested
+        if (!escalation.models.includes(arg)) {
+          await sendUserVisible(msg, `❌ Model \`${arg}\` not in escalation chain. Available: ${escalation.models.map(m => `\`${m}\``).join(', ')}`).catch(() => {});
+          return;
+        }
+        targetModel = arg;
+      }
+
+      managed.pendingEscalation = targetModel;
+      await sendUserVisible(msg, `⚡ Next message will use \`${targetModel}\`. Send your request now.`).catch(() => {});
+      return;
+    }
+
+    // /deescalate - return to base model
+    if (content === '/deescalate') {
+      if (managed.currentModelIndex === 0 && !managed.pendingEscalation) {
+        await sendUserVisible(msg, 'Already using base model.').catch(() => {});
+        return;
+      }
+      
+      const baseModel = managed.agentPersona?.model || config.model || 'default';
+      managed.pendingEscalation = null;
+      managed.currentModelIndex = 0;
+      
+      // Recreate session with base model
+      const cfg: IdlehandsConfig = {
+        ...managed.config,
+        model: baseModel,
+      };
+      await recreateSession(managed, cfg);
+      await sendUserVisible(msg, `✅ Returned to base model: \`${baseModel}\``).catch(() => {});
       return;
     }
 

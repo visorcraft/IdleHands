@@ -302,6 +302,19 @@ export type ExecResult = {
 // --- Multi-agent routing (Phase 19) ---
 
 /**
+ * Model escalation configuration for automatic or explicit model upgrades.
+ * Allows a lightweight model to delegate complex tasks to more capable models.
+ */
+export type ModelEscalation = {
+  /** Ordered list of models to escalate to (first = preferred) */
+  models: string[];
+  /** Enable auto-escalation by the model (default: true) */
+  auto?: boolean;
+  /** Maximum escalations per request to prevent loops (default: 1) */
+  max_escalations?: number;
+};
+
+/**
  * Agent persona definition for multi-agent Discord bot routing.
  * Each persona can have its own model, system prompt, and restrictions.
  */
@@ -328,6 +341,8 @@ export type AgentPersona = {
   temperature?: number;
   /** Per-agent top_p override */
   top_p?: number;
+  /** Model escalation configuration for delegating to larger models */
+  escalation?: ModelEscalation;
 };
 
 /**
