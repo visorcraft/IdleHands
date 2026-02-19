@@ -312,6 +312,20 @@ export type ModelEscalation = {
   auto?: boolean;
   /** Maximum escalations per request to prevent loops (default: 1) */
   max_escalations?: number;
+  /** 
+   * Keyword patterns that trigger automatic escalation before the base model runs.
+   * Can be strings (case-insensitive word match) or regex patterns (prefix with "re:").
+   * Examples: ["build", "implement", "re:\\b(create|design)\\s+\\w+\\s+(app|system)"]
+   */
+  keywords?: string[];
+  /**
+   * Preset keyword groups for common escalation triggers.
+   * "coding" = build, implement, create, develop, architect, refactor, debug, fix
+   * "planning" = plan, design, roadmap, strategy, analyze, research
+   * "complex" = full, complete, comprehensive, multi-step, integrate
+   * Can combine multiple: ["coding", "planning"]
+   */
+  keyword_presets?: Array<'coding' | 'planning' | 'complex'>;
 };
 
 /**

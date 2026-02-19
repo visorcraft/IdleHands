@@ -96,6 +96,73 @@ function detectEscalation(text: string): { escalate: boolean; reason?: string } 
   return { escalate: false };
 }
 
+/** Keyword presets for common escalation triggers */
+const KEYWORD_PRESETS: Record<string, string[]> = {
+  coding: ['build', 'implement', 'create', 'develop', 'architect', 'refactor', 'debug', 'fix', 'code', 'program', 'write'],
+  planning: ['plan', 'design', 'roadmap', 'strategy', 'analyze', 'research', 'evaluate', 'compare'],
+  complex: ['full', 'complete', 'comprehensive', 'multi-step', 'integrate', 'migration', 'overhaul', 'entire', 'whole'],
+};
+
+/**
+ * Check if user message matches keyword escalation triggers.
+ * Returns { escalate: true, reason: string } if keywords match.
+ */
+function checkKeywordEscalation(
+  text: string,
+  escalation: ModelEscalation | undefined
+): { escalate: boolean; reason?: string } {
+  if (!escalation) return { escalate: false };
+  
+  const keywords: string[] = [];
+  
+  // Add preset keywords
+  if (escalation.keyword_presets) {
+    for (const preset of escalation.keyword_presets) {
+      const presetWords = KEYWORD_PRESETS[preset];
+      if (presetWords) keywords.push(...presetWords);
+    }
+  }
+  
+  // Add custom keywords
+  if (escalation.keywords) {
+    keywords.push(...escalation.keywords);
+  }
+  
+  if (keywords.length === 0) return { escalate: false };
+  
+  const lowerText = text.toLowerCase();
+  const matchedKeywords: string[] = [];
+  
+  for (const kw of keywords) {
+    if (kw.startsWith('re:')) {
+      // Regex pattern
+      try {
+        const regex = new RegExp(kw.slice(3), 'i');
+        if (regex.test(text)) {
+          matchedKeywords.push(kw);
+        }
+      } catch {
+        // Invalid regex, skip
+      }
+    } else {
+      // Word boundary match (case-insensitive)
+      const wordRegex = new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+      if (wordRegex.test(lowerText)) {
+        matchedKeywords.push(kw);
+      }
+    }
+  }
+  
+  if (matchedKeywords.length > 0) {
+    return { 
+      escalate: true, 
+      reason: `keyword match: ${matchedKeywords.slice(0, 3).join(', ')}${matchedKeywords.length > 3 ? '...' : ''}`
+    };
+  }
+  
+  return { escalate: false };
+}
+
 /**
  * Resolve which agent persona should handle a message.
  * Priority: user > channel > guild > default > first agent > null
@@ -398,6 +465,33 @@ When you escalate, your request will be re-run on a more capable model.`;
       // Re-acquire turn after recreation
       const newTurn = beginTurn(managed);
       if (!newTurn) return;
+    }
+
+    // Check for keyword-based escalation BEFORE calling the base model
+    const escalation = managed.agentPersona?.escalation;
+    if (escalation?.models?.length && managed.currentModelIndex === 0 && managed.escalationCount === 0) {
+      const kwResult = checkKeywordEscalation(msg.content, escalation);
+      if (kwResult.escalate) {
+        const targetModel = escalation.models[0];
+        console.error(`[bot:discord] ${managed.userId} keyword escalation: ${kwResult.reason} → ${targetModel}`);
+        
+        // Set up escalation
+        managed.currentModelIndex = 1;
+        managed.escalationCount = 1;
+        
+        // Recreate session with escalated model
+        const cfg: IdlehandsConfig = {
+          ...managed.config,
+          model: targetModel,
+        };
+        
+        try {
+          await recreateSession(managed, cfg);
+        } catch (e: any) {
+          console.error(`[bot:discord] keyword escalation failed: ${e?.message ?? e}`);
+          // Continue with base model if escalation fails
+        }
+      }
     }
 
     const placeholder = await sendUserVisible(msg, '⏳ Thinking...').catch(() => null);
