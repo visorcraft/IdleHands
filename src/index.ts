@@ -192,7 +192,11 @@ async function main() {
     }
   };
 
-  const { config } = await loadConfig({ configPath, cli: cliCfg });
+  const { config } = await loadConfig({
+    configPath,
+    cli: cliCfg,
+    preferCwdDir: asBool(args.fresh) === true,
+  });
 
   // If a runtime is active, use its endpoint (unless --endpoint was passed explicitly)
   const cliEndpoint = typeof args.endpoint === 'string' ? args.endpoint : undefined;

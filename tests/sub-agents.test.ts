@@ -96,6 +96,53 @@ describe('sub-agent config validation and limits', () => {
     }
   });
 
+  it('blocks spawn_task when user explicitly forbids delegation in the instruction', async () => {
+    let callNo = 0;
+
+    const fakeClient: any = {
+      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async chatStream() {
+        callNo++;
+
+        if (callNo === 1) {
+          return {
+            id: 'p-1',
+            choices: [{
+              index: 0,
+              message: {
+                role: 'assistant',
+                content: '',
+                tool_calls: [spawnCall('delegate anyway')],
+              },
+            }],
+            usage: { prompt_tokens: 10, completion_tokens: 2 },
+          };
+        }
+
+        return {
+          id: 'p-2',
+          choices: [{ index: 0, message: { role: 'assistant', content: 'done directly' } }],
+          usage: { prompt_tokens: 10, completion_tokens: 2 },
+        };
+      },
+    };
+
+    const session = await createSession({
+      config: baseConfig(tmpDir, { sub_agents: { enabled: true } }),
+      runtime: { client: fakeClient },
+    });
+
+    try {
+      await session.ask('Build this yourself. Do NOT use spawn_task or sub-agents.');
+      const toolMsg = session.messages.find((m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn') as any;
+      assert.ok(toolMsg, 'expected spawn_task tool result');
+      assert.ok(String(toolMsg.content ?? '').includes('blocked — user explicitly asked for no delegation/sub-agents'));
+      assert.equal(callNo, 2, 'should not create nested sub-agent model calls when delegation is forbidden');
+    } finally {
+      await session.close();
+    }
+  });
+
   it('honors sub-agent max_iterations/max_tokens/timeout_sec and result_token_cap', async () => {
     let callNo = 0;
     const subMaxTokensSeen: number[] = [];

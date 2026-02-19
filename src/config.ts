@@ -140,6 +140,11 @@ function mergeTrifecta(base: Partial<any> = {}, override: Partial<any> = {}) {
 export async function loadConfig(opts: {
   configPath?: string;
   cli?: Partial<IdlehandsConfig>;
+  /**
+   * When true, prefer process.cwd() as the working dir unless CLI/env explicitly set one.
+   * Used by --fresh to avoid inheriting a stale dir from config.json.
+   */
+  preferCwdDir?: boolean;
 }): Promise<{ config: IdlehandsConfig; configPath: string }> {
   const configPath = opts.configPath ?? defaultConfigPath();
 
@@ -277,6 +282,12 @@ export async function loadConfig(opts: {
   const cliCfg = stripUndef(opts.cli ?? {});
 
   const merged: any = { ...DEFAULTS, ...fileCfg, ...envCfg, ...cliCfg };
+
+  // --fresh should start from current cwd unless user explicitly set dir via CLI/env.
+  // This avoids inheriting stale config.json dir values from prior sessions.
+  if (opts.preferCwdDir && cliCfg.dir === undefined && envCfg.dir === undefined) {
+    merged.dir = process.cwd();
+  }
   const fileTrifecta = (fileCfg as any).trifecta;
   const envTrifecta = (envCfg as any).trifecta;
   const cliTrifecta = (cliCfg as any).trifecta;

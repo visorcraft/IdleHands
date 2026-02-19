@@ -138,6 +138,7 @@ const SYSTEM_PROMPT = `You are a coding agent with filesystem and shell access. 
 Rules:
 - Work in the current directory. Use relative paths for all file operations.
 - Do the work directly. Do NOT use spawn_task to delegate the user's primary request — only use it for genuinely independent subtasks that benefit from parallel execution.
+- Never use spawn_task to bypass confirmation/safety restrictions (for example blocked package installs). If a command is blocked, adapt the plan or ask the user for approval mode changes.
 - Read the target file before editing. You need the exact text for search/replace.
 - Use read_file with search=... to jump to relevant code; avoid reading whole files.
 - Use edit_file for surgical changes. Never rewrite entire files when a targeted edit works.
@@ -850,6 +851,20 @@ function userContentToText(content: UserContent): string {
     .map((p: any) => p.text)
     .join('\n')
     .trim();
+}
+
+function userDisallowsDelegation(content: UserContent): boolean {
+  const text = userContentToText(content).toLowerCase();
+  if (!text) return false;
+
+  const mentionsDelegation = /\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b/.test(text);
+  if (!mentionsDelegation) return false;
+
+  const negationNearDelegation =
+    /\b(?:do not|don't|dont|no|without|avoid|skip|never)\b[^\n.]{0,90}\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b/.test(text) ||
+    /\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b[^\n.]{0,50}\b(?:do not|don't|dont|not allowed|forbidden|no)\b/.test(text);
+
+  return negationNearDelegation;
 }
 
 function supportsVisionModel(model: string, modelMeta: any, harness: Harness): boolean {
@@ -2102,6 +2117,8 @@ export async function createSession(opts: {
       : cfg.max_iterations;
     const wallStart = Date.now();
 
+    const delegationForbiddenByUser = userDisallowsDelegation(instruction);
+
     // Prepend session meta to the first user instruction (§9b: variable context
     // goes in first user message, not system prompt, to preserve KV cache).
     // This avoids two consecutive user messages without an assistant response.
@@ -2228,6 +2245,9 @@ export async function createSession(opts: {
     };
 
     const runSpawnTask = async (args: any): Promise<string> => {
+      if (delegationForbiddenByUser) {
+        throw new Error('spawn_task: blocked — user explicitly asked for no delegation/sub-agents in this request. Continue directly in the current session.');
+      }
       return await runSpawnTaskCore(args, {
         signal: hookObj.signal,
         emitStatus: emitSubAgentStatus,

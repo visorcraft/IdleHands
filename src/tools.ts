@@ -866,6 +866,12 @@ export async function exec(ctx: ToolContext, args: any) {
         throw new Error(`exec: cancelled by user (${verdict.reason}): ${command}`);
       }
     } else {
+      if (verdict.reason === 'package install/remove') {
+        throw new Error(
+          `exec: blocked (${verdict.reason}) without --no-confirm/--yolo: ${command}\n` +
+          `Hint: package installs need explicit approval mode. Re-run the parent session with --no-confirm/--yolo, or ask the user to do so. Do NOT use spawn_task to bypass this restriction.`
+        );
+      }
       throw new Error(`exec: blocked (${verdict.reason}) without --no-confirm/--yolo: ${command}`);
     }
   }

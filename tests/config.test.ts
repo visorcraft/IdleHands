@@ -264,6 +264,23 @@ describe('config resolution: CLI > env > file > defaults', () => {
     assert.equal(config.dir, process.cwd());
   });
 
+  it('preferCwdDir ignores stale file dir when fresh mode is requested', async () => {
+    const cfgPath = path.join(tmpDir, 'fresh-dir-test.json');
+    await fs.writeFile(cfgPath, JSON.stringify({ dir: tmpDir }), 'utf8');
+
+    const originalCwd = process.cwd();
+    const altCwd = await fs.mkdtemp(path.join(os.tmpdir(), 'idlehands-fresh-cwd-'));
+
+    try {
+      process.chdir(altCwd);
+      const { config } = await loadConfig({ configPath: cfgPath, preferCwdDir: true });
+      assert.equal(config.dir, altCwd);
+    } finally {
+      process.chdir(originalCwd);
+      await fs.rm(altCwd, { recursive: true, force: true });
+    }
+  });
+
   it('parses output_format from env', async () => {
     process.env.IDLEHANDS_OUTPUT_FORMAT = 'json';
     try {
