@@ -3004,7 +3004,11 @@ export async function createSession(opts: {
                 const cmd = tc.function.name === 'exec'
                   ? String(parsedArgs?.command ?? '')
                   : String(parsedArgs?.task ?? '');
-                const sig = `${tc.function.name}|${reason}|${cmd}`;
+                const normalizedReason = reason.toLowerCase();
+                const aggregateByReason = normalizedReason.includes('package install/remove');
+                const sig = aggregateByReason
+                  ? `${tc.function.name}|${reason}`
+                  : `${tc.function.name}|${reason}|${cmd}`;
                 const count = (blockedExecAttemptsBySig.get(sig) ?? 0) + 1;
                 blockedExecAttemptsBySig.set(sig, count);
                 if (count >= 2) {
