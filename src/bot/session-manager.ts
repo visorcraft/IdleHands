@@ -4,7 +4,7 @@
  */
 
 import { createSession, type AgentSession } from '../agent.js';
-import type { IdlehandsConfig, BotTelegramConfig, ConfirmationProvider } from '../types.js';
+import type { IdlehandsConfig, BotTelegramConfig, ConfirmationProvider, AgentPersona } from '../types.js';
 import type { AntonRunResult, AntonProgress } from '../anton/types.js';
 
 export type SessionState = 'idle' | 'running' | 'canceling' | 'resetting';
@@ -29,6 +29,14 @@ export type ManagedSession = {
   antonAbortSignal: { aborted: boolean } | null;
   antonLastResult: AntonRunResult | null;
   antonProgress: AntonProgress | null;
+  // Multi-agent routing
+  agentId: string;
+  agentPersona: AgentPersona | null;
+  // Escalation tracking
+  currentModelIndex: number;  // 0 = base model, 1+ = escalated
+  escalationCount: number;    // how many times escalated this turn
+  pendingEscalation: string | null;  // model to escalate to on next message
+  pendingEscalationEndpoint: string | null;  // endpoint override for pending escalation
 };
 
 export class SessionManager {
@@ -79,6 +87,52 @@ export class SessionManager {
     return this.sessions.has(chatId);
   }
 
+  /**
+   * Resolve which agent persona should handle a message.
+   * Priority: user > chat > default > first agent > null
+   */
+  resolveAgent(chatId: number, userId: number): { agentId: string; persona: AgentPersona | null } {
+    const agents = this.botConfig.agents;
+    const routing = this.botConfig.routing;
+    const agentMap = agents ?? {};
+    const agentIds = Object.keys(agentMap);
+
+    // No agents configured — return null persona (use global config)
+    if (agentIds.length === 0) {
+      return { agentId: '_default', persona: null };
+    }
+
+    const route = routing ?? {};
+    let resolvedId: string | undefined;
+
+    // Priority 1: User-specific routing
+    if (route.users && route.users[String(userId)]) {
+      resolvedId = route.users[String(userId)];
+    }
+    // Priority 2: Chat-specific routing
+    else if (route.chats && route.chats[String(chatId)]) {
+      resolvedId = route.chats[String(chatId)];
+    }
+    // Priority 3: Default agent
+    else if (route.default) {
+      resolvedId = route.default;
+    }
+    // Priority 4: First defined agent
+    else {
+      resolvedId = agentIds[0];
+    }
+
+    // Validate the resolved agent exists
+    const persona = agentMap[resolvedId];
+    if (!persona) {
+      // Fallback to first agent if routing points to non-existent agent
+      const fallbackId = agentIds[0];
+      return { agentId: fallbackId, persona: agentMap[fallbackId] ?? null };
+    }
+
+    return { agentId: resolvedId, persona };
+  }
+
   /** Get or create a session for a chat. Returns null if at max capacity. */
   async getOrCreate(chatId: number, userId: number): Promise<ManagedSession | null> {
     const existing = this.sessions.get(chatId);
@@ -91,13 +145,47 @@ export class SessionManager {
       return null;
     }
 
-    const workingDir = this.botConfig.default_dir || this.baseConfig.dir || process.cwd();
-    const approvalMode = (this.botConfig.approval_mode as any) || this.baseConfig.approval_mode || 'auto-edit';
+    // Resolve which agent should handle this chat
+    const { agentId, persona } = this.resolveAgent(chatId, userId);
+
+    const workingDir = persona?.default_dir || persona?.allowed_dirs?.[0] || this.botConfig.default_dir || this.baseConfig.dir || process.cwd();
+    const approvalMode = persona?.approval_mode || (this.botConfig.approval_mode as any) || this.baseConfig.approval_mode || 'auto-edit';
+    
+    // Build system prompt with escalation instructions if configured
+    let systemPrompt = persona?.system_prompt;
+    if (persona?.escalation?.models?.length && persona?.escalation?.auto !== false) {
+      const escalationModels = persona.escalation.models.join(', ');
+      const escalationInstructions = `
+
+[AUTO-ESCALATION]
+You have access to more powerful models when needed: ${escalationModels}
+If you encounter a task that is too complex, requires deeper reasoning, or you're struggling to solve, 
+you can escalate by including this exact marker at the START of your response:
+[ESCALATE: brief reason]
+
+Examples:
+- [ESCALATE: complex algorithm requiring multi-step reasoning]
+- [ESCALATE: need larger context window for this codebase analysis]
+- [ESCALATE: struggling with this optimization problem]
+
+Only escalate when genuinely needed. Most tasks should be handled by your current model.
+When you escalate, your request will be re-run on a more capable model.`;
+      
+      systemPrompt = (systemPrompt || '') + escalationInstructions;
+    }
+
     const config: IdlehandsConfig = {
       ...this.baseConfig,
       dir: workingDir,
       approval_mode: approvalMode,
       no_confirm: approvalMode === 'yolo',
+      // Agent-specific overrides
+      ...(persona?.model && { model: persona.model }),
+      ...(persona?.endpoint && { endpoint: persona.endpoint }),
+      ...(systemPrompt && { system_prompt_override: systemPrompt }),
+      ...(persona?.max_tokens && { max_tokens: persona.max_tokens }),
+      ...(persona?.temperature !== undefined && { temperature: persona.temperature }),
+      ...(persona?.top_p !== undefined && { top_p: persona.top_p }),
     };
 
     const confirmProvider = this.makeConfirmProvider?.(chatId, userId);
@@ -123,9 +211,21 @@ export class SessionManager {
       antonAbortSignal: null,
       antonLastResult: null,
       antonProgress: null,
+      agentId,
+      agentPersona: persona,
+      currentModelIndex: 0,
+      escalationCount: 0,
+      pendingEscalation: null,
+      pendingEscalationEndpoint: null,
     };
 
     this.sessions.set(chatId, managed);
+    
+    // Log agent assignment for debugging
+    if (persona) {
+      console.error(`[bot:telegram] ${userId} → agent:${agentId} (${persona.display_name || agentId})`);
+    }
+    
     return managed;
   }
 
@@ -216,6 +316,36 @@ export class SessionManager {
     return true;
   }
 
+  /** Recreate a session with new config (used for escalation). */
+  async recreateSession(chatId: number, newConfig: Partial<IdlehandsConfig>): Promise<boolean> {
+    const managed = this.sessions.get(chatId);
+    if (!managed) return false;
+
+    managed.state = 'resetting';
+    managed.pendingQueue = [];
+    try { managed.activeAbortController?.abort(); } catch {}
+    try { managed.session.cancel(); } catch {}
+
+    const config: IdlehandsConfig = {
+      ...managed.config,
+      ...newConfig,
+    };
+
+    const confirmProvider = this.makeConfirmProvider?.(chatId, managed.userId);
+    const session = await createSession({ config, confirmProvider });
+
+    managed.session = session;
+    managed.config = config;
+    managed.confirmProvider = confirmProvider;
+    managed.inFlight = false;
+    managed.state = 'idle';
+    managed.activeAbortController = null;
+    managed.lastProgressAt = 0;
+    managed.lastActivity = Date.now();
+
+    return true;
+  }
+
   /** Change the working directory for a session. */
   async setDir(chatId: number, dir: string): Promise<boolean> {
     const managed = this.sessions.get(chatId);
@@ -262,6 +392,13 @@ export class SessionManager {
       antonAbortSignal: null,
       antonLastResult: null,
       antonProgress: null,
+      // Preserve multi-agent state
+      agentId: managed.agentId,
+      agentPersona: managed.agentPersona,
+      currentModelIndex: managed.currentModelIndex,
+      escalationCount: managed.escalationCount,
+      pendingEscalation: managed.pendingEscalation,
+      pendingEscalationEndpoint: managed.pendingEscalationEndpoint,
     });
     return true;
   }

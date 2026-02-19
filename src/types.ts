@@ -299,6 +299,120 @@ export type ExecResult = {
 
 // --- Bot config (Phase 8.5) ---
 
+// --- Multi-agent routing (Phase 19) ---
+
+/**
+ * Model escalation configuration for automatic or explicit model upgrades.
+ * Allows a lightweight model to delegate complex tasks to more capable models.
+ */
+/**
+ * Keyword tier configuration for tiered model escalation.
+ * Each tier maps to the corresponding model in the escalation chain.
+ */
+export type KeywordTier = {
+  /** 
+   * Keyword patterns for this tier.
+   * Can be strings (case-insensitive word match) or regex patterns (prefix with "re:").
+   */
+  keywords?: string[];
+  /**
+   * Preset keyword groups for this tier.
+   * "coding" = build, implement, create, develop, architect, refactor, debug, fix
+   * "planning" = plan, design, roadmap, strategy, analyze, research
+   * "complex" = full, complete, comprehensive, multi-step, integrate
+   */
+  keyword_presets?: Array<'coding' | 'planning' | 'complex'>;
+  /**
+   * Endpoint override for this tier. Falls back to global config.endpoint.
+   */
+  endpoint?: string;
+};
+
+export type ModelEscalation = {
+  /** Ordered list of models to escalate to (first = preferred) */
+  models: string[];
+  /** Enable auto-escalation by the model (default: true) */
+  auto?: boolean;
+  /** Maximum escalations per request to prevent loops (default: 1) */
+  max_escalations?: number;
+  /** 
+   * Keyword patterns that trigger automatic escalation before the base model runs.
+   * Can be strings (case-insensitive word match) or regex patterns (prefix with "re:").
+   * Examples: ["build", "implement", "re:\\b(create|design)\\s+\\w+\\s+(app|system)"]
+   * @deprecated Use `tiers` for multi-tier escalation. This is treated as tier 0.
+   */
+  keywords?: string[];
+  /**
+   * Preset keyword groups for common escalation triggers.
+   * "coding" = build, implement, create, develop, architect, refactor, debug, fix
+   * "planning" = plan, design, roadmap, strategy, analyze, research
+   * "complex" = full, complete, comprehensive, multi-step, integrate
+   * Can combine multiple: ["coding", "planning"]
+   * @deprecated Use `tiers` for multi-tier escalation. This is treated as tier 0.
+   */
+  keyword_presets?: Array<'coding' | 'planning' | 'complex'>;
+  /**
+   * Tiered keyword escalation. Each tier maps to the corresponding model in `models`.
+   * Tier 0 keywords → models[0], Tier 1 → models[1], etc.
+   * Highest matching tier wins. If defined, overrides root-level keywords/keyword_presets.
+   * 
+   * Example:
+   * ```json
+   * "tiers": [
+   *   { "keyword_presets": ["coding"] },
+   *   { "keyword_presets": ["complex", "planning"], "keywords": ["architect"] }
+   * ]
+   * ```
+   */
+  tiers?: KeywordTier[];
+};
+
+/**
+ * Agent persona definition for multi-agent Discord bot routing.
+ * Each persona can have its own model, system prompt, and restrictions.
+ */
+export type AgentPersona = {
+  /** Unique identifier for this agent (used in routing) */
+  id: string;
+  /** Display name shown in /agent and /status commands */
+  display_name?: string;
+  /** Model override (e.g., "qwen3-coder-next"). Falls back to global config.model */
+  model?: string;
+  /** Endpoint override. Falls back to global config.endpoint */
+  endpoint?: string;
+  /** Custom system prompt for this agent's personality */
+  system_prompt?: string;
+  /** Per-agent approval mode */
+  approval_mode?: ApprovalMode;
+  /** Restrict this agent to specific directories */
+  allowed_dirs?: string[];
+  /** Default working directory for this agent */
+  default_dir?: string;
+  /** Per-agent max tokens override */
+  max_tokens?: number;
+  /** Per-agent temperature override */
+  temperature?: number;
+  /** Per-agent top_p override */
+  top_p?: number;
+  /** Model escalation configuration for delegating to larger models */
+  escalation?: ModelEscalation;
+};
+
+/**
+ * Routing rules for multi-agent Discord bot.
+ * Priority: user > channel > guild > default
+ */
+export type AgentRouting = {
+  /** Default agent id when no other rule matches */
+  default?: string;
+  /** Map of Discord user id → agent id */
+  users?: Record<string, string>;
+  /** Map of Discord channel id → agent id */
+  channels?: Record<string, string>;
+  /** Map of Discord guild id → agent id */
+  guilds?: Record<string, string>;
+};
+
 export type BotTelegramConfig = {
   token?: string;
   allowed_users?: number[];
@@ -316,6 +430,23 @@ export type BotTelegramConfig = {
   allow_groups?: boolean;
   /** When true, bot replies are sent as Telegram native replies to the triggering message. Default: false. */
   reply_to_user_messages?: boolean;
+  /** Multi-agent personas. Key is agent id. */
+  agents?: Record<string, AgentPersona>;
+  /** Routing rules for multi-agent mode. */
+  routing?: TelegramAgentRouting;
+};
+
+/**
+ * Routing rules for multi-agent Telegram bot.
+ * Priority: user > chat > default
+ */
+export type TelegramAgentRouting = {
+  /** Default agent id when no other rule matches */
+  default?: string;
+  /** Map of Telegram user id → agent id */
+  users?: Record<string, string>;
+  /** Map of Telegram chat id → agent id */
+  chats?: Record<string, string>;
 };
 
 export type BotDiscordConfig = {
@@ -332,6 +463,10 @@ export type BotDiscordConfig = {
   guild_id?: string;
   /** When true, bot replies use Discord native reply threading to the triggering message. Default: false. */
   reply_to_user_messages?: boolean;
+  /** Multi-agent personas. Key is agent id. */
+  agents?: Record<string, AgentPersona>;
+  /** Routing rules for multi-agent mode. */
+  routing?: AgentRouting;
 };
 
 export type BotConfig = {
