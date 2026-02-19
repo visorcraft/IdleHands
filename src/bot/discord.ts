@@ -7,7 +7,7 @@ import {
   type TextBasedChannel,
 } from 'discord.js';
 import { createSession, type AgentSession, type AgentHooks } from '../agent.js';
-import type { ApprovalMode, BotDiscordConfig, IdlehandsConfig } from '../types.js';
+import type { ApprovalMode, BotDiscordConfig, IdlehandsConfig, AgentPersona, AgentRouting } from '../types.js';
 import { DiscordConfirmProvider } from './confirm-discord.js';
 import { sanitizeBotOutputText } from './format.js';
 import { projectDir } from '../utils.js';
@@ -23,6 +23,8 @@ type SessionState = 'idle' | 'running' | 'canceling' | 'resetting';
 type ManagedSession = {
   key: string;
   userId: string;
+  agentId: string;
+  agentPersona: AgentPersona | null;
   channel: TextBasedChannel;
   session: AgentSession;
   confirmProvider: DiscordConfirmProvider;
@@ -77,13 +79,66 @@ function safeContent(text: string): string {
   return t.length ? t : '(empty response)';
 }
 
-function sessionKeyForMessage(msg: Message, allowGuilds: boolean): string {
-  if (allowGuilds) {
-    // Per-channel+user session in guilds so multiple users can safely coexist.
-    return `${msg.channelId}:${msg.author.id}`;
+/**
+ * Resolve which agent persona should handle a message.
+ * Priority: user > channel > guild > default > first agent > null
+ */
+function resolveAgentForMessage(
+  msg: Message,
+  agents: Record<string, AgentPersona> | undefined,
+  routing: AgentRouting | undefined
+): { agentId: string; persona: AgentPersona | null } {
+  const agentMap = agents ?? {};
+  const agentIds = Object.keys(agentMap);
+  
+  // No agents configured — return null persona (use global config)
+  if (agentIds.length === 0) {
+    return { agentId: '_default', persona: null };
   }
-  // DM-only mode uses user id as session key.
-  return msg.author.id;
+
+  const route = routing ?? {};
+  let resolvedId: string | undefined;
+
+  // Priority 1: User-specific routing
+  if (route.users && route.users[msg.author.id]) {
+    resolvedId = route.users[msg.author.id];
+  }
+  // Priority 2: Channel-specific routing
+  else if (route.channels && route.channels[msg.channelId]) {
+    resolvedId = route.channels[msg.channelId];
+  }
+  // Priority 3: Guild-specific routing
+  else if (msg.guildId && route.guilds && route.guilds[msg.guildId]) {
+    resolvedId = route.guilds[msg.guildId];
+  }
+  // Priority 4: Default agent
+  else if (route.default) {
+    resolvedId = route.default;
+  }
+  // Priority 5: First defined agent
+  else {
+    resolvedId = agentIds[0];
+  }
+
+  // Validate the resolved agent exists
+  const persona = agentMap[resolvedId];
+  if (!persona) {
+    // Fallback to first agent if routing points to non-existent agent
+    const fallbackId = agentIds[0];
+    return { agentId: fallbackId, persona: agentMap[fallbackId] ?? null };
+  }
+
+  return { agentId: resolvedId, persona };
+}
+
+function sessionKeyForMessage(msg: Message, allowGuilds: boolean, agentId: string): string {
+  // Include agentId in session key so switching agents creates a new session
+  if (allowGuilds) {
+    // Per-agent+channel+user session in guilds
+    return `${agentId}:${msg.channelId}:${msg.author.id}`;
+  }
+  // DM-only mode: per-agent+user session
+  return `${agentId}:${msg.author.id}`;
 }
 
 export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDiscordConfig): Promise<void> {
@@ -126,7 +181,10 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
   };
 
   async function getOrCreate(msg: Message): Promise<ManagedSession | null> {
-    const key = sessionKeyForMessage(msg, allowGuilds);
+    // Resolve which agent should handle this message
+    const { agentId, persona } = resolveAgentForMessage(msg, botConfig.agents, botConfig.routing);
+    const key = sessionKeyForMessage(msg, allowGuilds, agentId);
+    
     const existing = sessions.get(key);
     if (existing) {
       existing.lastActivity = Date.now();
@@ -137,11 +195,24 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
       return null;
     }
 
+    // Build config with agent-specific overrides
+    const agentDir = persona?.default_dir || persona?.allowed_dirs?.[0] || defaultDir;
+    const agentApproval = persona?.approval_mode 
+      ? normalizeApprovalMode(persona.approval_mode, approvalMode)
+      : approvalMode;
+
     const cfg: IdlehandsConfig = {
       ...config,
-      dir: defaultDir,
-      approval_mode: approvalMode,
-      no_confirm: approvalMode === 'yolo',
+      dir: agentDir,
+      approval_mode: agentApproval,
+      no_confirm: agentApproval === 'yolo',
+      // Agent-specific overrides
+      ...(persona?.model && { model: persona.model }),
+      ...(persona?.endpoint && { endpoint: persona.endpoint }),
+      ...(persona?.system_prompt && { system_prompt_override: persona.system_prompt }),
+      ...(persona?.max_tokens && { max_tokens: persona.max_tokens }),
+      ...(persona?.temperature !== undefined && { temperature: persona.temperature }),
+      ...(persona?.top_p !== undefined && { top_p: persona.top_p }),
     };
 
     const confirmProvider = new DiscordConfirmProvider(
@@ -159,6 +230,8 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
     const managed: ManagedSession = {
       key,
       userId: msg.author.id,
+      agentId,
+      agentPersona: persona,
       channel: msg.channel,
       session,
       confirmProvider,
@@ -176,6 +249,12 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
       antonProgress: null,
     };
     sessions.set(key, managed);
+    
+    // Log agent assignment for debugging
+    if (persona) {
+      console.error(`[bot:discord] ${msg.author.id} → agent:${agentId} (${persona.display_name || agentId})`);
+    }
+    
     return managed;
   }
 
@@ -341,6 +420,16 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
     if (allowGuilds) {
       console.error(`[bot:discord] Guild mode enabled${guildId ? ` (guild ${guildId})` : ''}`);
     }
+    // Log multi-agent config
+    const agents = botConfig.agents;
+    if (agents && Object.keys(agents).length > 0) {
+      const agentIds = Object.keys(agents);
+      console.error(`[bot:discord] Multi-agent mode: ${agentIds.length} agents configured [${agentIds.join(', ')}]`);
+      const routing = botConfig.routing;
+      if (routing?.default) {
+        console.error(`[bot:discord] Default agent: ${routing.default}`);
+      }
+    }
   });
 
   client.on(Events.MessageCreate, async (msg) => {
@@ -353,11 +442,15 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
     const content = msg.content?.trim();
     if (!content) return;
 
-    const key = sessionKeyForMessage(msg, allowGuilds);
+    // Resolve agent for this message to get the correct session key
+    const { agentId, persona } = resolveAgentForMessage(msg, botConfig.agents, botConfig.routing);
+    const key = sessionKeyForMessage(msg, allowGuilds, agentId);
 
     if (content === '/new') {
       destroySession(key);
-      await sendUserVisible(msg, '✨ New session started. Send a message to begin.').catch(() => {});
+      const agentName = persona?.display_name || agentId;
+      const agentMsg = persona ? ` (agent: ${agentName})` : '';
+      await sendUserVisible(msg, `✨ New session started${agentMsg}. Send a message to begin.`).catch(() => {});
       return;
     }
 
@@ -374,9 +467,13 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
     }
 
     if (content === '/start') {
+      const agentLine = managed.agentPersona 
+        ? `Agent: **${managed.agentPersona.display_name || managed.agentId}**`
+        : null;
       const lines = [
         '🔧 Idle Hands — Local-first coding agent',
         '',
+        ...(agentLine ? [agentLine] : []),
         `Model: \`${managed.session.model}\``,
         `Endpoint: \`${managed.config.endpoint || '?'}\``,
         `Default dir: \`${managed.config.dir || defaultDir}\``,
@@ -395,6 +492,8 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
         '/new — Start a new session',
         '/cancel — Abort current generation',
         '/status — Session stats',
+        '/agent — Show current agent',
+        '/agents — List all configured agents',
         '/dir [path] — Get/set working directory',
         '/model — Show current model',
         '/approval [mode] — Get/set approval mode',
@@ -571,8 +670,12 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
       const pct = managed.session.contextWindow > 0
         ? ((used / managed.session.contextWindow) * 100).toFixed(1)
         : '?';
+      const agentLine = managed.agentPersona 
+        ? `Agent: ${managed.agentPersona.display_name || managed.agentId}`
+        : null;
       await sendUserVisible(msg, 
         [
+          ...(agentLine ? [agentLine] : []),
           `Mode: ${managed.config.mode ?? 'code'}`,
           `Approval: ${managed.config.approval_mode}`,
           `Model: ${managed.session.model}`,
@@ -582,6 +685,59 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
           `Queue: ${managed.pendingQueue.length}/${maxQueue}`,
         ].join('\n'),
       ).catch(() => {});
+      return;
+    }
+
+    // /agent - show current agent info
+    if (content === '/agent') {
+      if (!managed.agentPersona) {
+        await sendUserVisible(msg, 'No agent configured. Using global config.').catch(() => {});
+        return;
+      }
+      const p = managed.agentPersona;
+      const lines = [
+        `**Agent: ${p.display_name || managed.agentId}** (\`${managed.agentId}\`)`,
+        ...(p.model ? [`Model: \`${p.model}\``] : []),
+        ...(p.endpoint ? [`Endpoint: \`${p.endpoint}\``] : []),
+        ...(p.approval_mode ? [`Approval: \`${p.approval_mode}\``] : []),
+        ...(p.default_dir ? [`Default dir: \`${p.default_dir}\``] : []),
+        ...(p.allowed_dirs?.length ? [`Allowed dirs: ${p.allowed_dirs.map(d => `\`${d}\``).join(', ')}`] : []),
+      ];
+      await sendUserVisible(msg, lines.join('\n')).catch(() => {});
+      return;
+    }
+
+    // /agents - list all configured agents
+    if (content === '/agents') {
+      const agents = botConfig.agents;
+      if (!agents || Object.keys(agents).length === 0) {
+        await sendUserVisible(msg, 'No agents configured. Using global config.').catch(() => {});
+        return;
+      }
+      const lines = ['**Configured Agents:**'];
+      for (const [id, p] of Object.entries(agents)) {
+        const current = id === managed.agentId ? ' ← current' : '';
+        const model = p.model ? ` (${p.model})` : '';
+        lines.push(`• **${p.display_name || id}** (\`${id}\`)${model}${current}`);
+      }
+      
+      // Show routing rules
+      const routing = botConfig.routing;
+      if (routing) {
+        lines.push('', '**Routing:**');
+        if (routing.default) lines.push(`Default: \`${routing.default}\``);
+        if (routing.users && Object.keys(routing.users).length > 0) {
+          lines.push(`Users: ${Object.entries(routing.users).map(([u, a]) => `${u}→${a}`).join(', ')}`);
+        }
+        if (routing.channels && Object.keys(routing.channels).length > 0) {
+          lines.push(`Channels: ${Object.entries(routing.channels).map(([c, a]) => `${c}→${a}`).join(', ')}`);
+        }
+        if (routing.guilds && Object.keys(routing.guilds).length > 0) {
+          lines.push(`Guilds: ${Object.entries(routing.guilds).map(([g, a]) => `${g}→${a}`).join(', ')}`);
+        }
+      }
+      
+      await sendUserVisible(msg, lines.join('\n')).catch(() => {});
       return;
     }
 
