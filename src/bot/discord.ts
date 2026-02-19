@@ -429,9 +429,9 @@ When you escalate, your request will be re-run on a more capable model.`;
   }
 
   async function processMessage(managed: ManagedSession, msg: Message): Promise<void> {
-    const turn = beginTurn(managed);
+    let turn = beginTurn(managed);
     if (!turn) return;
-    const turnId = turn.turnId;
+    let turnId = turn.turnId;
 
     // Handle pending escalation - switch model before processing
     if (managed.pendingEscalation) {
@@ -462,9 +462,11 @@ When you escalate, your request will be re-run on a more capable model.`;
         // Continue with current model if escalation fails
       }
       
-      // Re-acquire turn after recreation
+      // Re-acquire turn after recreation - must update turnId!
       const newTurn = beginTurn(managed);
       if (!newTurn) return;
+      turn = newTurn;
+      turnId = newTurn.turnId;
     }
 
     // Check for keyword-based escalation BEFORE calling the base model
