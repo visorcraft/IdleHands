@@ -1,0 +1,822 @@
+import { setTimeout as delay } from 'node:timers/promises';
+import { ChatCompletionResponse, ChatMessage, ModelsResponse, ToolSchema } from './types.js';
+
+export type ClientError = Error & {
+  status?: number;
+  retryable?: boolean;
+};
+
+function makeClientError(msg: string, status?: number, retryable?: boolean): ClientError {
+  const e = new Error(msg) as ClientError;
+  e.status = status;
+  e.retryable = retryable;
+  return e;
+}
+
+function isConnRefused(e: any): boolean {
+  const msg = String(e?.message ?? '');
+  // Node fetch sometimes throws `TypeError: fetch failed` for transient network errors.
+  // Treat it as retryable in the same bucket as ECONNREFUSED.
+  return e?.cause?.code === 'ECONNREFUSED' || /ECONNREFUSED|fetch failed/i.test(msg);
+}
+
+function isFetchFailed(e: any): boolean {
+  return /fetch failed/i.test(String(e?.message ?? ''));
+}
+
+function isConnTimeout(e: any): boolean {
+  const msg = String(e?.message ?? '');
+  return Boolean(e?.retryable) && /Connection timeout \(\d+ms\)/i.test(msg);
+}
+
+function asError(e: unknown, fallback = 'unknown error'): Error {
+  if (e instanceof Error) return e;
+  if (e === undefined) return new Error(fallback);
+  return new Error(String(e));
+}
+
+// ─── Rate Limiter ────────────────────────────────────────
+
+/**
+ * Track 503 errors over a rolling 60s window.
+ * When count exceeds threshold, imposes escalating back-off.
+ */
+export class RateLimiter {
+  private timestamps: number[] = [];
+  private backoffLevel = 0;
+
+  constructor(
+    readonly windowMs = 60_000,
+    readonly threshold = 5,
+    readonly maxBackoffMs = 60_000
+  ) {}
+
+  record503(): void {
+    this.timestamps.push(Date.now());
+    this.prune();
+    if (this.timestamps.length >= this.threshold) {
+      this.backoffLevel = Math.min(this.backoffLevel + 1, 6);
+    }
+  }
+
+  private prune(): void {
+    const cutoff = Date.now() - this.windowMs;
+    this.timestamps = this.timestamps.filter((t) => t > cutoff);
+  }
+
+  /** Returns delay in ms to wait before next request (0 = no delay). */
+  getDelay(): number {
+    this.prune();
+    if (this.timestamps.length < this.threshold) {
+      // Decay backoff level when window clears
+      if (this.timestamps.length === 0) this.backoffLevel = 0;
+      return 0;
+    }
+    // Exponential: 2^level * 1000, capped at maxBackoffMs
+    return Math.min(Math.pow(2, this.backoffLevel) * 1000, this.maxBackoffMs);
+  }
+
+  get recentCount(): number {
+    this.prune();
+    return this.timestamps.length;
+  }
+
+  reset(): void {
+    this.timestamps = [];
+    this.backoffLevel = 0;
+  }
+}
+
+// ─── Backpressure Monitor ─────────────────────────────────
+
+/**
+ * Track response times and detect backpressure (server overload).
+ * Warns when response time exceeds 3× rolling average.
+ */
+export class BackpressureMonitor {
+  private times: number[] = [];
+  private readonly maxSamples: number;
+  readonly multiplier: number;
+
+  constructor(opts?: { maxSamples?: number; multiplier?: number }) {
+    this.maxSamples = opts?.maxSamples ?? 20;
+    this.multiplier = opts?.multiplier ?? 3;
+  }
+
+  record(responseMs: number): { warn: boolean; avg: number; current: number } {
+    const avg = this.average;
+    this.times.push(responseMs);
+    if (this.times.length > this.maxSamples) {
+      this.times.shift();
+    }
+
+    // Need at least 3 samples before we judge
+    if (this.times.length < 3) return { warn: false, avg, current: responseMs };
+
+    const warn = avg > 0 && responseMs > avg * this.multiplier;
+    return { warn, avg, current: responseMs };
+  }
+
+  get average(): number {
+    if (this.times.length === 0) return 0;
+    return this.times.reduce((a, b) => a + b, 0) / this.times.length;
+  }
+
+  get samples(): number {
+    return this.times.length;
+  }
+
+  reset(): void {
+    this.times = [];
+  }
+}
+
+export type ExchangeRecord = {
+  timestamp: string;
+  request: Record<string, unknown>;
+  response: Record<string, unknown>;
+  metrics?: {
+    total_ms?: number;
+    ttft_ms?: number;
+    tg_speed?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+  };
+};
+
+export class OpenAIClient {
+  readonly rateLimiter = new RateLimiter();
+  readonly backpressure = new BackpressureMonitor();
+  private exchangeHook?: (record: ExchangeRecord) => void | Promise<void>;
+
+  /** Default response timeout in ms (overridable per-call). */
+  private defaultResponseTimeoutMs = 600_000;
+
+  constructor(
+    private endpoint: string,
+    private readonly apiKey?: string,
+    private verbose: boolean = false
+  ) {}
+
+  /** Set the default response timeout (in seconds) for all requests. */
+  setResponseTimeout(seconds: number): void {
+    if (Number.isFinite(seconds) && seconds > 0) {
+      this.defaultResponseTimeoutMs = seconds * 1000;
+    }
+  }
+
+  setVerbose(v: boolean): void {
+    this.verbose = v;
+  }
+
+  setEndpoint(endpoint: string): void {
+    this.endpoint = endpoint.replace(/\/+$/, '');
+  }
+
+  getEndpoint(): string {
+    return this.endpoint;
+  }
+
+  setExchangeHook(fn?: (record: ExchangeRecord) => void | Promise<void>): void {
+    this.exchangeHook = fn;
+  }
+
+  private emitExchange(record: ExchangeRecord): void {
+    if (!this.exchangeHook) return;
+    void Promise.resolve(this.exchangeHook(record)).catch(() => {});
+  }
+
+  private rootEndpoint(): string {
+    return this.endpoint.replace(/\/v1\/?$/, '');
+  }
+
+  private headers() {
+    const h: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    if (this.apiKey) h.Authorization = `Bearer ${this.apiKey}`;
+    return h;
+  }
+
+  private log(msg: string) {
+    if (this.verbose) console.error(`[idlehands] ${msg}`);
+  }
+
+  async models(signal?: AbortSignal): Promise<ModelsResponse> {
+    const url = `${this.endpoint}/models`;
+    const res = await this.fetchWithConnTimeout(url, { method: 'GET', headers: this.headers(), signal }, 10_000);
+    if (!res.ok) {
+      throw new Error(`GET /models failed: ${res.status} ${res.statusText}`);
+    }
+    return (await res.json()) as ModelsResponse;
+  }
+
+  async health(signal?: AbortSignal): Promise<any> {
+    const url = `${this.rootEndpoint()}/health`;
+    const res = await this.fetchWithConnTimeout(url, { method: 'GET', headers: this.headers(), signal }, 5_000);
+    if (!res.ok) {
+      throw makeClientError(`GET /health failed: ${res.status} ${res.statusText}`, res.status, true);
+    }
+
+    const ct = String(res.headers.get('content-type') ?? '');
+    if (ct.includes('application/json')) {
+      return await res.json();
+    }
+
+    const text = await res.text();
+    return { status: 'ok', raw: text };
+  }
+
+  async waitForReady(opts?: { timeoutMs?: number; pollMs?: number }) {
+    const timeoutMs = opts?.timeoutMs ?? 120_000;
+    const pollMs = opts?.pollMs ?? 2000;
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        await this.models();
+        return;
+      } catch {
+        // keep waiting
+      }
+      await delay(pollMs);
+    }
+    throw makeClientError(`Server not ready after ${timeoutMs}ms (${this.endpoint})`, undefined, true);
+  }
+
+  sanitizeRequest(body: any) {
+    delete body.store;
+    delete body.reasoning_effort;
+    delete body.stream_options;
+
+    if (Array.isArray(body.messages)) {
+      for (const m of body.messages) {
+        if (m?.role === 'developer') m.role = 'system';
+      }
+    }
+
+    if (body.max_completion_tokens != null && body.max_tokens == null) {
+      body.max_tokens = body.max_completion_tokens;
+    }
+    delete body.max_completion_tokens;
+
+    if (Array.isArray(body.tools)) {
+      for (const t of body.tools) {
+        if (t?.function) {
+          if ('strict' in t.function) delete t.function.strict;
+          if (t.function.parameters && 'strict' in t.function.parameters) {
+            delete t.function.parameters.strict;
+          }
+        }
+      }
+    }
+
+    return body;
+  }
+
+  private buildBody(opts: {
+    model: string;
+    messages: ChatMessage[];
+    tools?: ToolSchema[];
+    tool_choice?: any;
+    temperature?: number;
+    top_p?: number;
+    max_tokens?: number;
+    stream?: boolean;
+    extra?: Record<string, unknown>;
+  }): any {
+    const body: any = {
+      model: opts.model,
+      messages: opts.messages.map((m) => ({ ...m })),  // shallow copy to avoid mutating session state
+      temperature: opts.temperature,
+      top_p: opts.top_p,
+      max_tokens: opts.max_tokens,
+      tools: opts.tools,
+      tool_choice: opts.tool_choice,
+      stream: opts.stream ?? false,
+      ...opts.extra
+    };
+    for (const k of Object.keys(body)) {
+      if (body[k] === undefined) delete body[k];
+    }
+    return this.sanitizeRequest(body);
+  }
+
+  /** Wrap fetch with a connection timeout derived from response_timeout (min 30s). */
+  private async fetchWithConnTimeout(url: string, init: RequestInit, connTimeoutMs?: number): Promise<Response> {
+    // Connection timeout = min(response_timeout, 60s), floor 30s — enough to establish TCP but not wait forever.
+    if (!connTimeoutMs) connTimeoutMs = Math.max(30_000, Math.min(this.defaultResponseTimeoutMs, 60_000));
+
+    const ac = new AbortController();
+    const chainedAbort = init.signal;
+    // If the caller's signal fires, propagate to our controller.
+    const onCallerAbort = () => ac.abort();
+    chainedAbort?.addEventListener('abort', onCallerAbort, { once: true });
+    const timer = setTimeout(() => ac.abort(), connTimeoutMs);
+    try {
+      const res = await fetch(url, { ...init, signal: ac.signal });
+      clearTimeout(timer);
+      return res;
+    } catch (e: any) {
+      clearTimeout(timer);
+      // Distinguish connection timeout from caller abort.
+      if (ac.signal.aborted && !chainedAbort?.aborted) {
+        throw makeClientError(`Connection timeout (${connTimeoutMs}ms) to ${url}`, undefined, true);
+      }
+      throw asError(e, `connection failure to ${url}`);
+    } finally {
+      chainedAbort?.removeEventListener('abort', onCallerAbort);
+    }
+  }
+
+  /** Non-streaming chat with retry (ECONNREFUSED 3x/2s, 503 exponential backoff, response timeout) */
+  async chat(opts: {
+    model: string;
+    messages: ChatMessage[];
+    tools?: ToolSchema[];
+    tool_choice?: any;
+    temperature?: number;
+    top_p?: number;
+    max_tokens?: number;
+    stream?: boolean;
+    extra?: Record<string, unknown>;
+    signal?: AbortSignal;
+    requestId?: string;
+    responseTimeoutMs?: number;
+  }): Promise<ChatCompletionResponse> {
+    const url = `${this.endpoint}/chat/completions`;
+    const clean = this.buildBody({ ...opts, stream: false });
+    const responseTimeout = opts.responseTimeoutMs ?? this.defaultResponseTimeoutMs;
+
+    this.log(`→ POST ${url} ${opts.requestId ? `(rid=${opts.requestId})` : ''}`);
+    this.log(`request keys: ${Object.keys(clean).join(', ')}`);
+
+    // Rate-limit delay (§6e: back off if too many 503s in rolling window)
+    const rlDelay = this.rateLimiter.getDelay();
+    if (rlDelay > 0) {
+      this.log(`rate-limit backoff: waiting ${rlDelay}ms (${this.rateLimiter.recentCount} 503s in window)`);
+      console.warn(`[warn] server returned 503 ${this.rateLimiter.recentCount} times in 60s, backing off ${(rlDelay / 1000).toFixed(1)}s`);
+      await delay(rlDelay);
+    }
+
+    let lastErr: unknown = makeClientError(`POST /chat/completions failed without response`, 503, true);
+    const reqStart = Date.now();
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      // Build a combined signal that fires on caller abort OR response timeout.
+      const timeoutAc = new AbortController();
+      const callerSignal = opts.signal;
+      const onCallerAbort = () => timeoutAc.abort();
+      callerSignal?.addEventListener('abort', onCallerAbort, { once: true });
+      const timer = setTimeout(() => timeoutAc.abort(), responseTimeout);
+
+      try {
+        const res = await this.fetchWithConnTimeout(url, {
+          method: 'POST',
+          headers: this.headers(),
+          body: JSON.stringify(clean),
+          signal: timeoutAc.signal
+        });
+
+        if (res.status === 503) {
+          this.rateLimiter.record503();
+          const backoff = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
+          this.log(`503 model loading, retrying in ${backoff}ms...`);
+          lastErr = makeClientError(`POST /chat/completions returned 503 (model loading), attempt ${attempt + 1}/3`, 503, true);
+          if (attempt < 2) {
+            await delay(backoff);
+            continue;
+          }
+          throw lastErr;
+        }
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          throw makeClientError(
+            `POST /chat/completions failed: ${res.status} ${res.statusText}${text ? `\n${text.slice(0, 2000)}` : ''}`,
+            res.status,
+            false
+          );
+        }
+
+        const result = (await res.json()) as ChatCompletionResponse;
+        const totalMs = Date.now() - reqStart;
+        // Backpressure: track response time and warn on anomalies
+        const bp = this.backpressure.record(totalMs);
+        if (bp.warn) {
+          const avgS = (bp.avg / 1000).toFixed(1);
+          const curS = (bp.current / 1000).toFixed(1);
+          this.log(`backpressure warning: response ${curS}s > ${this.backpressure.multiplier}× avg ${avgS}s — consider reducing context size`);
+          console.warn(`[warn] server response time (${curS}s) exceeds ${this.backpressure.multiplier}× session average (${avgS}s) — consider reducing context size`);
+        }
+        (result as any).meta = { total_ms: totalMs, streamed: false };
+        this.emitExchange({
+          timestamp: new Date().toISOString(),
+          request: clean,
+          response: result as any,
+          metrics: {
+            total_ms: totalMs,
+            prompt_tokens: result.usage?.prompt_tokens,
+            completion_tokens: result.usage?.completion_tokens,
+          },
+        });
+        return result;
+      } catch (e: any) {
+        lastErr = asError(e, `POST /chat/completions attempt ${attempt + 1} failed`);
+        if (callerSignal?.aborted) throw lastErr;
+
+        // Distinguish response timeout from other AbortErrors
+        if (timeoutAc.signal.aborted && !callerSignal?.aborted) {
+          throw makeClientError(
+            `Response timeout (${responseTimeout}ms) waiting for ${url}`,
+            undefined,
+            true
+          );
+        }
+
+        if (isConnTimeout(e)) {
+          // Spec: retry once on connection timeout (§11)
+          if (attempt < 1) {
+            this.log(`Connection timeout, retrying in 2s (attempt ${attempt + 1}/2)...`);
+            await delay(2000);
+            continue;
+          }
+          throw lastErr;
+        }
+
+        if (isConnRefused(e) || isFetchFailed(e)) {
+          if (attempt < 2) {
+            this.log(`Connection error (${e?.message ?? 'unknown'}), retrying in 2s (attempt ${attempt + 1}/3)...`);
+            await delay(2000);
+            continue;
+          }
+          throw makeClientError(
+            `Cannot reach ${this.endpoint}. Is llama-server running? (${e?.message ?? ''})`,
+            undefined,
+            true
+          );
+        }
+
+        // Non-retryable errors (4xx, etc.)
+        throw lastErr;
+      } finally {
+        clearTimeout(timer);
+        callerSignal?.removeEventListener('abort', onCallerAbort);
+      }
+    }
+
+    throw lastErr;
+  }
+
+  /** Streaming chat with retry, read timeout, and 400→non-stream fallback */
+  async chatStream(opts: {
+    model: string;
+    messages: ChatMessage[];
+    tools?: ToolSchema[];
+    tool_choice?: any;
+    temperature?: number;
+    top_p?: number;
+    max_tokens?: number;
+    extra?: Record<string, unknown>;
+    signal?: AbortSignal;
+    requestId?: string;
+    onToken?: (text: string) => void;
+    onFirstDelta?: () => void;
+    readTimeoutMs?: number; // default 30000 (§11: partial SSE frame timeout)
+  }): Promise<ChatCompletionResponse> {
+    const url = `${this.endpoint}/chat/completions`;
+    const clean = this.buildBody({ ...opts, stream: true });
+    const readTimeout =
+      (Number.isFinite(Number(process.env.IDLEHANDS_READ_TIMEOUT_MS))
+        ? Number(process.env.IDLEHANDS_READ_TIMEOUT_MS)
+        : undefined) ??
+      opts.readTimeoutMs ??
+      30_000;
+
+    this.log(`→ POST ${url} (stream) ${opts.requestId ? `(rid=${opts.requestId})` : ''}`);
+
+    // Rate-limit delay (§6e: back off if too many 503s in rolling window)
+    const rlDelay = this.rateLimiter.getDelay();
+    if (rlDelay > 0) {
+      this.log(`rate-limit backoff: waiting ${rlDelay}ms (${this.rateLimiter.recentCount} 503s in window)`);
+      console.warn(`[warn] server returned 503 ${this.rateLimiter.recentCount} times in 60s, backing off ${(rlDelay / 1000).toFixed(1)}s`);
+      await delay(rlDelay);
+    }
+
+    let lastErr: unknown = makeClientError('POST /chat/completions (stream) failed without response', 503, true);
+    const reqStart = Date.now();
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let res: Response;
+      try {
+        res = await this.fetchWithConnTimeout(url, {
+          method: 'POST',
+          headers: this.headers(),
+          body: JSON.stringify(clean),
+          signal: opts.signal
+        });
+      } catch (e: any) {
+        lastErr = asError(e, `POST /chat/completions (stream) attempt ${attempt + 1} failed`);
+        if (opts.signal?.aborted) throw lastErr;
+
+        if (isConnTimeout(e)) {
+          if (attempt < 1) {
+            this.log(`Connection timeout, retrying in 2s (attempt ${attempt + 1}/2)...`);
+            await delay(2000);
+            continue;
+          }
+          throw lastErr;
+        }
+
+        if (isConnRefused(e) || isFetchFailed(e)) {
+          if (attempt < 2) {
+            this.log(`Connection error (${e?.message ?? 'unknown'}), retrying in 2s (attempt ${attempt + 1}/3)...`);
+            await delay(2000);
+            continue;
+          }
+          throw makeClientError(
+            `Cannot reach ${this.endpoint}. Is llama-server running? (${e?.message ?? ''})`,
+            undefined,
+            true
+          );
+        }
+        throw lastErr;
+      }
+
+      // HTTP 400 on stream → fall back to non-streaming (server doesn't support it)
+      if (res.status === 400) {
+        this.log('HTTP 400 on stream request, falling back to non-streaming');
+        return this.chat({ ...opts, stream: false });
+      }
+
+      // HTTP 503 → retry with exponential backoff
+      if (res.status === 503) {
+        this.rateLimiter.record503();
+        const backoff = Math.pow(2, attempt + 1) * 1000;
+        lastErr = makeClientError(`POST /chat/completions (stream) returned 503 (model loading), attempt ${attempt + 1}/3`, 503, true);
+        this.log(`503 model loading, retrying in ${backoff}ms...`);
+        if (attempt < 2) {
+          await delay(backoff);
+          continue;
+        }
+        throw lastErr;
+      }
+
+      // HTTP 5xx on stream → retry (and optionally fall back to non-stream after repeated failures)
+      if (res.status >= 500 && res.status <= 599) {
+        const text = await res.text().catch(() => '');
+        lastErr = makeClientError(
+          `POST /chat/completions (stream) failed: ${res.status} ${res.statusText}${text ? `\n${text.slice(0, 2000)}` : ''}`,
+          res.status,
+          true
+        );
+
+        // If we keep getting server errors, try a non-streaming request as a last resort.
+        const allowFallback = (process.env.IDLEHANDS_STREAM_FALLBACK ?? '1') !== '0';
+        if (allowFallback && attempt >= 1) {
+          this.log(`HTTP ${res.status} on stream request, falling back to non-streaming (attempt ${attempt + 1}/3)`);
+          return this.chat({ ...opts, stream: false });
+        }
+
+        const backoff = Math.pow(2, attempt + 1) * 1000;
+        this.log(`HTTP ${res.status} on stream request, retrying in ${backoff}ms...`);
+        await delay(backoff);
+        continue;
+      }
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw makeClientError(
+          `POST /chat/completions (stream) failed: ${res.status} ${res.statusText}${text ? `\n${text.slice(0, 2000)}` : ''}`,
+          res.status,
+          false
+        );
+      }
+
+      // --- Parse SSE stream with read timeout ---
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No response body to read (stream)');
+
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      const agg: ChatCompletionResponse = { id: 'stream', choices: [{ index: 0, delta: {}, finish_reason: null }] };
+      const toolArgsByIndex: Record<number, string> = {};
+      const toolNameByIndex: Record<number, string> = {};
+      const toolIdByIndex: Record<number, string> = {};
+      let sawDelta = false;
+      let firstDeltaMs: number | undefined;
+      let tokensReceived = 0;
+
+      while (true) {
+        // Race reader.read() against a cancellable read timeout.
+        // Using AbortController avoids leaking dangling delay() timers on every chunk.
+        const timeoutAc = new AbortController();
+        const timeoutPromise = delay(readTimeout, undefined, { signal: timeoutAc.signal })
+          .then(() => 'TIMEOUT' as const)
+          .catch(() => 'CANCELLED' as const);
+        const readPromise = reader.read().then((r) => { timeoutAc.abort(); return r; });
+        const result = await Promise.race([readPromise, timeoutPromise]);
+
+        if (result === 'TIMEOUT') {
+          reader.cancel().catch(() => {});
+
+          // If we got *some* deltas, returning partial content is usually worse UX for tool-using agents:
+          // it often leaves a truncated tool call / JSON args which then fails downstream.
+          // Instead, prefer retry/fallback to non-streaming when enabled.
+          const allowFallback = (process.env.IDLEHANDS_STREAM_FALLBACK ?? '1') !== '0';
+          if (allowFallback) {
+            if (sawDelta) {
+              this.log(`read timeout after ${tokensReceived} tokens, retrying via non-streaming`);
+            } else {
+              this.log(`read timeout with no data, retrying via non-streaming`);
+            }
+            return this.chat({ ...opts, stream: false });
+          }
+
+          if (sawDelta) {
+            this.log(`read timeout after ${tokensReceived} tokens, returning partial`);
+            const partial = this.finalizeStreamAggregate(agg, toolIdByIndex, toolNameByIndex, toolArgsByIndex);
+            const content = partial.choices?.[0]?.message?.content;
+            if (content) {
+              partial.choices[0].message!.content = content + `\n[connection lost after ${tokensReceived} tokens]`;
+            }
+            const totalMs = Date.now() - reqStart;
+            (partial as any).meta = {
+              total_ms: totalMs,
+              ttft_ms: firstDeltaMs,
+              streamed: true,
+              partial: true,
+            };
+            this.emitExchange({
+              timestamp: new Date().toISOString(),
+              request: clean,
+              response: partial as any,
+              metrics: {
+                total_ms: totalMs,
+                ttft_ms: firstDeltaMs,
+                prompt_tokens: partial.usage?.prompt_tokens,
+                completion_tokens: partial.usage?.completion_tokens,
+              },
+            });
+            return partial;
+          }
+
+          throw makeClientError(`Stream read timeout (${readTimeout}ms) with no data received`, undefined, true);
+        }
+
+        if (result === 'CANCELLED') continue; // timeout was cancelled, read won
+
+        const { value, done } = result;
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+
+        while (true) {
+          const idx = buf.indexOf('\n\n');
+          if (idx === -1) break;
+          const frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+
+          const lines = frame.split('\n');
+          for (const line of lines) {
+            const m = /^data:\s*(.*)$/.exec(line);
+            if (!m) continue;
+            const data = m[1];
+            if (data === '[DONE]') {
+              const doneResult = this.finalizeStreamAggregate(agg, toolIdByIndex, toolNameByIndex, toolArgsByIndex);
+              const totalMs = Date.now() - reqStart;
+              (doneResult as any).meta = {
+                total_ms: totalMs,
+                ttft_ms: firstDeltaMs,
+                streamed: true,
+              };
+              this.emitExchange({
+                timestamp: new Date().toISOString(),
+                request: clean,
+                response: doneResult as any,
+                metrics: {
+                  total_ms: totalMs,
+                  ttft_ms: firstDeltaMs,
+                  prompt_tokens: doneResult.usage?.prompt_tokens,
+                  completion_tokens: doneResult.usage?.completion_tokens,
+                },
+              });
+              return doneResult;
+            }
+            let chunk: ChatCompletionResponse;
+            try {
+              chunk = JSON.parse(data);
+            } catch {
+              continue;
+            }
+
+            const c = chunk.choices?.[0];
+            const d = c?.delta;
+            if (!d) continue;
+
+            if (!sawDelta) {
+              sawDelta = true;
+              firstDeltaMs = Date.now() - reqStart;
+              opts.onFirstDelta?.();
+            }
+
+            if (d.content) {
+              tokensReceived++;
+              agg.choices[0].delta!.content = (agg.choices[0].delta!.content ?? '') + d.content;
+              opts.onToken?.(d.content);
+            }
+
+            if (Array.isArray(d.tool_calls)) {
+              for (const tc of d.tool_calls) {
+                const i = tc.index;
+                if (i === undefined) continue;
+                if (tc.id) toolIdByIndex[i] = tc.id;
+                if (tc.function?.name) toolNameByIndex[i] = tc.function.name;
+                if (tc.function?.arguments) {
+                  toolArgsByIndex[i] = (toolArgsByIndex[i] ?? '') + tc.function.arguments;
+                }
+              }
+            }
+
+            if (c.finish_reason) {
+              agg.choices[0].finish_reason = c.finish_reason;
+            }
+
+            // Capture usage if server provides it
+            if (chunk.usage) {
+              agg.usage = chunk.usage;
+            }
+          }
+        }
+      }
+
+      const streamResult = this.finalizeStreamAggregate(agg, toolIdByIndex, toolNameByIndex, toolArgsByIndex);
+      const totalMs = Date.now() - reqStart;
+      // Backpressure: track streaming response time
+      const bp = this.backpressure.record(totalMs);
+      if (bp.warn) {
+        const avgS = (bp.avg / 1000).toFixed(1);
+        const curS = (bp.current / 1000).toFixed(1);
+        this.log(`backpressure warning: response ${curS}s > ${this.backpressure.multiplier}× avg ${avgS}s — consider reducing context size`);
+        console.warn(`[warn] server response time (${curS}s) exceeds ${this.backpressure.multiplier}× session average (${avgS}s) — consider reducing context size`);
+      }
+      (streamResult as any).meta = {
+        total_ms: totalMs,
+        ttft_ms: firstDeltaMs,
+        streamed: true,
+      };
+      const tgSpeed = (() => {
+        const completionTokens = streamResult.usage?.completion_tokens;
+        if (completionTokens == null || !Number.isFinite(completionTokens) || totalMs <= 0) return undefined;
+        const genMs = Math.max(1, totalMs - (firstDeltaMs ?? 0));
+        return completionTokens / (genMs / 1000);
+      })();
+      this.emitExchange({
+        timestamp: new Date().toISOString(),
+        request: clean,
+        response: streamResult as any,
+        metrics: {
+          total_ms: totalMs,
+          ttft_ms: firstDeltaMs,
+          tg_speed: tgSpeed,
+          prompt_tokens: streamResult.usage?.prompt_tokens,
+          completion_tokens: streamResult.usage?.completion_tokens,
+        },
+      });
+      return streamResult;
+    }
+
+    throw lastErr;
+  }
+
+  private finalizeStreamAggregate(
+    agg: ChatCompletionResponse,
+    toolIdByIndex: Record<number, string>,
+    toolNameByIndex: Record<number, string>,
+    toolArgsByIndex: Record<number, string>
+  ): ChatCompletionResponse {
+    const content = agg.choices[0].delta?.content ?? '';
+    const toolCalls: any[] = [];
+
+    const indices = Object.keys(toolNameByIndex).map(Number).sort((a, b) => a - b);
+    for (const idx of indices) {
+      toolCalls.push({
+        id: toolIdByIndex[idx] ?? `call_${idx}`,
+        type: 'function',
+        function: {
+          name: toolNameByIndex[idx],
+          arguments: toolArgsByIndex[idx] ?? ''
+        }
+      });
+    }
+
+    agg.choices[0].message = {
+      role: 'assistant',
+      content: content.length ? content : null,
+      tool_calls: toolCalls.length ? toolCalls : undefined
+    };
+
+    delete agg.choices[0].delta;
+    return agg;
+  }
+
+}

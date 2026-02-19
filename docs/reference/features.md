@@ -1,0 +1,60 @@
+# Features Deep Dive
+
+## Trifecta: Vault + Replay + Lens
+
+- **Vault**: persistent memory and notes (`/vault`, `/note`, `/notes`)
+- **Replay**: checkpoints and rewind/diff/undo (`/checkpoints`, `/rewind`, `/diff`, `/undo`)
+- **Lens**: structural analysis for indexing and context shaping
+
+Runtime controls: `--no-trifecta`, `--no-vault`, `--no-lens`, `--no-replay`, `--vault-mode active|passive|off`
+
+## Themes
+
+Built-in themes:
+- `default`, `dark`, `light`, `minimal`, `hacker`
+
+Custom themes:
+- `~/.config/idlehands/themes/<name>.json`
+
+## MCP integration
+
+Configure in config or pass ad-hoc with `--mcp <file>`.
+
+Commands:
+- `/mcp`, `/mcp desc`, `/mcp restart <name>`, `/mcp enable <tool>`, `/mcp disable <tool>`
+
+## LSP integration
+
+- Configure servers in `lsp.servers`
+- Use `/lsp` for status
+- Supports proactive diagnostics
+
+## Capture + replay
+
+::: code-group
+```bash [Capture in session]
+/capture on captures/myrun.jsonl
+/capture off
+```
+
+```bash [Replay from CLI]
+idlehands --endpoint http://127.0.0.1:8080/v1 --replay captures/myrun.jsonl
+```
+:::
+
+## Vim mode
+
+- Start with `--vim`
+- Toggle with `/vim`
+- Includes normal/insert editing behavior in prompt input
+
+## Custom commands and templates
+
+Custom markdown commands:
+- Global: `~/.config/idlehands/commands/*.md`
+- Project: `.idlehands/commands/*.md`
+
+Reload/list with `/commands`.
+
+Built-in templates:
+- `/fix`, `/review`, `/test`, `/explain`, `/refactor`
