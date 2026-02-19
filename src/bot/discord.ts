@@ -686,6 +686,10 @@ When you escalate, your request will be re-run on a more capable model.`;
     managed.state = 'resetting';
     managed.pendingQueue = [];
     try { managed.activeAbortController?.abort(); } catch {}
+    
+    // Preserve conversation history before destroying the old session
+    const oldMessages = managed.session.messages.slice();
+    
     try { managed.session.cancel(); } catch {}
 
     const session = await createSession({
@@ -693,6 +697,15 @@ When you escalate, your request will be re-run on a more capable model.`;
       confirmProvider: managed.confirmProvider,
       confirm: async () => true,
     });
+    
+    // Restore conversation history to the new session
+    if (oldMessages.length > 0) {
+      try {
+        session.restore(oldMessages);
+      } catch (e) {
+        console.error(`[bot:discord] Failed to restore ${oldMessages.length} messages after escalation:`, e);
+      }
+    }
 
     managed.session = session;
     managed.config = cfg;

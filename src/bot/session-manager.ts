@@ -324,6 +324,10 @@ When you escalate, your request will be re-run on a more capable model.`;
     managed.state = 'resetting';
     managed.pendingQueue = [];
     try { managed.activeAbortController?.abort(); } catch {}
+    
+    // Preserve conversation history before destroying the old session
+    const oldMessages = managed.session.messages.slice();
+    
     try { managed.session.cancel(); } catch {}
 
     const config: IdlehandsConfig = {
@@ -333,6 +337,15 @@ When you escalate, your request will be re-run on a more capable model.`;
 
     const confirmProvider = this.makeConfirmProvider?.(chatId, managed.userId);
     const session = await createSession({ config, confirmProvider });
+    
+    // Restore conversation history to the new session
+    if (oldMessages.length > 0) {
+      try {
+        session.restore(oldMessages);
+      } catch (e) {
+        console.error(`[session-manager] Failed to restore ${oldMessages.length} messages after escalation:`, e);
+      }
+    }
 
     managed.session = session;
     managed.config = config;
