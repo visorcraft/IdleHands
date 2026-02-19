@@ -725,6 +725,14 @@ export class OpenAIClient {
               opts.onToken?.(d.content);
             }
 
+            // Handle reasoning tokens (Qwen3 thinking mode) — track progress but don't include in visible output
+            if ((d as any).reasoning) {
+              tokensReceived++;
+              // Fire onToken with empty string to mark progress without adding visible content
+              // This keeps the watchdog alive during reasoning phases
+              opts.onToken?.('');
+            }
+
             if (Array.isArray(d.tool_calls)) {
               for (const tc of d.tool_calls) {
                 const i = tc.index;
