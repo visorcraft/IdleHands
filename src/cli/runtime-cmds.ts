@@ -430,28 +430,95 @@ export async function runModelsSubcommand(args: any, _config: any): Promise<void
     if (!isTTY()) throw new Error('models add requires a TTY');
     const rl = readline.createInterface({ input, output });
     try {
+      const modelId = await ask(rl, 'Model id');
+      const displayName = await ask(rl, 'Display name');
+      const enabled = (await ask(rl, 'Enabled (y/n)', 'y')).toLowerCase().startsWith('y');
+      const source = await ask(rl, 'Model source (path or URL)');
+
+      // RPC Split detection — applies Strix Halo distributed inference defaults
+      const rpcSplit = (await ask(rl, 'RPC Split? (y/n)', 'n')).toLowerCase().startsWith('y');
+
+      let rpcBackendId: string | undefined;
+      let rpcHostId: string | undefined;
+      let rpcProbeTimeout = 60;
+      let rpcProbeInterval = 1000;
+      let startCmdDefault = '';
+
+      if (rpcSplit) {
+        const rpcAddr = await ask(rl, 'RPC server address (host:port)', '10.77.77.1:50052');
+        const tsRatio = await ask(rl, 'Tensor split ratio', '1/1');
+        rpcHostId = await ask(rl, 'Client host id (where model files live)');
+
+        // Find or create RPC backend
+        const rpcBackendName = `rocm-rpc-${rpcAddr.replace(/[:.]/g, '-')}`;
+        let existingBackend = runtimes.backends.find(
+          (b) => b.type === 'rocm' && b.args?.some((a) => a === rpcAddr)
+        );
+        if (!existingBackend) {
+          const createBackend = (await ask(rl, `Create RPC backend '${rpcBackendName}'? (y/n)`, 'y')).toLowerCase().startsWith('y');
+          if (createBackend) {
+            existingBackend = {
+              id: rpcBackendName,
+              display_name: `ROCm + RPC (${rpcAddr}, -dio)`,
+              enabled: true,
+              type: 'rocm',
+              host_filters: rpcHostId ? [rpcHostId] : 'any',
+              apply_cmd: null,
+              verify_cmd: 'rocminfo >/dev/null 2>&1',
+              rollback_cmd: null,
+              env: { ROCBLAS_USE_HIPBLASLT: '1' },
+              args: ['-ngl', '99', '-fa', 'on', '--rpc', rpcAddr, '-ts', tsRatio, '-dio', '--no-warmup'],
+            };
+            runtimes.backends.push(existingBackend);
+            console.log(`  Created RPC backend: ${rpcBackendName}`);
+          }
+        } else {
+          console.log(`  Reusing existing RPC backend: ${existingBackend.id}`);
+        }
+        rpcBackendId = existingBackend?.id;
+
+        // Size-aware probe defaults for RPC models (large models take minutes to load)
+        rpcProbeTimeout = Number(await ask(rl, 'Probe timeout sec (large RPC models need 300-7200)', '3600'));
+        rpcProbeInterval = Number(await ask(rl, 'Probe interval ms', '5000'));
+
+        // Default start_cmd with -dio baked in (backend_args already includes it from the RPC backend)
+        startCmdDefault = 'nohup env {backend_env} llama-server -m {source} --port {port} --ctx-size 4096 {backend_args} --host 0.0.0.0 > /tmp/llama-server.log 2>&1 &';
+      }
+
       const model: RuntimeModel = {
-        id: await ask(rl, 'Model id'),
-        display_name: await ask(rl, 'Display name'),
-        enabled: (await ask(rl, 'Enabled (y/n)', 'y')).toLowerCase().startsWith('y'),
-        source: await ask(rl, 'Model source (path or URL)'),
+        id: modelId,
+        display_name: displayName,
+        enabled,
+        source,
         host_policy: 'any',
         backend_policy: 'any',
         launch: {
-          start_cmd: await ask(rl, 'Start command'),
+          start_cmd: await ask(rl, 'Start command', startCmdDefault),
           probe_cmd: await ask(rl, 'Probe command', 'curl -fsS http://127.0.0.1:{port}/health'),
-          probe_timeout_sec: Number(await ask(rl, 'Probe timeout sec', '60')),
-          probe_interval_ms: Number(await ask(rl, 'Probe interval ms', '1000')),
+          probe_timeout_sec: rpcSplit
+            ? rpcProbeTimeout
+            : Number(await ask(rl, 'Probe timeout sec', '60')),
+          probe_interval_ms: rpcSplit
+            ? rpcProbeInterval
+            : Number(await ask(rl, 'Probe interval ms', '1000')),
         },
         runtime_defaults: {
           port: Number(await ask(rl, 'Default port', '8080')),
         },
         split_policy: null,
       };
-      const hp = await ask(rl, 'Host policy (any or comma-separated ids)', 'any');
-      const bp = await ask(rl, 'Backend policy (any or comma-separated ids)', 'any');
-      model.host_policy = hp === 'any' ? 'any' : hp.split(',').map((s) => s.trim()).filter(Boolean);
-      model.backend_policy = bp === 'any' ? 'any' : bp.split(',').map((s) => s.trim()).filter(Boolean);
+
+      if (rpcSplit && rpcHostId) {
+        model.host_policy = [rpcHostId];
+        model.backend_policy = rpcBackendId ? [rpcBackendId] : 'any';
+        console.log(`  Auto-set host_policy=[${rpcHostId}], backend_policy=[${rpcBackendId}]`);
+      } else {
+        const hp = await ask(rl, 'Host policy (any or comma-separated ids)', 'any');
+        const bp = await ask(rl, 'Backend policy (any or comma-separated ids)', 'any');
+        model.host_policy = hp === 'any' ? 'any' : hp.split(',').map((s) => s.trim()).filter(Boolean);
+        model.backend_policy = bp === 'any' ? 'any' : bp.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+
       await saveRuntimes({ ...runtimes, models: [...runtimes.models, model] });
       console.log(`Added model: ${model.id}`);
     } finally {
@@ -569,6 +636,70 @@ export async function runModelsSubcommand(args: any, _config: any): Promise<void
   usage('models');
 }
 
+
+function deriveProbeDefaultsFromSizeGiB(sizeGiB: number): { timeoutSec: number; intervalMs: number } {
+  if (!Number.isFinite(sizeGiB) || sizeGiB <= 0) return { timeoutSec: 60, intervalMs: 1000 };
+  if (sizeGiB <= 10) return { timeoutSec: 120, intervalMs: 1000 };
+  if (sizeGiB <= 40) return { timeoutSec: 300, intervalMs: 1200 };
+  if (sizeGiB <= 80) return { timeoutSec: 900, intervalMs: 2000 };
+  if (sizeGiB <= 140) return { timeoutSec: 3600, intervalMs: 5000 };
+  return { timeoutSec: 5400, intervalMs: 5000 };
+}
+
+async function estimateModelSizeGiBOnHost(
+  modelSource: string,
+  _host: RuntimeHost,
+  _runOnHost: (command: string, host: RuntimeHost, timeoutMs: number) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
+): Promise<number | null> {
+  const src = modelSource.toLowerCase();
+
+  const sizeHint = src.match(/(\d{2,4})b/);
+  const paramsB = sizeHint ? Number(sizeHint[1]) : NaN;
+
+  let bitsPerWeight = 16;
+  if (/q8(_0|)/.test(src)) bitsPerWeight = 8;
+  else if (/q6(_k|)/.test(src)) bitsPerWeight = 6;
+  else if (/(q4|mxfp4|fp4)/.test(src)) bitsPerWeight = 4;
+  else if (/q3/.test(src)) bitsPerWeight = 3;
+  else if (/q2/.test(src)) bitsPerWeight = 2;
+
+  if (!Number.isFinite(paramsB) || paramsB <= 0) return null;
+
+  // coarse estimate: params(B) * bits/8 = GB, plus ~8% overhead
+  const approxGiB = paramsB * (bitsPerWeight / 8) * 1.08;
+  return approxGiB;
+}
+
+async function applyDynamicProbeDefaults(
+  result: any,
+  rtConfig: { hosts: RuntimeHost[]; models: RuntimeModel[] },
+  runOnHost: (command: string, host: RuntimeHost, timeoutMs: number) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
+): Promise<void> {
+  if (!result?.ok || !Array.isArray(result?.steps)) return;
+
+  const modelCfg = rtConfig.models.find((m) => m.id === result.model?.id);
+  if (!modelCfg) return;
+
+  const hasExplicitTimeout = modelCfg.launch?.probe_timeout_sec != null;
+  const hasExplicitInterval = modelCfg.launch?.probe_interval_ms != null;
+  if (hasExplicitTimeout && hasExplicitInterval) return;
+
+  const hostId = result.hosts?.[0]?.id;
+  if (!hostId) return;
+  const hostCfg = rtConfig.hosts.find((h) => h.id === hostId);
+  if (!hostCfg) return;
+
+  const sizeGiB = await estimateModelSizeGiBOnHost(modelCfg.source, hostCfg, runOnHost);
+  if (sizeGiB == null) return;
+
+  const d = deriveProbeDefaultsFromSizeGiB(sizeGiB);
+  for (const step of result.steps) {
+    if (step.kind !== "probe_health") continue;
+    if (!hasExplicitTimeout) step.timeout_sec = d.timeoutSec;
+    if (!hasExplicitInterval) step.probe_interval_ms = d.intervalMs;
+  }
+}
+
 export async function runSelectSubcommand(args: any, _config: any): Promise<void> {
   const modelId = typeof args.model === 'string' ? args.model : undefined;
   const backendOverride = typeof args.backend === 'string' ? args.backend : undefined;
@@ -607,13 +738,15 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
   }
 
   const { plan } = await import('../runtime/planner.js');
-  const { execute, loadActiveRuntime } = await import('../runtime/executor.js');
+  const { execute, loadActiveRuntime, runOnHost } = await import('../runtime/executor.js');
 
   const rtConfig = await loadRuntimes();
   const active = await loadActiveRuntime();
   const mode = dryRun ? 'dry-run' as const : 'live' as const;
 
   const result = plan({ modelId, backendOverride, hostOverride, mode }, rtConfig, active);
+
+  await applyDynamicProbeDefaults(result, rtConfig, runOnHost);
 
   if (!result.ok) {
     if (jsonOut) {

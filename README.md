@@ -13,6 +13,7 @@ Idle Hands is built for people who want an agent that can actually ship work, no
 
 - **TUI-first UX** for real daily use (streaming output, slash commands, approvals)
 - **Runtime orchestration** (hosts/backends/models) for local + remote model stacks
+- **Size-aware runtime probes** so very large GGUF/RPC models get sane startup timeouts by default
 - **Safety + approvals** with explicit modes (`plan`, `reject`, `default`, `auto-edit`, `yolo`)
 - **Headless mode** for CI and scripts (`json`, `stream-json`, `--fail-on-error`, `--diff-only`)
 - **Bot frontends** (Telegram + Discord) with service management
@@ -157,6 +158,24 @@ If you use a dedicated `idlehands` account, install/manage the service while log
 - `yolo` / `--no-confirm` → no confirmations (fastest, riskiest)
 
 ---
+
+
+## Runtime probe defaults (size-aware)
+
+When a model does not explicitly set probe timeout and probe interval, Idle Hands derives defaults from estimated model size on the target host.
+
+Default tiers used by idlehands select:
+
+| Model size (GiB) | probe timeout | probe interval |
+|---:|---:|---:|
+| <= 10 | 120s | 1000ms |
+| <= 40 | 300s | 1200ms |
+| <= 80 | 900s | 2000ms |
+| <= 140 | 3600s | 5000ms |
+| > 140 | 5400s | 5000ms |
+
+Per-model override remains available in runtimes.json under models.launch.
+Explicit per-model values always take precedence.
 
 ## Documentation map
 

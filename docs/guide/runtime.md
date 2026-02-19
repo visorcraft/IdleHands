@@ -81,3 +81,24 @@ idlehands select --model <id> --dry-run
 - Use explicit probe commands so startup failures are obvious.
 - Validate hosts/backends before adding many models.
 - For shared environments, keep runtime IDs stable and human-readable.
+
+
+## Probe timeout behavior (size-aware defaults)
+
+idlehands select uses the model launch probe command for readiness checks.
+
+If a model does not set explicit probe values, Idle Hands derives defaults from estimated model size so large models, including RPC split models, get longer startup windows automatically.
+
+For sharded GGUF files, Idle Hands sums all shards in the set before choosing defaults.
+
+| Model size (GiB) | probe timeout | probe interval |
+|---:|---:|---:|
+| <= 10 | 120s | 1000ms |
+| <= 40 | 300s | 1200ms |
+| <= 80 | 900s | 2000ms |
+| <= 140 | 3600s | 5000ms |
+| > 140 | 5400s | 5000ms |
+
+To override a specific model, set launch.probe_timeout_sec and/or launch.probe_interval_ms in runtimes.json.
+Explicit per-model values always take precedence.
+
