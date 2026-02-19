@@ -526,6 +526,11 @@ When you escalate, your request will be re-run on a more capable model.`;
         
         try {
           await recreateSession(managed, cfg);
+          // Re-acquire turn after recreation - must update turnId!
+          const newTurn = beginTurn(managed);
+          if (!newTurn) return;
+          turn = newTurn;
+          turnId = newTurn.turnId;
         } catch (e: any) {
           console.error(`[bot:discord] keyword escalation failed: ${e?.message ?? e}`);
           // Continue with base model if escalation fails
