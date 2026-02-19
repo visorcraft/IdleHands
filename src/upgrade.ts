@@ -11,7 +11,7 @@
  */
 
 import { execFileSync, execSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, accessSync, constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -63,13 +63,54 @@ function resolveInstallPaths(): InstallPaths | null {
   }
 }
 
+/** Check if the current process needs elevated permissions to write to the given prefix. */
+export function needsElevation(prefix: string): boolean {
+  if (process.getuid?.() === 0) return false;
+  try {
+    const target = path.join(prefix, 'lib', 'node_modules');
+    accessSync(target, fsConstants.W_OK);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/** Check if sudo is available on the system. */
+function hasSudo(): boolean {
+  try {
+    execFileSync('which', ['sudo'], { stdio: 'ignore', timeout: 3000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function npmInstallGlobal(spec: string): void {
   const target = resolveInstallPaths();
   if (target) {
-    execFileSync(target.npmBin, ['install', '-g', '--prefix', target.prefix, spec], {
+    const args = ['install', '-g', '--prefix', target.prefix, spec];
+    const env = { ...process.env, npm_config_prefix: target.prefix };
+
+    if (needsElevation(target.prefix)) {
+      if (!hasSudo()) {
+        throw new Error(
+          `Permission denied: ${target.prefix} requires elevated permissions.\n` +
+          `Re-run as root or install to a user-writable prefix.`
+        );
+      }
+      console.log(`[upgrade] ${target.prefix} requires elevated permissions, re-running with sudo...`);
+      execFileSync('sudo', [target.npmBin, ...args], {
+        stdio: 'inherit',
+        timeout: 120_000,
+        env,
+      });
+      return;
+    }
+
+    execFileSync(target.npmBin, args, {
       stdio: 'inherit',
       timeout: 120_000,
-      env: { ...process.env, npm_config_prefix: target.prefix },
+      env,
     });
     return;
   }
