@@ -104,59 +104,94 @@ const KEYWORD_PRESETS: Record<string, string[]> = {
 };
 
 /**
- * Check if user message matches keyword escalation triggers.
- * Returns { escalate: true, reason: string } if keywords match.
+ * Check if text matches a set of keywords.
+ * Returns matched keywords or empty array if none match.
  */
-function checkKeywordEscalation(
-  text: string,
-  escalation: ModelEscalation | undefined
-): { escalate: boolean; reason?: string } {
-  if (!escalation) return { escalate: false };
-  
-  const keywords: string[] = [];
+function matchKeywords(text: string, keywords: string[], presets?: string[]): string[] {
+  const allKeywords: string[] = [...keywords];
   
   // Add preset keywords
-  if (escalation.keyword_presets) {
-    for (const preset of escalation.keyword_presets) {
+  if (presets) {
+    for (const preset of presets) {
       const presetWords = KEYWORD_PRESETS[preset];
-      if (presetWords) keywords.push(...presetWords);
+      if (presetWords) allKeywords.push(...presetWords);
     }
   }
   
-  // Add custom keywords
-  if (escalation.keywords) {
-    keywords.push(...escalation.keywords);
-  }
-  
-  if (keywords.length === 0) return { escalate: false };
+  if (allKeywords.length === 0) return [];
   
   const lowerText = text.toLowerCase();
-  const matchedKeywords: string[] = [];
+  const matched: string[] = [];
   
-  for (const kw of keywords) {
+  for (const kw of allKeywords) {
     if (kw.startsWith('re:')) {
       // Regex pattern
       try {
         const regex = new RegExp(kw.slice(3), 'i');
-        if (regex.test(text)) {
-          matchedKeywords.push(kw);
-        }
+        if (regex.test(text)) matched.push(kw);
       } catch {
         // Invalid regex, skip
       }
     } else {
       // Word boundary match (case-insensitive)
       const wordRegex = new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
-      if (wordRegex.test(lowerText)) {
-        matchedKeywords.push(kw);
-      }
+      if (wordRegex.test(lowerText)) matched.push(kw);
     }
   }
   
-  if (matchedKeywords.length > 0) {
+  return matched;
+}
+
+/**
+ * Check if user message matches keyword escalation triggers.
+ * Returns { escalate: true, tier: number, reason: string } if keywords match.
+ * Tier indicates which model index to escalate to (highest matching tier wins).
+ */
+function checkKeywordEscalation(
+  text: string,
+  escalation: ModelEscalation | undefined
+): { escalate: boolean; tier?: number; reason?: string } {
+  if (!escalation) return { escalate: false };
+  
+  // Tiered keyword escalation
+  if (escalation.tiers && escalation.tiers.length > 0) {
+    let highestTier = -1;
+    let highestReason = '';
+    
+    // Check each tier, highest matching tier wins
+    for (let i = 0; i < escalation.tiers.length; i++) {
+      const tier = escalation.tiers[i];
+      const matched = matchKeywords(
+        text,
+        tier.keywords || [],
+        tier.keyword_presets as string[] | undefined
+      );
+      
+      if (matched.length > 0 && i > highestTier) {
+        highestTier = i;
+        highestReason = `tier ${i} keyword match: ${matched.slice(0, 3).join(', ')}${matched.length > 3 ? '...' : ''}`;
+      }
+    }
+    
+    if (highestTier >= 0) {
+      return { escalate: true, tier: highestTier, reason: highestReason };
+    }
+    
+    return { escalate: false };
+  }
+  
+  // Legacy flat keywords (treated as tier 0)
+  const matched = matchKeywords(
+    text,
+    escalation.keywords || [],
+    escalation.keyword_presets as string[] | undefined
+  );
+  
+  if (matched.length > 0) {
     return { 
-      escalate: true, 
-      reason: `keyword match: ${matchedKeywords.slice(0, 3).join(', ')}${matchedKeywords.length > 3 ? '...' : ''}`
+      escalate: true,
+      tier: 0,
+      reason: `keyword match: ${matched.slice(0, 3).join(', ')}${matched.length > 3 ? '...' : ''}`
     };
   }
   
@@ -473,12 +508,14 @@ When you escalate, your request will be re-run on a more capable model.`;
     const escalation = managed.agentPersona?.escalation;
     if (escalation?.models?.length && managed.currentModelIndex === 0 && managed.escalationCount === 0) {
       const kwResult = checkKeywordEscalation(msg.content, escalation);
-      if (kwResult.escalate) {
-        const targetModel = escalation.models[0];
+      if (kwResult.escalate && kwResult.tier !== undefined) {
+        // Use the tier to select the target model (tier 0 → models[0], tier 1 → models[1], etc.)
+        const modelIndex = Math.min(kwResult.tier, escalation.models.length - 1);
+        const targetModel = escalation.models[modelIndex];
         console.error(`[bot:discord] ${managed.userId} keyword escalation: ${kwResult.reason} → ${targetModel}`);
         
         // Set up escalation
-        managed.currentModelIndex = 1;
+        managed.currentModelIndex = modelIndex + 1;  // +1 because 0 is base model
         managed.escalationCount = 1;
         
         // Recreate session with escalated model

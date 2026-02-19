@@ -305,6 +305,25 @@ export type ExecResult = {
  * Model escalation configuration for automatic or explicit model upgrades.
  * Allows a lightweight model to delegate complex tasks to more capable models.
  */
+/**
+ * Keyword tier configuration for tiered model escalation.
+ * Each tier maps to the corresponding model in the escalation chain.
+ */
+export type KeywordTier = {
+  /** 
+   * Keyword patterns for this tier.
+   * Can be strings (case-insensitive word match) or regex patterns (prefix with "re:").
+   */
+  keywords?: string[];
+  /**
+   * Preset keyword groups for this tier.
+   * "coding" = build, implement, create, develop, architect, refactor, debug, fix
+   * "planning" = plan, design, roadmap, strategy, analyze, research
+   * "complex" = full, complete, comprehensive, multi-step, integrate
+   */
+  keyword_presets?: Array<'coding' | 'planning' | 'complex'>;
+};
+
 export type ModelEscalation = {
   /** Ordered list of models to escalate to (first = preferred) */
   models: string[];
@@ -316,6 +335,7 @@ export type ModelEscalation = {
    * Keyword patterns that trigger automatic escalation before the base model runs.
    * Can be strings (case-insensitive word match) or regex patterns (prefix with "re:").
    * Examples: ["build", "implement", "re:\\b(create|design)\\s+\\w+\\s+(app|system)"]
+   * @deprecated Use `tiers` for multi-tier escalation. This is treated as tier 0.
    */
   keywords?: string[];
   /**
@@ -324,8 +344,23 @@ export type ModelEscalation = {
    * "planning" = plan, design, roadmap, strategy, analyze, research
    * "complex" = full, complete, comprehensive, multi-step, integrate
    * Can combine multiple: ["coding", "planning"]
+   * @deprecated Use `tiers` for multi-tier escalation. This is treated as tier 0.
    */
   keyword_presets?: Array<'coding' | 'planning' | 'complex'>;
+  /**
+   * Tiered keyword escalation. Each tier maps to the corresponding model in `models`.
+   * Tier 0 keywords → models[0], Tier 1 → models[1], etc.
+   * Highest matching tier wins. If defined, overrides root-level keywords/keyword_presets.
+   * 
+   * Example:
+   * ```json
+   * "tiers": [
+   *   { "keyword_presets": ["coding"] },
+   *   { "keyword_presets": ["complex", "planning"], "keywords": ["architect"] }
+   * ]
+   * ```
+   */
+  tiers?: KeywordTier[];
 };
 
 /**
