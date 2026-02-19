@@ -1,10 +1,10 @@
 # Anton Autonomous Runner
 
-Anton executes a markdown task list autonomously, verifies results, and commits successful task changes.
+Anton executes a markdown checklist autonomously, verifies results, and commits successful task changes.
 
 ```bash
 idlehands
-/anton TASKS.md
+/anton worklist.md
 ```
 
 ## Commands
@@ -16,13 +16,13 @@ idlehands
 
 ## Behavior highlights
 
-- Fresh agent context per task (avoids context pollution)
+- Fresh agent context per task attempt (reduces context pollution)
 - Tiered verification cascade:
   1. Agent reports completion
   2. Build/test/lint checks
   3. Optional AI review
 - Auto-commit per successful task
-- Atomic rollback on failure
-- Resume-friendly skipping of already-checked tasks
+- Rollback on failed attempts
+- Resume-friendly skipping of already-checked items
 
-See also: existing project deep-dive doc at `docs/anton.md`.
+See also: [Anton deep dive](/anton)

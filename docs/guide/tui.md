@@ -1,43 +1,52 @@
 # Fullscreen TUI
 
-Idle Hands launches in fullscreen TUI mode by default when a TTY is detected.
-Use `--no-tui` to force classic CLI mode.
+Idle Hands starts in fullscreen TUI mode by default when a real TTY is available.
 
 ```bash
 idlehands
+```
+
+Force classic CLI mode:
+
+```bash
 idlehands --no-tui
 ```
 
-## Capabilities
+## What the TUI gives you
 
-- Fullscreen render loop with deterministic layout
-- Streaming assistant output
-- Slash command registry support
-- Shell commands (`!cmd`) and shell-output injection (`!!cmd`)
-- Tool approval prompts with remembered decisions
-- Tool lifecycle timeline (`start/end/error`, summary, duration)
-- Runtime status panel (model/host/backend/health)
-- Cancel turn with `Ctrl+C`, quit with `Ctrl+D`
-- Resize-safe redraw via `SIGWINCH`
-- Input and transcript navigation (history, cursor movement, multiline compose, page scrolling)
-- Session save on exit/crash to `~/.local/state/idlehands/`
+- deterministic layout with live status
+- streaming assistant output
+- slash commands and command discovery
+- tool activity timeline (`start/end/error`, summary, duration)
+- approval prompts and turn cancellation
+- shell shortcuts (`!cmd`, `!!cmd`)
+- session persistence to `~/.local/state/idlehands/`
 
-## Terminal compatibility
+## Terminal compatibility checks
 
-On startup, the TUI probes:
-- Alt screen support
-- Color support (256-color / truecolor)
-- Unicode environment
-- Minimum terminal size (10 rows × 40 columns)
-- tmux/screen/SSH environment details
+On startup, Idle Hands checks:
 
-If unsupported (like a `dumb` terminal or too-small window), Idle Hands falls back to classic CLI automatically.
+- alt-screen support
+- color support
+- Unicode capability
+- minimum size (10x40)
+- environment constraints (tmux/screen/SSH)
+
+If unsupported, it automatically falls back to classic CLI.
 
 ::: warning Non-TTY behavior
-Pipe/CI environments default to classic CLI mode.
+Piped/CI environments use classic CLI mode automatically.
 :::
 
-## Notes
+## Productivity tips
 
-- TUI and CLI share the same core session/agent/runtime paths.
-- `--no-tui` remains an explicit escape hatch.
+- Use `/status`, `/server`, `/perf` to keep runtime health visible.
+- Use `/approval` to switch safety posture without restarting.
+- Use `/compact` in long sessions to keep context efficient.
+- Use `/new` when changing tasks/projects to avoid context bleed.
+
+## Keyboard basics
+
+- `Ctrl+C` cancel active turn
+- `Ctrl+D` exit
+- `Shift+Tab` cycle approval modes (TTY)

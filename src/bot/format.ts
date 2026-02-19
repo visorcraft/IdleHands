@@ -12,6 +12,12 @@ export function sanitizeBotOutputText(text: string): string {
   if (!text) return '';
   let out = text;
 
+  // Strip leaked chat-protocol prefixes some models emit literally.
+  // Examples: "REPLY", "REPLY: ...", "NO_REPLY".
+  out = out.replace(/^\s*NO_REPLY\s*$/im, '');
+  out = out.replace(/^\s*REPLY\s*:\s*/i, '');
+  out = out.replace(/^\s*REPLY\s*\n/i, '');
+
   // Remove full pseudo-XML tool-call blocks first.
   out = out.replace(/<\s*tool_call\b[^>]*>[\s\S]*?<\s*\/\s*tool_call\s*>/gi, '');
 

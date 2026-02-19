@@ -314,6 +314,8 @@ export type BotTelegramConfig = {
   send_tool_summaries?: boolean;
   approval_mode?: string;
   allow_groups?: boolean;
+  /** When true, bot replies are sent as Telegram native replies to the triggering message. Default: false. */
+  reply_to_user_messages?: boolean;
 };
 
 export type BotDiscordConfig = {
@@ -328,6 +330,8 @@ export type BotDiscordConfig = {
   approval_mode?: string;
   allow_guilds?: boolean;
   guild_id?: string;
+  /** When true, bot replies use Discord native reply threading to the triggering message. Default: false. */
+  reply_to_user_messages?: boolean;
 };
 
 export type BotConfig = {

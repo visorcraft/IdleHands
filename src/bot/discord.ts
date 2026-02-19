@@ -9,6 +9,7 @@ import {
 import { createSession, type AgentSession, type AgentHooks } from '../agent.js';
 import type { ApprovalMode, BotDiscordConfig, IdlehandsConfig } from '../types.js';
 import { DiscordConfirmProvider } from './confirm-discord.js';
+import { sanitizeBotOutputText } from './format.js';
 import { projectDir } from '../utils.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -72,7 +73,7 @@ function splitDiscord(text: string, limit = 1900): string[] {
 }
 
 function safeContent(text: string): string {
-  const t = text.trim();
+  const t = sanitizeBotOutputText(text).trim();
   return t.length ? t : '(empty response)';
 }
 
@@ -105,6 +106,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
   const sessionTimeoutMs = (botConfig.session_timeout_min ?? 30) * 60_000;
   const approvalMode = normalizeApprovalMode(botConfig.approval_mode, config.approval_mode ?? 'auto-edit');
   const defaultDir = botConfig.default_dir || projectDir(config);
+  const replyToUserMessages = botConfig.reply_to_user_messages === true;
 
   const sessions = new Map<string, ManagedSession>();
 
@@ -117,6 +119,11 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
     ],
     partials: [Partials.Channel],
   });
+
+  const sendUserVisible = async (msg: Message, content: string) => {
+    if (replyToUserMessages) return await msg.reply(content);
+    return await (msg.channel as any).send(content);
+  };
 
   async function getOrCreate(msg: Message): Promise<ManagedSession | null> {
     const key = sessionKeyForMessage(msg, allowGuilds);
@@ -237,7 +244,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
     if (!turn) return;
     const turnId = turn.turnId;
 
-    const placeholder = await msg.reply('⏳ Thinking...').catch(() => null);
+    const placeholder = await sendUserVisible(msg, '⏳ Thinking...').catch(() => null);
     let streamed = '';
 
     const hooks: AgentHooks = {
@@ -267,7 +274,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
       if (placeholder) {
         await placeholder.edit(chunks[0]).catch(() => {});
       } else {
-        await msg.reply(chunks[0]).catch(() => {});
+        await sendUserVisible(msg, chunks[0]).catch(() => {});
       }
 
       for (let i = 1; i < chunks.length && i < 10; i++) {
@@ -282,13 +289,13 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
       if (!isTurnActive(managed, turnId)) return;
       if (raw.includes('AbortError') || raw.toLowerCase().includes('aborted')) {
         if (placeholder) await placeholder.edit('⏹ Cancelled.').catch(() => {});
-        else await msg.reply('⏹ Cancelled.').catch(() => {});
+        else await sendUserVisible(msg, '⏹ Cancelled.').catch(() => {});
       } else {
         const errMsg = raw.slice(0, 400);
         if (placeholder) {
           await placeholder.edit(`❌ ${errMsg}`).catch(() => {});
         } else {
-          await msg.reply(`❌ ${errMsg}`).catch(() => {});
+          await sendUserVisible(msg, `❌ ${errMsg}`).catch(() => {});
         }
       }
     } finally {
@@ -350,19 +357,19 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
 
     if (content === '/new') {
       destroySession(key);
-      await msg.reply('✨ New session started. Send a message to begin.').catch(() => {});
+      await sendUserVisible(msg, '✨ New session started. Send a message to begin.').catch(() => {});
       return;
     }
 
     const managed = await getOrCreate(msg);
     if (!managed) {
-      await msg.reply('⚠️ Too many active sessions. Please retry later.').catch(() => {});
+      await sendUserVisible(msg, '⚠️ Too many active sessions. Please retry later.').catch(() => {});
       return;
     }
 
     if (content === '/cancel') {
       const res = cancelActive(managed);
-      await msg.reply(res.message).catch(() => {});
+      await sendUserVisible(msg, res.message).catch(() => {});
       return;
     }
 
@@ -376,7 +383,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
         '',
         'Send me a coding task, or use /help for commands.',
       ];
-      await msg.reply(lines.join('\n')).catch(() => {});
+      await sendUserVisible(msg, lines.join('\n')).catch(() => {});
       return;
     }
 
@@ -400,25 +407,25 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
         '/anton <file> — Start autonomous task runner',
         '/anton status | /anton stop | /anton last',
       ];
-      await msg.reply(lines.join('\n')).catch(() => {});
+      await sendUserVisible(msg, lines.join('\n')).catch(() => {});
       return;
     }
 
     if (content === '/model') {
-      await msg.reply(`Model: \`${managed.session.model}\`\nHarness: \`${managed.session.harness}\``).catch(() => {});
+      await sendUserVisible(msg, `Model: \`${managed.session.model}\`\nHarness: \`${managed.session.harness}\``).catch(() => {});
       return;
     }
 
     if (content === '/compact') {
       managed.session.reset();
-      await msg.reply('🗜 Session context compacted (reset to system prompt).').catch(() => {});
+      await sendUserVisible(msg, '🗜 Session context compacted (reset to system prompt).').catch(() => {});
       return;
     }
 
     if (content === '/dir' || content.startsWith('/dir ')) {
       const arg = content.slice('/dir'.length).trim();
       if (!arg) {
-        await msg.reply(`Working directory: \`${managed.config.dir || defaultDir}\``).catch(() => {});
+        await sendUserVisible(msg, `Working directory: \`${managed.config.dir || defaultDir}\``).catch(() => {});
         return;
       }
       const allowedDirs = botConfig.allowed_dirs ?? ['~'];
@@ -426,7 +433,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
       const resolvedDir = arg.replace(/^~/, homeDir);
       const allowed = allowedDirs.some((d) => resolvedDir.startsWith(d.replace(/^~/, homeDir)));
       if (!allowed) {
-        await msg.reply('❌ Directory not allowed. Check bot.discord.allowed_dirs.').catch(() => {});
+        await sendUserVisible(msg, '❌ Directory not allowed. Check bot.discord.allowed_dirs.').catch(() => {});
         return;
       }
       const cfg: IdlehandsConfig = {
@@ -434,7 +441,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
         dir: resolvedDir,
       };
       await recreateSession(managed, cfg);
-      await msg.reply(`✅ Working directory set to \`${resolvedDir}\``).catch(() => {});
+      await sendUserVisible(msg, `✅ Working directory set to \`${resolvedDir}\``).catch(() => {});
       return;
     }
 
@@ -442,34 +449,34 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
       const arg = content.slice('/approval'.length).trim().toLowerCase();
       const modes = ['plan', 'default', 'auto-edit', 'yolo'] as const;
       if (!arg) {
-        await msg.reply(`Approval mode: \`${managed.config.approval_mode || approvalMode}\`\nOptions: ${modes.join(', ')}`).catch(() => {});
+        await sendUserVisible(msg, `Approval mode: \`${managed.config.approval_mode || approvalMode}\`\nOptions: ${modes.join(', ')}`).catch(() => {});
         return;
       }
       if (!modes.includes(arg as any)) {
-        await msg.reply(`Invalid mode. Options: ${modes.join(', ')}`).catch(() => {});
+        await sendUserVisible(msg, `Invalid mode. Options: ${modes.join(', ')}`).catch(() => {});
         return;
       }
       managed.config.approval_mode = arg as any;
       managed.config.no_confirm = arg === 'yolo';
-      await msg.reply(`✅ Approval mode set to \`${arg}\``).catch(() => {});
+      await sendUserVisible(msg, `✅ Approval mode set to \`${arg}\``).catch(() => {});
       return;
     }
 
     if (content === '/mode' || content.startsWith('/mode ')) {
       const arg = content.slice('/mode'.length).trim().toLowerCase();
       if (!arg) {
-        await msg.reply(`Mode: \`${managed.config.mode || 'code'}\``).catch(() => {});
+        await sendUserVisible(msg, `Mode: \`${managed.config.mode || 'code'}\``).catch(() => {});
         return;
       }
       if (arg !== 'code' && arg !== 'sys') {
-        await msg.reply('Invalid mode. Options: code, sys').catch(() => {});
+        await sendUserVisible(msg, 'Invalid mode. Options: code, sys').catch(() => {});
         return;
       }
       managed.config.mode = arg as any;
       if (arg === 'sys' && managed.config.approval_mode === 'auto-edit') {
         managed.config.approval_mode = 'default';
       }
-      await msg.reply(`✅ Mode set to \`${arg}\``).catch(() => {});
+      await sendUserVisible(msg, `✅ Mode set to \`${arg}\``).catch(() => {});
       return;
     }
 
@@ -477,38 +484,38 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
       const arg = content.slice('/subagents'.length).trim().toLowerCase();
       const current = managed.config.sub_agents?.enabled !== false;
       if (!arg) {
-        await msg.reply(`Sub-agents: \`${current ? 'on' : 'off'}\`\nUsage: /subagents on | off`).catch(() => {});
+        await sendUserVisible(msg, `Sub-agents: \`${current ? 'on' : 'off'}\`\nUsage: /subagents on | off`).catch(() => {});
         return;
       }
       if (arg !== 'on' && arg !== 'off') {
-        await msg.reply('Invalid value. Usage: /subagents on | off').catch(() => {});
+        await sendUserVisible(msg, 'Invalid value. Usage: /subagents on | off').catch(() => {});
         return;
       }
       const enabled = arg === 'on';
       managed.config.sub_agents = { ...(managed.config.sub_agents ?? {}), enabled };
-      await msg.reply(`✅ Sub-agents \`${enabled ? 'on' : 'off'}\`${!enabled ? ' — spawn_task disabled for this session' : ''}`).catch(() => {});
+      await sendUserVisible(msg, `✅ Sub-agents \`${enabled ? 'on' : 'off'}\`${!enabled ? ' — spawn_task disabled for this session' : ''}`).catch(() => {});
       return;
     }
 
     if (content === '/changes') {
       const replay = managed.session.replay;
       if (!replay) {
-        await msg.reply('Replay is disabled. No change tracking available.').catch(() => {});
+        await sendUserVisible(msg, 'Replay is disabled. No change tracking available.').catch(() => {});
         return;
       }
       try {
         const checkpoints = await replay.list(50);
         if (!checkpoints.length) {
-          await msg.reply('No file changes this session.').catch(() => {});
+          await sendUserVisible(msg, 'No file changes this session.').catch(() => {});
           return;
         }
         const byFile = new Map<string, number>();
         for (const cp of checkpoints) byFile.set(cp.filePath, (byFile.get(cp.filePath) ?? 0) + 1);
         const lines = [`Session changes (${byFile.size} files):`];
         for (const [fp, count] of byFile) lines.push(`✎ \`${fp}\` (${count} edit${count > 1 ? 's' : ''})`);
-        await msg.reply(lines.join('\n')).catch(() => {});
+        await sendUserVisible(msg, lines.join('\n')).catch(() => {});
       } catch (e: any) {
-        await msg.reply(`Error listing changes: ${e?.message ?? String(e)}`).catch(() => {});
+        await sendUserVisible(msg, `Error listing changes: ${e?.message ?? String(e)}`).catch(() => {});
       }
       return;
     }
@@ -516,15 +523,15 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
     if (content === '/undo') {
       const lastPath = managed.session.lastEditedPath;
       if (!lastPath) {
-        await msg.reply('No recent edits to undo.').catch(() => {});
+        await sendUserVisible(msg, 'No recent edits to undo.').catch(() => {});
         return;
       }
       try {
         const { undo_path } = await import('../tools.js');
         const result = await undo_path({ cwd: managed.config.dir || defaultDir, noConfirm: true, dryRun: false } as any, { path: lastPath });
-        await msg.reply(`✅ ${result}`).catch(() => {});
+        await sendUserVisible(msg, `✅ ${result}`).catch(() => {});
       } catch (e: any) {
-        await msg.reply(`❌ Undo failed: ${e?.message ?? String(e)}`).catch(() => {});
+        await sendUserVisible(msg, `❌ Undo failed: ${e?.message ?? String(e)}`).catch(() => {});
       }
       return;
     }
@@ -532,18 +539,18 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
     if (content === '/vault' || content.startsWith('/vault ')) {
       const query = content.slice('/vault'.length).trim();
       if (!query) {
-        await msg.reply('Usage: /vault <search query>').catch(() => {});
+        await sendUserVisible(msg, 'Usage: /vault <search query>').catch(() => {});
         return;
       }
       const vault = managed.session.vault;
       if (!vault) {
-        await msg.reply('Vault is disabled.').catch(() => {});
+        await sendUserVisible(msg, 'Vault is disabled.').catch(() => {});
         return;
       }
       try {
         const results = await vault.search(query, 5);
         if (!results.length) {
-          await msg.reply(`No vault results for "${query}"`).catch(() => {});
+          await sendUserVisible(msg, `No vault results for "${query}"`).catch(() => {});
           return;
         }
         const lines = [`Vault results for "${query}":`];
@@ -552,9 +559,9 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
           const body = (r.value ?? r.snippet ?? r.content ?? '').replace(/\s+/g, ' ').slice(0, 120);
           lines.push(`• ${title}: ${body}`);
         }
-        await msg.reply(lines.join('\n')).catch(() => {});
+        await sendUserVisible(msg, lines.join('\n')).catch(() => {});
       } catch (e: any) {
-        await msg.reply(`Error searching vault: ${e?.message ?? String(e)}`).catch(() => {});
+        await sendUserVisible(msg, `Error searching vault: ${e?.message ?? String(e)}`).catch(() => {});
       }
       return;
     }
@@ -564,7 +571,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
       const pct = managed.session.contextWindow > 0
         ? ((used / managed.session.contextWindow) * 100).toFixed(1)
         : '?';
-      await msg.reply(
+      await sendUserVisible(msg, 
         [
           `Mode: ${managed.config.mode ?? 'code'}`,
           `Approval: ${managed.config.approval_mode}`,
@@ -584,7 +591,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
         const config = await loadRuntimes();
         const redacted = redactConfig(config);
         if (!redacted.hosts.length) {
-          await msg.reply('No hosts configured. Use `idlehands hosts add` in CLI.').catch(() => {});
+          await sendUserVisible(msg, 'No hosts configured. Use `idlehands hosts add` in CLI.').catch(() => {});
           return;
         }
 
@@ -594,11 +601,11 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
 
         const chunks = splitDiscord(lines.join('\n\n'));
         for (const [i, chunk] of chunks.entries()) {
-          if (i === 0) await msg.reply(chunk).catch(() => {});
+          if (i === 0) await sendUserVisible(msg, chunk).catch(() => {});
           else await (msg.channel as any).send(chunk).catch(() => {});
         }
       } catch (e: any) {
-        await msg.reply(`❌ Failed to load hosts: ${e?.message ?? String(e)}`).catch(() => {});
+        await sendUserVisible(msg, `❌ Failed to load hosts: ${e?.message ?? String(e)}`).catch(() => {});
       }
       return;
     }
@@ -609,7 +616,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
         const config = await loadRuntimes();
         const redacted = redactConfig(config);
         if (!redacted.backends.length) {
-          await msg.reply('No backends configured. Use `idlehands backends add` in CLI.').catch(() => {});
+          await sendUserVisible(msg, 'No backends configured. Use `idlehands backends add` in CLI.').catch(() => {});
           return;
         }
 
@@ -619,11 +626,11 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
 
         const chunks = splitDiscord(lines.join('\n\n'));
         for (const [i, chunk] of chunks.entries()) {
-          if (i === 0) await msg.reply(chunk).catch(() => {});
+          if (i === 0) await sendUserVisible(msg, chunk).catch(() => {});
           else await (msg.channel as any).send(chunk).catch(() => {});
         }
       } catch (e: any) {
-        await msg.reply(`❌ Failed to load backends: ${e?.message ?? String(e)}`).catch(() => {});
+        await sendUserVisible(msg, `❌ Failed to load backends: ${e?.message ?? String(e)}`).catch(() => {});
       }
       return;
     }
@@ -633,7 +640,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
         const { loadRuntimes } = await import('../runtime/store.js');
         const config = await loadRuntimes();
         if (!config.models.length) {
-          await msg.reply('No runtime models configured.').catch(() => {});
+          await sendUserVisible(msg, 'No runtime models configured.').catch(() => {});
           return;
         }
 
@@ -643,11 +650,11 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
 
         const chunks = splitDiscord(lines.join('\n\n'));
         for (const [i, chunk] of chunks.entries()) {
-          if (i === 0) await msg.reply(chunk).catch(() => {});
+          if (i === 0) await sendUserVisible(msg, chunk).catch(() => {});
           else await (msg.channel as any).send(chunk).catch(() => {});
         }
       } catch (e: any) {
-        await msg.reply(`❌ Failed to load runtime models: ${e?.message ?? String(e)}`).catch(() => {});
+        await sendUserVisible(msg, `❌ Failed to load runtime models: ${e?.message ?? String(e)}`).catch(() => {});
       }
       return;
     }
@@ -657,7 +664,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
         const { loadActiveRuntime } = await import('../runtime/executor.js');
         const active = await loadActiveRuntime();
         if (!active) {
-          await msg.reply('No active runtime.').catch(() => {});
+          await sendUserVisible(msg, 'No active runtime.').catch(() => {});
           return;
         }
 
@@ -673,11 +680,11 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
 
         const chunks = splitDiscord(lines.join('\n'));
         for (const [i, chunk] of chunks.entries()) {
-          if (i === 0) await msg.reply(chunk).catch(() => {});
+          if (i === 0) await sendUserVisible(msg, chunk).catch(() => {});
           else await (msg.channel as any).send(chunk).catch(() => {});
         }
       } catch (e: any) {
-        await msg.reply(`❌ Failed to read runtime status: ${e?.message ?? String(e)}`).catch(() => {});
+        await sendUserVisible(msg, `❌ Failed to read runtime status: ${e?.message ?? String(e)}`).catch(() => {});
       }
       return;
     }
@@ -686,7 +693,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
       try {
         const modelId = content.slice('/switch'.length).trim();
         if (!modelId) {
-          await msg.reply('Usage: /switch <model-id>').catch(() => {});
+          await sendUserVisible(msg, 'Usage: /switch <model-id>').catch(() => {});
           return;
         }
 
@@ -699,16 +706,16 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
         const result = plan({ modelId, mode: 'live' }, rtConfig, active);
 
         if (!result.ok) {
-          await msg.reply(`❌ Plan failed: ${result.reason}`).catch(() => {});
+          await sendUserVisible(msg, `❌ Plan failed: ${result.reason}`).catch(() => {});
           return;
         }
 
         if (result.reuse) {
-          await msg.reply('✅ Runtime already active and healthy.').catch(() => {});
+          await sendUserVisible(msg, '✅ Runtime already active and healthy.').catch(() => {});
           return;
         }
 
-        const statusMsg = await msg.reply(`⏳ Switching to \`${result.model.display_name}\`...`).catch(() => null);
+        const statusMsg = await sendUserVisible(msg, `⏳ Switching to \`${result.model.display_name}\`...`).catch(() => null);
 
         const execResult = await execute(result, {
           onStep: async (step, status) => {
@@ -717,7 +724,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
             }
           },
           confirm: async (prompt) => {
-            await msg.reply(`⚠️ ${prompt}\nAuto-approving for bot context.`).catch(() => {});
+            await sendUserVisible(msg, `⚠️ ${prompt}\nAuto-approving for bot context.`).catch(() => {});
             return true;
           },
         });
@@ -726,18 +733,18 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
           if (statusMsg) {
             await statusMsg.edit(`✅ Switched to \`${result.model.display_name}\``).catch(() => {});
           } else {
-            await msg.reply(`✅ Switched to \`${result.model.display_name}\``).catch(() => {});
+            await sendUserVisible(msg, `✅ Switched to \`${result.model.display_name}\``).catch(() => {});
           }
         } else {
           const err = `❌ Switch failed: ${execResult.error || 'unknown error'}`;
           if (statusMsg) {
             await statusMsg.edit(err).catch(() => {});
           } else {
-            await msg.reply(err).catch(() => {});
+            await sendUserVisible(msg, err).catch(() => {});
           }
         }
       } catch (e: any) {
-        await msg.reply(`❌ Switch failed: ${e?.message ?? String(e)}`).catch(() => {});
+        await sendUserVisible(msg, `❌ Switch failed: ${e?.message ?? String(e)}`).catch(() => {});
       }
       return;
     }
@@ -750,11 +757,11 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
 
     if (managed.inFlight) {
       if (managed.pendingQueue.length >= maxQueue) {
-        await msg.reply(`⏳ Queue full (${managed.pendingQueue.length}/${maxQueue}). Use /cancel.`).catch(() => {});
+        await sendUserVisible(msg, `⏳ Queue full (${managed.pendingQueue.length}/${maxQueue}). Use /cancel.`).catch(() => {});
         return;
       }
       managed.pendingQueue.push(msg);
-      await msg.reply(`⏳ Queued (#${managed.pendingQueue.length}).`).catch(() => {});
+      await sendUserVisible(msg, `⏳ Queued (#${managed.pendingQueue.length}).`).catch(() => {});
       return;
     }
 
@@ -770,42 +777,42 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
 
     if (!sub || sub === 'status') {
       if (!managed.antonActive) {
-        await msg.reply('No Anton run in progress.').catch(() => {});
+        await sendUserVisible(msg, 'No Anton run in progress.').catch(() => {});
       } else if (managed.antonProgress) {
-        await msg.reply(formatProgressBar(managed.antonProgress)).catch(() => {});
+        await sendUserVisible(msg, formatProgressBar(managed.antonProgress)).catch(() => {});
       } else {
-        await msg.reply('🤖 Anton is running (no progress data yet).').catch(() => {});
+        await sendUserVisible(msg, '🤖 Anton is running (no progress data yet).').catch(() => {});
       }
       return;
     }
 
     if (sub === 'stop') {
       if (!managed.antonActive || !managed.antonAbortSignal) {
-        await msg.reply('No Anton run in progress.').catch(() => {});
+        await sendUserVisible(msg, 'No Anton run in progress.').catch(() => {});
         return;
       }
       managed.antonAbortSignal.aborted = true;
-      await msg.reply('🛑 Anton stop requested.').catch(() => {});
+      await sendUserVisible(msg, '🛑 Anton stop requested.').catch(() => {});
       return;
     }
 
     if (sub === 'last') {
       if (!managed.antonLastResult) {
-        await msg.reply('No previous Anton run.').catch(() => {});
+        await sendUserVisible(msg, 'No previous Anton run.').catch(() => {});
         return;
       }
-      await msg.reply(formatRunSummary(managed.antonLastResult)).catch(() => {});
+      await sendUserVisible(msg, formatRunSummary(managed.antonLastResult)).catch(() => {});
       return;
     }
 
     const filePart = sub === 'run' ? args.replace(/^\S+\s*/, '').trim() : args;
     if (!filePart) {
-      await msg.reply('/anton <file> — start | /anton status | /anton stop | /anton last').catch(() => {});
+      await sendUserVisible(msg, '/anton <file> — start | /anton status | /anton stop | /anton last').catch(() => {});
       return;
     }
 
     if (managed.antonActive) {
-      await msg.reply('⚠️ Anton is already running. Use /anton stop first.').catch(() => {});
+      await sendUserVisible(msg, '⚠️ Anton is already running. Use /anton stop first.').catch(() => {});
       return;
     }
 
@@ -813,7 +820,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
     const filePath = path.resolve(cwd, filePart);
 
     try { await fs.stat(filePath); } catch {
-      await msg.reply(`File not found: ${filePath}`).catch(() => {});
+      await sendUserVisible(msg, `File not found: ${filePath}`).catch(() => {});
       return;
     }
 
@@ -879,7 +886,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
     let pendingCount = 0;
     try { const tf = await parseTaskFile(filePath); pendingCount = tf.pending.length; } catch {}
 
-    await msg.reply(`🤖 Anton started on ${filePart} (${pendingCount} tasks pending)`).catch(() => {});
+    await sendUserVisible(msg, `🤖 Anton started on ${filePart} (${pendingCount} tasks pending)`).catch(() => {});
 
     runAnton({
       config: runConfig,

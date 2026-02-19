@@ -1,6 +1,6 @@
 # Headless / CI Usage
 
-Use one-shot prompts with machine-readable output formats.
+Use one-shot mode when you need deterministic automation.
 
 ## JSON output
 
@@ -21,12 +21,23 @@ idlehands -p "fix lint" --output-format stream-json
 cat src/file.ts | idlehands -p "review this" --output-format json
 ```
 
-## Useful flags
+## Recommended CI flags
 
 - `--fail-on-error`
-- `--diff-only`
-- `--approval-mode yolo` (or `--no-confirm`)
+- `--diff-only` (emit patch and restore clean tree)
+- `--approval-mode yolo` (or `--no-confirm`) for fully non-interactive runs
+- `--offline` when internet checks are undesirable in CI
 
-::: tip CI pattern
-Use `--fail-on-error` and parse JSON/stream-json output for deterministic CI gating.
+## Example CI-style command
+
+```bash
+idlehands --one-shot \
+  --output-format json \
+  --fail-on-error \
+  --approval-mode yolo \
+  -p "run npm test and fix straightforward failures"
+```
+
+::: tip
+Prefer machine-readable outputs (`json` / `stream-json`) and assert on structured fields instead of parsing plain text.
 :::

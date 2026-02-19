@@ -34,7 +34,7 @@ features:
 ## Quick install
 
 ```bash
-npm i -g https://github.com/visorcraft/idlehands/releases/download/v0.6.1/idlehands-0.6.1.tgz
+npm i -g @visorcraft/idlehands@latest
 idlehands --help
 ```
 
@@ -49,3 +49,10 @@ idlehands setup
 idlehands
 idlehands -p "run npm test and fix failures"
 ```
+
+## Why Trifecta matters
+
+Trifecta (Vault + Replay + Lens) is the subsystem that gives Idle Hands durable memory,
+checkpoint-based recovery, and context shaping.
+
+Read: [Guide → Trifecta](/guide/trifecta)

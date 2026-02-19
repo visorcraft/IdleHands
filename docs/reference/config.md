@@ -19,7 +19,7 @@ idlehands setup
 - `dir`: working directory
 - `max_tokens`, `temperature`, `top_p`
 - `timeout`, `max_iterations`
-- `approval_mode`: `plan/default/auto-edit/yolo`
+- `approval_mode`: `plan/reject/default/auto-edit/yolo`
 - `mode`: `code` or `sys`
 - `context_window`, `context_max_tokens`
 - `theme`, `vim_mode`, `harness`
@@ -83,6 +83,6 @@ list entirely. The model works in single-agent mode.
 
 ### `bot`
 
-`bot.telegram` supports token, allowlists, directory restrictions, queue/session limits, approval defaults, and group controls.
+`bot.telegram` supports token, allowlists, directory restrictions, queue/session limits, approval defaults, group controls, and `reply_to_user_messages` (native Telegram reply threading toggle).
 
-`bot.discord` supports token, allowlists, directory restrictions, queue/session limits, approval defaults, and guild controls (`guild_id`, `allow_guilds`).
+`bot.discord` supports token, allowlists, directory restrictions, queue/session limits, approval defaults, guild controls (`guild_id`, `allow_guilds`), and `reply_to_user_messages` (native Discord reply threading toggle).

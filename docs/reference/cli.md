@@ -1,46 +1,87 @@
 # CLI Reference
 
-From `idlehands --help`.
+This page mirrors `idlehands --help` and highlights the most-used entry points.
 
-## Commands
+## Core commands
 
 | Command | Description |
 |---|---|
-| `setup` | Interactive first-run configuration wizard |
-| `bot <telegram|discord>` | Start chat bot frontend |
+| `setup` | Interactive configuration wizard |
+| `bot <telegram\|discord>` | Start bot frontend |
 | `hosts` / `backends` / `models` | Runtime orchestration management |
-| `select --model <id>` | Switch active runtime model |
-| `health` | Probe enabled hosts and models |
+| `select --model <id>` | Activate a runtime model |
+| `health` | Probe enabled hosts/models |
 | `init` | Generate `.idlehands.md` project context |
-| `upgrade` | Self-update from GitHub or npm |
+| `upgrade` | Self-update from configured install source |
 | `rollback` | Restore previous version |
 | `service [action]` | Manage bot background service |
 
-## Flags
+## High-value flags
 
-- `--endpoint URL`, `--model NAME`, `--dir PATH`
-- `--max-tokens N`, `--context-window N`, `--i-know-what-im-doing`
-- `--temperature F`, `--top-p F`
-- `--timeout N`, `--max-iterations N`
-- `--sys`, `--sys-eager`
-- `--no-confirm` / `--yolo`, `--plan`, `--step`, `--lockdown`
-- `--harness ID`
-- `--context-file PATH`, `--no-context`, `--context-max-tokens N`
-- `--compact-at F`
-- `--fresh`, `--session NAME`, `--continue`, `--resume [NAME]`
+### Session targeting
+
+- `--dir PATH`
+- `--session NAME`
+- `--resume [NAME]`
+- `--continue`
+- `--fresh`
+
+### Execution behavior
+
+- `--approval-mode plan|reject|default|auto-edit|yolo`
+- `--no-confirm` (alias for yolo behavior)
+- `--step`
+- `--lockdown`
+
+### Output + automation
+
+- `--one-shot`
 - `--prompt, -p TEXT`
 - `--output-format text|json|stream-json`
-- `--fail-on-error`, `--diff-only`, `--one-shot`
-- `--replay PATH`
-- `--no-trifecta`, `--no-replay`, `--no-vault`, `--no-lens`, `--vault-mode active|passive|off`
-- `--theme NAME`, `--vim`, `--no-tui`, `--color auto|always|never`
-- `--dry-run`, `--quiet`, `--verbose`
-- `--config PATH`, `--offline`, `--no-update-check`
-- `--show-server-metrics`, `--no-server-metrics`
-- `--slow-tg-tps-threshold N`, `--auto-detect-model-change`
-- `--mcp PATH`, `--mcp-tool-budget N`, `--mcp-call-timeout-sec N`
-- `--help, -h`, `--version, -v`
+- `--fail-on-error`
+- `--diff-only`
+
+### Runtime/model controls
+
+- `--endpoint URL`
+- `--model NAME`
+- `--context-window N`
+- `--max-tokens N`
+
+### Trifecta controls
+
+- `--no-trifecta`
+- `--no-vault`
+- `--no-lens`
+- `--no-replay`
+- `--vault-mode active|passive|off`
+
+### Misc
+
+- `--no-tui`
+- `--offline`
+- `--config PATH`
+- `--help`, `--version`
+
+## Minimal examples
+
+```bash
+# interactive
+idlehands
+
+# one-shot task
+idlehands --one-shot -p "run tests and fix straightforward failures"
+
+# specific project + safe approval mode
+idlehands --dir ~/projects/app --approval-mode default
+
+# CI-style JSON output
+idlehands --one-shot --output-format json --fail-on-error -p "lint and summarize"
+```
 
 ::: tip
-For exhaustive examples, pair this page with [Commands](/reference/commands) and [Configuration](/reference/config).
+For full command behavior and slash-command details, pair this page with:
+- [Commands](/reference/commands)
+- [Configuration](/reference/config)
+- [Safety](/reference/safety)
 :::

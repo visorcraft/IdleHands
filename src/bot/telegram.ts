@@ -272,6 +272,7 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
     (chatId) => new TelegramConfirmProvider(bot, chatId, botConfig.confirm_timeout_sec ?? 300),
   );
   const editIntervalMs = botConfig.edit_interval_ms ?? 1500;
+  const replyToUserMessages = botConfig.reply_to_user_messages === true;
 
   // Override default_dir from env
   if (process.env.IDLEHANDS_TG_DIR) {
@@ -500,7 +501,7 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
     // Get or create session
     const managed = await sessions.getOrCreate(chatId, userId);
     if (!managed) {
-      await ctx.reply('⚠️ Too many active sessions. Try again later or /reset an existing one.');
+      await ctx.reply('⚠️ Too many active sessions. Try again later (or wait for an old session to expire).');
       return;
     }
 
@@ -516,7 +517,15 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
     }
 
     const fileThreshold = botConfig.file_threshold_chars ?? 8192;
-    await processMessage(bot, sessions, managed, text, editIntervalMs, fileThreshold, ctx.message.message_id);
+    await processMessage(
+      bot,
+      sessions,
+      managed,
+      text,
+      editIntervalMs,
+      fileThreshold,
+      replyToUserMessages ? ctx.message.message_id : undefined,
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -554,7 +563,7 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
   // Register commands with Telegram
   // ---------------------------------------------------------------------------
 
-  await bot.api.setMyCommands([
+  const telegramCommands = [
     { command: 'start', description: 'Welcome + config summary' },
     { command: 'help', description: 'List commands' },
     { command: 'new', description: 'Start a new session' },
@@ -575,7 +584,22 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
     { command: 'rtstatus', description: 'Show active runtime status' },
     { command: 'switch', description: 'Switch runtime model' },
     { command: 'anton', description: 'Autonomous task runner' },
-  ]).catch((e) => console.error(`[bot] setMyCommands failed: ${e?.message}`));
+  ];
+
+  // Clear stale command scopes (default/private + optional language variants)
+  // so renamed commands (e.g. /reset -> /new) reliably propagate.
+  const commandScopes: Array<{ scope?: any; language_code?: string }> = [
+    {},
+    { scope: { type: 'all_private_chats' } },
+    { language_code: 'en' },
+    { scope: { type: 'all_private_chats' }, language_code: 'en' },
+  ];
+
+  for (const opts of commandScopes) {
+    await bot.api.deleteMyCommands(opts as any).catch(() => {});
+    await bot.api.setMyCommands(telegramCommands, opts as any)
+      .catch((e) => console.error(`[bot] setMyCommands failed (${JSON.stringify(opts)}): ${e?.message}`));
+  }
 
   // ---------------------------------------------------------------------------
   // Start polling

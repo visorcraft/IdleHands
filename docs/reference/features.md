@@ -2,11 +2,22 @@
 
 ## Trifecta: Vault + Replay + Lens
 
+Trifecta is the integrated subsystem that gives Idle Hands durable memory,
+checkpoint-based recovery, and context shaping.
+
 - **Vault**: persistent memory and notes (`/vault`, `/note`, `/notes`)
 - **Replay**: checkpoints and rewind/diff/undo (`/checkpoints`, `/rewind`, `/diff`, `/undo`)
-- **Lens**: structural analysis for indexing and context shaping
+- **Lens**: structural analysis/projection for compact context handling
 
-Runtime controls: `--no-trifecta`, `--no-vault`, `--no-lens`, `--no-replay`, `--vault-mode active|passive|off`
+Runtime controls:
+
+- `--no-trifecta`
+- `--no-vault`
+- `--no-lens`
+- `--no-replay`
+- `--vault-mode active|passive|off`
+
+See full behavior and setup: [Guide → Trifecta](/guide/trifecta)
 
 ## Themes
 

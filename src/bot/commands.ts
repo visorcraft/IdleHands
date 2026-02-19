@@ -417,7 +417,7 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
   // Ensure session exists
   const session = managed || await sessions.getOrCreate(chatId, userId);
   if (!session) {
-    await ctx.reply('⚠️ Too many active sessions. Try again later or /reset.');
+    await ctx.reply('⚠️ Too many active sessions. Try again later (or wait for an old session to expire).');
     return;
   }
 

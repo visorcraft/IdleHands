@@ -1,51 +1,86 @@
 # Bots (Telegram + Discord)
 
+Idle Hands supports Telegram and Discord frontends for remote operation.
+
+## Security-first defaults
+
+Before enabling bots:
+
+- restrict `allowed_users` to trusted IDs only
+- keep bots on least-privilege accounts
+- avoid running as root
+- use explicit `allowed_dirs` to limit filesystem scope
+
 ## Telegram
+
+Start:
 
 ```bash
 IDLEHANDS_TG_TOKEN=123456:ABC-DEF idlehands bot telegram
 ```
 
-Recommended hardening:
-- Disable groups and inline mode in BotFather
-- Keep privacy on
-- Restrict `allowed_users`
-- Do not run as root
+Recommended BotFather settings:
 
-Telegram bot commands:
-- `/reset`, `/cancel`, `/status`
-- `/dir <path>`, `/model <name>`, `/approval <mode>`, `/mode <mode>`
+- disable groups unless explicitly needed
+- disable inline mode
+- keep group privacy enabled
+
+Common commands:
+
+- `/new`, `/cancel`, `/status`
+- `/dir <path>`, `/model`, `/approval <mode>`, `/mode <mode>`
 - `/changes`, `/undo`, `/vault <query>`, `/compact`
 - `/hosts`, `/backends`, `/rtmodels`, `/rtstatus`, `/switch <model-id>`
 
 ## Discord
 
+Start:
+
 ```bash
 IDLEHANDS_DISCORD_TOKEN=... idlehands bot discord
 ```
 
-Recommended hardening:
-- Restrict `allowed_users` to trusted Discord IDs
-- Set `guild_id` to lock to one server
-- Do not run as root
+Recommended configuration:
 
-Discord bot commands:
-- `/reset`, `/cancel`, `/status`
+- restrict `allowed_users`
+- set `guild_id` when using guild mode
+- keep DM-only mode unless channel operation is required
+
+Common commands:
+
+- `/new`, `/cancel`, `/status`
+- `/dir <path>`, `/model`, `/approval <mode>`, `/mode <mode>`
+- `/changes`, `/undo`, `/vault <query>`, `/compact`
 - `/hosts`, `/backends`, `/rtmodels`, `/rtstatus`, `/switch <model-id>`
 
-Set `allow_guilds: true` to enable guild channels (default is DM-only).
+Set `allow_guilds: true` to enable guild channels.
+
+## Reply threading behavior
+
+By default, bot responses are sent as normal messages (not native threaded replies).
+
+Enable native reply threading if you want quote/reply coupling:
+
+```json
+{
+  "bot": {
+    "telegram": { "reply_to_user_messages": true },
+    "discord": { "reply_to_user_messages": true }
+  }
+}
+```
 
 ## Service management
 
-The setup wizard can install a systemd user service that runs `idlehands bot --all`.
+Use systemd user service commands:
 
 ```bash
-idlehands service status
+idlehands service install
 idlehands service start
+idlehands service status
+idlehands service logs
 idlehands service stop
 idlehands service restart
-idlehands service logs
-idlehands service install
 idlehands service uninstall
 ```
 
@@ -53,6 +88,6 @@ idlehands service uninstall
 User-level services stop on logout unless linger is enabled:
 
 ```bash
-loginctl enable-linger
+sudo loginctl enable-linger <user>
 ```
 :::

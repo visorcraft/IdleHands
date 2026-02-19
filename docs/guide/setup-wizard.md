@@ -7,65 +7,72 @@ idlehands setup
 ```
 
 ::: tip First-run shortcut
-Running `idlehands` with no config file launches setup automatically.
+If no config file exists, running `idlehands` starts setup automatically.
 :::
 
-The wizard is a fullscreen TUI with five steps.
+The wizard is designed to get you from zero to a working session in a few minutes.
 
 ## Step 1 of 5 — Runtime
 
-Configure:
-- **Hosts**: machines that run inference (local or SSH)
-- **Backends**: compute layers (Vulkan, CUDA, ROCm, CPU) with env vars and args
+Define how Idle Hands reaches your model runtime:
+
+- **Hosts**: where inference runs (local or SSH)
+- **Backends**: compute layer + env/args (CUDA, ROCm, Vulkan, CPU, custom)
 - **Models**: model source + launch/probe commands
 
-Template variables used in runtime commands:
+Template variables available in launch/probe commands:
+
 - `{source}`
 - `{port}`
 - `{backend_env}`
 - `{backend_args}`
 - `{host}`
 
-After saving, setup launches the model and probes for health.
+After saving, setup can launch and health-check the selected runtime.
 
 ## Step 2 of 5 — Working directory
 
-Choose where Idle Hands reads/writes files by default (overridable with `--dir` or `/dir`).
+Choose the default directory Idle Hands can read/write.
+
+You can override later with:
+
+- CLI: `--dir`
+- Session command: `/dir`
 
 ## Step 3 of 5 — Approval mode
 
-Available modes:
-- `plan`
-- `default`
-- `auto-edit`
-- `yolo`
+Choose your default operation posture:
+
+- `plan` — plan only, no mutations
+- `reject` — non-interactive safe mode for mutating actions
+- `default` — confirm before risky actions
+- `auto-edit` — day-to-day coding flow with safeguards
+- `yolo` — no confirmations
 
 ## Step 4 of 5 — Theme
 
 Built-in themes:
+
 - `default`
 - `dark`
 - `light`
 - `minimal`
 - `hacker`
 
-## Step 5 of 5 — Bot setup
+## Step 5 of 5 — Bot setup (optional)
 
-Set up:
-- Telegram bot
-- Discord bot
-- Or skip bots
+Configure Telegram and/or Discord, or skip.
 
-Configured bots can be edited later. The wizard can also install a **systemd user service** to run bot frontends in the background.
+The wizard can also install a **systemd user service** for bot mode.
 
-After confirmation, setup writes `~/.config/idlehands/config.json` and can launch a session.
+At the end, setup writes `~/.config/idlehands/config.json` and can launch a session immediately.
 
 ## Re-running setup
 
-Run setup any time to modify existing values:
+You can safely run setup any time:
 
 ```bash
 idlehands setup
 ```
 
-Existing entries are pre-populated, and manually added keys are preserved.
+Existing values are prefilled, and unknown/custom keys in config are preserved.

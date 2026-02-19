@@ -1,6 +1,6 @@
 # Command Reference
 
-Idle Hands includes 53 primary slash commands, plus aliases/templates/custom commands.
+Idle Hands provides a broad slash-command surface for session control, runtime management, safety, and recovery.
 
 ## Session
 
@@ -8,7 +8,7 @@ Idle Hands includes 53 primary slash commands, plus aliases/templates/custom com
 - `/compact [topic|hard|dry]`
 - `/save <path>`, `/load <path>`, `/sessions`
 - `/conv branch <name>`, `/conv branches`, `/conv checkout <name>`, `/conv merge <name>`
-- `/quit`, `/exit`
+- `/new`, `/quit`, `/exit`
 
 ## Model / server / diagnostics
 
@@ -21,7 +21,7 @@ Idle Hands includes 53 primary slash commands, plus aliases/templates/custom com
 
 - `/edit [seed]`, `/mode [code|sys]`
 - `/system`, `/system tokens`, `/system edit`, `/system reset`
-- `/approval [plan|default|auto-edit|yolo]`
+- `/approval [plan|reject|default|auto-edit|yolo]`
 - `/plan [on|off|toggle|show]`, `/step [on|off|toggle]`
 - `/approve [N]`, `/reject`
 - `/quiet`, `/normal`, `/verbose`
@@ -55,12 +55,15 @@ Idle Hands includes 53 primary slash commands, plus aliases/templates/custom com
 - `/anton stop`
 - `/anton last`
 
-## Prompt shortcuts and shell helpers
+## Prompt shortcuts + shell helpers
 
-Built-in templates: `/fix`, `/review`, `/test`, `/explain`, `/refactor`
+Built-in templates:
+
+- `/fix`, `/review`, `/test`, `/explain`, `/refactor`
 
 Shell helpers:
-- `!` enters direct shell mode
-- `!<cmd>` runs a shell command
-- `!!<cmd>` runs and injects output into context
-- `/exit-shell` exits direct shell mode
+
+- `!` enter direct shell mode
+- `!<cmd>` run shell command
+- `!!<cmd>` run shell command and inject output
+- `/exit-shell` leave direct shell mode

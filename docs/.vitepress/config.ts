@@ -20,6 +20,7 @@ export default defineConfig({
             { text: 'TUI', link: '/guide/tui' },
             { text: 'Bots', link: '/guide/bots' },
             { text: 'Runtime Orchestration', link: '/guide/runtime' },
+            { text: 'Trifecta', link: '/guide/trifecta' },
             { text: 'Anton', link: '/guide/anton' },
             { text: 'Headless / CI', link: '/guide/headless' }
           ]

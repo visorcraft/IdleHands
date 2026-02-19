@@ -2,7 +2,7 @@
  * Anton autonomous task runner — main orchestrator.
  *
  * Coordinates all components: parser, prompt, verifier, lock, git, session.
- * Reads like a recipe following the TASKS.md Phase F pseudocode exactly.
+ * Structured as a deterministic orchestration flow for autonomous task execution.
  */
 
 import type { 
@@ -56,7 +56,7 @@ export interface RunAntonOpts {
 }
 
 /**
- * Main Anton orchestrator. Follows Phase F pseudocode exactly.
+ * Main Anton orchestrator.
  */
 export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
   const { config, idlehandsConfig, progress, abortSignal, apiKey, vault, lens } = opts;

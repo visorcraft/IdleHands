@@ -10,7 +10,7 @@ import type { ApprovalMode } from '../types.js';
 
 /** Single task parsed from a markdown checkbox line. */
 export interface AntonTask {
-  /** Stable key hash (see TASKS.md §7.2). NOT a line number. */
+  /** Stable key hash derived from task identity fields. NOT a line number. */
   key: string;
   /** Task description text (after `- [ ] ` / `- [x] `). */
   text: string;
