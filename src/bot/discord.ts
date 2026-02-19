@@ -84,6 +84,19 @@ function safeContent(text: string): string {
 }
 
 /**
+ * Check if the model response contains an escalation request.
+ * Returns { escalate: true, reason: string } if escalation marker found at start of response.
+ */
+function detectEscalation(text: string): { escalate: boolean; reason?: string } {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^\[ESCALATE:\s*([^\]]+)\]/i);
+  if (match) {
+    return { escalate: true, reason: match[1].trim() };
+  }
+  return { escalate: false };
+}
+
+/**
  * Resolve which agent persona should handle a message.
  * Priority: user > channel > guild > default > first agent > null
  */
@@ -205,6 +218,29 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
       ? normalizeApprovalMode(persona.approval_mode, approvalMode)
       : approvalMode;
 
+    // Build system prompt with escalation instructions if configured
+    let systemPrompt = persona?.system_prompt;
+    if (persona?.escalation?.models?.length && persona?.escalation?.auto !== false) {
+      const escalationModels = persona.escalation.models.join(', ');
+      const escalationInstructions = `
+
+[AUTO-ESCALATION]
+You have access to more powerful models when needed: ${escalationModels}
+If you encounter a task that is too complex, requires deeper reasoning, or you're struggling to solve, 
+you can escalate by including this exact marker at the START of your response:
+[ESCALATE: brief reason]
+
+Examples:
+- [ESCALATE: complex algorithm requiring multi-step reasoning]
+- [ESCALATE: need larger context window for this codebase analysis]
+- [ESCALATE: struggling with this optimization problem]
+
+Only escalate when genuinely needed. Most tasks should be handled by your current model.
+When you escalate, your request will be re-run on a more capable model.`;
+      
+      systemPrompt = (systemPrompt || '') + escalationInstructions;
+    }
+
     const cfg: IdlehandsConfig = {
       ...config,
       dir: agentDir,
@@ -213,7 +249,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
       // Agent-specific overrides
       ...(persona?.model && { model: persona.model }),
       ...(persona?.endpoint && { endpoint: persona.endpoint }),
-      ...(persona?.system_prompt && { system_prompt_override: persona.system_prompt }),
+      ...(systemPrompt && { system_prompt_override: systemPrompt }),
       ...(persona?.max_tokens && { max_tokens: persona.max_tokens }),
       ...(persona?.temperature !== undefined && { temperature: persona.temperature }),
       ...(persona?.top_p !== undefined && { top_p: persona.top_p }),
@@ -389,6 +425,48 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
       if (!isTurnActive(managed, turnId)) return;
       markProgress(managed, turnId);
       const finalText = safeContent(streamed || result.text);
+      
+      // Check for auto-escalation request in response
+      const escalation = managed.agentPersona?.escalation;
+      const autoEscalate = escalation?.auto !== false && escalation?.models?.length;
+      const maxEscalations = escalation?.max_escalations ?? 2;
+      
+      if (autoEscalate && managed.escalationCount < maxEscalations) {
+        const escResult = detectEscalation(finalText);
+        if (escResult.escalate) {
+          // Determine next model in escalation chain
+          const nextIndex = Math.min(managed.currentModelIndex, escalation!.models!.length - 1);
+          const targetModel = escalation!.models![nextIndex];
+          
+          console.error(`[bot:discord] ${managed.userId} auto-escalation requested: ${escResult.reason}`);
+          
+          // Update placeholder with escalation notice
+          if (placeholder) {
+            await placeholder.edit(`⚡ Escalating to \`${targetModel}\` (${escResult.reason})...`).catch(() => {});
+          }
+          
+          // Set up escalation for re-run
+          managed.pendingEscalation = targetModel;
+          managed.currentModelIndex = nextIndex + 1;
+          managed.escalationCount += 1;
+          
+          // Recreate session with escalated model (preserving context is optional - here we start fresh)
+          const cfg: IdlehandsConfig = {
+            ...managed.config,
+            model: targetModel,
+          };
+          await recreateSession(managed, cfg);
+          
+          // Finish this turn and re-run with escalated model
+          clearInterval(watchdog);
+          finishTurn(managed, turnId);
+          
+          // Re-process the original message with the escalated model
+          await processMessage(managed, msg);
+          return;
+        }
+      }
+      
       const chunks = splitDiscord(finalText);
 
       if (placeholder) {
