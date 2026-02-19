@@ -1114,7 +1114,7 @@ export async function createSession(opts: {
   const harnessVaultMode: TrifectaMode = harness.defaults?.trifecta?.vaultMode || 'off';
   const vaultMode = (cfg.trifecta?.vault?.mode || harnessVaultMode) as TrifectaMode;
   const vaultEnabled = cfg.trifecta?.enabled !== false && cfg.trifecta?.vault?.enabled !== false;
-  const activeVaultTools = vaultEnabled && vaultMode === 'active';
+  let activeVaultTools = vaultEnabled && vaultMode === 'active';
 
   const lensEnabled = cfg.trifecta?.enabled !== false && cfg.trifecta?.lens?.enabled !== false;
 
@@ -1201,8 +1201,17 @@ export async function createSession(opts: {
   }
   if (vaultEnabled && !opts.runtime?.vault) {
     await vault?.init().catch((e: any) => {
+      // If vault storage is unavailable (e.g., sandboxed FS / disk I/O),
+      // degrade gracefully by disabling active vault tools for this run.
+      activeVaultTools = false;
+      const msg = String(e?.message ?? e ?? 'unknown error');
+      const isDiskLike = /disk i\/o|sqlite|readonly|read-only|permission denied/i.test(msg);
       if (!process.env.IDLEHANDS_QUIET_WARNINGS) {
-        console.warn(`[warn] vault init failed: ${e?.message ?? e}`);
+        if (isDiskLike) {
+          console.warn('[warn] vault disabled for this session (storage unavailable).');
+        } else {
+          console.warn(`[warn] vault init failed: ${msg}`);
+        }
       }
     });
   }
@@ -2961,16 +2970,17 @@ export async function createSession(opts: {
             if (e instanceof AgentLoopBreak) throw e;
             const msg = e?.message ?? String(e);
 
-            // Fast-fail package install retry loops in non-yolo modes.
+            // Fast-fail package-install bypass loops in non-yolo modes.
+            // Applies to direct exec attempts and spawn_task delegation attempts.
             if (
-              tc.function.name === 'exec' &&
-              /blocked \(package install\/remove\) without --no-confirm\/--yolo/i.test(msg)
+              (tc.function.name === 'exec' || tc.function.name === 'spawn_task') &&
+              /package install\/remove.*(?:blocked|restricted)|without --no-confirm\/--yolo/i.test(msg)
             ) {
               blockedPackageInstallAttempts += 1;
               if (blockedPackageInstallAttempts >= 2) {
                 throw new AgentLoopBreak(
-                  'exec: repeated blocked package install attempts in current approval mode. ' +
-                  'This is a session-level restriction; command flags like --yolo/--no-confirm inside the shell command do not override it.'
+                  `${tc.function.name}: repeated blocked package-install attempts in current approval mode. ` +
+                  'Do not retry or delegate this. Continue with a zero-dependency path, or ask the user to restart with --no-confirm/--yolo.'
                 );
               }
             }

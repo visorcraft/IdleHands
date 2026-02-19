@@ -456,7 +456,7 @@ describe('agent package-install retry guard', () => {
     try {
       await assert.rejects(
         () => session.ask('install deps'),
-        /repeated blocked package install attempts/i
+        /repeated blocked package-?install attempts/i
       );
       assert.equal(callNo, 2, `expected guard to trip on second blocked attempt, got ${callNo}`);
     } finally {
