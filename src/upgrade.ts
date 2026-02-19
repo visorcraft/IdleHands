@@ -10,7 +10,7 @@
  * Daily auto-check: on REPL startup, check once per 24h if a newer version exists.
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -24,6 +24,58 @@ const RELEASE_ASSET_BASENAME = 'idlehands';
 const STATE_DIR = stateDir();
 const UPDATE_CHECK_FILE = path.join(STATE_DIR, 'last-update-check.json');
 const ROLLBACK_DIR = path.join(STATE_DIR, 'rollback');
+
+type InstallPaths = {
+  binPath: string;
+  prefix: string;
+  installDir: string;
+  npmBin: string;
+};
+
+function isUsableCommand(cmd: string): boolean {
+  try {
+    execFileSync(cmd, ['--version'], { stdio: 'ignore', timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Resolve the currently-running idlehands install target (prefix + npm binary). */
+function resolveInstallPaths(): InstallPaths | null {
+  try {
+    const binPath = execSync('command -v idlehands 2>/dev/null || echo ""', { encoding: 'utf8' }).trim();
+    if (!binPath) return null;
+
+    // npm global prefixes place binaries in <prefix>/bin
+    const prefix = path.resolve(path.dirname(binPath), '..');
+    const installDir = path.join(prefix, 'lib', 'node_modules', NPM_SCOPED_PACKAGE);
+
+    const npmByPrefix = path.join(prefix, 'bin', 'npm');
+    const npmByNodeDir = path.join(path.dirname(process.execPath), 'npm');
+    const npmBin = isUsableCommand(npmByPrefix)
+      ? npmByPrefix
+      : (isUsableCommand(npmByNodeDir) ? npmByNodeDir : 'npm');
+
+    return { binPath, prefix, installDir, npmBin };
+  } catch {
+    return null;
+  }
+}
+
+function npmInstallGlobal(spec: string): void {
+  const target = resolveInstallPaths();
+  if (target) {
+    execFileSync(target.npmBin, ['install', '-g', '--prefix', target.prefix, spec], {
+      stdio: 'inherit',
+      timeout: 120_000,
+      env: { ...process.env, npm_config_prefix: target.prefix },
+    });
+    return;
+  }
+  // Fallback if we cannot resolve the active install target.
+  execFileSync('npm', ['install', '-g', spec], { stdio: 'inherit', timeout: 120_000 });
+}
 
 /** Resolve a GitHub token from config, env, or gh CLI config. */
 function resolveGitHubToken(): string | null {
@@ -95,28 +147,14 @@ function compareSemver(a: string, b: string): number {
   return 0;
 }
 
-/** Detect how idlehands was installed by examining the install path. */
+/** Detect how idlehands was installed by examining the active executable path. */
 export function detectInstallSource(): InstallSource {
-  try {
-    // If installed via npm, the resolved path will be inside node_modules.
-    const resolved = execSync('which idlehands 2>/dev/null || echo ""', { encoding: 'utf8' }).trim();
-    if (!resolved) return 'unknown';
+  const target = resolveInstallPaths();
+  if (!target) return 'unknown';
 
-    if (resolved.includes('node_modules')) {
-      return 'npm';
-    }
-
-    // If the binary exists but isn't in node_modules, check npm global metadata.
-    try {
-      const list = execSync(`npm ls -g ${NPM_SCOPED_PACKAGE} --json 2>/dev/null`, { encoding: 'utf8' });
-      const parsed = JSON.parse(list);
-      if (parsed?.dependencies?.[NPM_SCOPED_PACKAGE]) return 'npm';
-    } catch {}
-
-    return 'github';
-  } catch {
-    return 'unknown';
-  }
+  // npm global installs map to <prefix>/lib/node_modules/<package>/...
+  if (target.installDir.includes('node_modules')) return 'npm';
+  return 'github';
 }
 
 /** Fetch the latest version from GitHub Releases API. */
@@ -237,15 +275,9 @@ interface RollbackInfo {
   timestamp: string;
 }
 
-/** Get the current npm global install dir for idlehands. */
+/** Get the active idlehands install dir (same target being upgraded). */
 function getNpmGlobalDir(): string | null {
-  try {
-    const root = execSync('npm root -g 2>/dev/null', { encoding: 'utf8' }).trim();
-    if (!root) return null;
-    return path.join(root, NPM_SCOPED_PACKAGE);
-  } catch {
-    return null;
-  }
+  return resolveInstallPaths()?.installDir ?? null;
 }
 
 /**
@@ -336,7 +368,7 @@ export async function performRollback(): Promise<void> {
   console.log(`Installing from: ${info.backupPath}`);
 
   try {
-    execSync(`npm install -g "${info.backupPath}"`, { stdio: 'inherit' });
+    npmInstallGlobal(info.backupPath);
     console.log(`\n✓ Rolled back to v${info.version}`);
 
     // Clean up rollback dir after successful rollback
@@ -375,8 +407,8 @@ export async function performUpgrade(currentVersion: string, source: InstallSour
 
   try {
     if (info.source === 'npm') {
-      // npm global install
-      execSync(`npm install -g ${NPM_SCOPED_PACKAGE}@latest`, { stdio: 'inherit' });
+      // npm global install to the same prefix as the active idlehands binary.
+      npmInstallGlobal(`${NPM_SCOPED_PACKAGE}@latest`);
     } else {
       // GitHub release — download tarball with auth (private repos), then install locally
       const token = resolveGitHubToken();
@@ -407,7 +439,7 @@ export async function performUpgrade(currentVersion: string, source: InstallSour
       await fs.writeFile(tmpPath, buf);
       console.log(`Saved to ${tmpPath}`);
 
-      execSync(`npm install -g ${tmpPath}`, { stdio: 'inherit' });
+      npmInstallGlobal(tmpPath);
 
       // Clean up
       await fs.unlink(tmpPath).catch(() => {});
@@ -425,7 +457,7 @@ export async function performUpgrade(currentVersion: string, source: InstallSour
     if (rollbackInfo) {
       console.error('\nAttempting auto-rollback...');
       try {
-        execSync(`npm install -g "${rollbackInfo.backupPath}"`, { stdio: 'inherit' });
+        npmInstallGlobal(rollbackInfo.backupPath);
         console.error(`✓ Auto-rolled back to v${rollbackInfo.version}`);
       } catch (re: any) {
         console.error(`✗ Auto-rollback also failed: ${re?.message ?? String(re)}`);
