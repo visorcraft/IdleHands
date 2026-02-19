@@ -1,0 +1,756 @@
+/**
+ * Idle Hands Telegram Bot — main entry point.
+ * grammy-based long-polling bot that wraps the agent core.
+ */
+
+import { Bot, InputFile } from 'grammy';
+import type { IdlehandsConfig, BotTelegramConfig, ToolCallEvent, ToolResultEvent } from '../types.js';
+import type { AgentHooks } from '../agent.js';
+import { SessionManager, type ManagedSession } from './session-manager.js';
+import { markdownToTelegramHtml, splitMessage, escapeHtml, formatToolCallSummary } from './format.js';
+import {
+  handleStart, handleHelp, handleNew, handleCancel,
+  handleStatus, handleDir, handleModel, handleCompact,
+  handleApproval, handleMode, handleSubAgents, handleChanges, handleUndo, handleVault,
+  handleAnton,
+} from './commands.js';
+import { TelegramConfirmProvider } from './confirm-telegram.js';
+
+// ---------------------------------------------------------------------------
+// Streaming message helper
+// ---------------------------------------------------------------------------
+
+class StreamingMessage {
+  private buffer = '';
+  private toolLines: string[] = [];
+  private lastToolLine = "";
+  private lastToolRepeat = 0;
+  private messageId: number | null = null;
+  private editTimer: ReturnType<typeof setInterval> | null = null;
+  private typingTimer: ReturnType<typeof setInterval> | null = null;
+  private lastEditText = '';
+  private finalized = false;
+  private backoffMs = 0;
+
+  constructor(
+    private bot: Bot,
+    private chatId: number,
+    private editIntervalMs: number,
+    private replyToId?: number,
+    private fileThresholdChars: number = 8192
+  ) {}
+
+  async init(): Promise<void> {
+    // Show "typing..." indicator immediately; repeat every 4s (Telegram auto-expires at ~5s)
+    this.bot.api.sendChatAction(this.chatId, 'typing').catch(() => {});
+    this.typingTimer = setInterval(() => {
+      if (!this.finalized) {
+        this.bot.api.sendChatAction(this.chatId, 'typing').catch(() => {});
+      }
+    }, 4_000);
+
+    const msg = await this.bot.api.sendMessage(this.chatId, '⏳ Thinking...', {
+      reply_to_message_id: this.replyToId,
+    });
+    this.messageId = msg.message_id;
+    this.startEditLoop();
+  }
+
+  private stopTyping(): void {
+    if (this.typingTimer) {
+      clearInterval(this.typingTimer);
+      this.typingTimer = null;
+    }
+  }
+
+  onToken(token: string): void {
+    this.buffer += token;
+  }
+
+  onToolCall(call: ToolCallEvent): void {
+    const summary = formatToolCallSummary(call);
+    const line = `◆ ${summary}...`;
+    if (this.lastToolLine === line && this.toolLines.length > 0) {
+      this.lastToolRepeat += 1;
+      this.toolLines[this.toolLines.length - 1] = `${line} (x${this.lastToolRepeat + 1})`;
+      return;
+    }
+    this.lastToolLine = line;
+    this.lastToolRepeat = 0;
+    this.toolLines.push(line);
+  }
+
+  onToolResult(result: ToolResultEvent): void {
+    this.lastToolLine = "";
+    this.lastToolRepeat = 0;
+    if (this.toolLines.length > 0) {
+      const icon = result.success ? '✓' : '✗';
+      this.toolLines[this.toolLines.length - 1] = `${icon} ${result.name}: ${result.summary}`;
+    }
+  }
+
+  private startEditLoop(): void {
+    this.editTimer = setInterval(() => this.flush(), this.editIntervalMs);
+  }
+
+  private async flush(): Promise<void> {
+    if (!this.messageId || this.finalized) return;
+    if (this.backoffMs > 0) {
+      this.backoffMs = Math.max(0, this.backoffMs - this.editIntervalMs);
+      return; // skip this edit cycle while backing off
+    }
+    const text = this.render();
+    if (!text || text === this.lastEditText) return;
+    this.lastEditText = text;
+    try {
+      await this.bot.api.editMessageText(this.chatId, this.messageId, text, {
+        parse_mode: 'HTML',
+      });
+    } catch (e: any) {
+      const desc = e?.description ?? e?.message ?? '';
+      if (desc.includes('Too Many Requests') || desc.includes('429')) {
+        // Exponential backoff on rate limit
+        const retryAfter = (e?.parameters?.retry_after ?? 3) * 1000;
+        this.backoffMs = Math.min(retryAfter * 2, 30_000);
+        console.error(`[bot] rate limited, backing off ${this.backoffMs}ms`);
+      } else if (!desc.includes('message is not modified') && !desc.includes('message to edit not found')) {
+        console.error(`[bot] edit error: ${desc}`);
+      }
+    }
+  }
+
+  private render(): string {
+    let out = '';
+    if (this.toolLines.length) {
+      out += `<pre>${escapeHtml(this.toolLines.join('\n'))}</pre>\n\n`;
+    }
+    if (this.buffer) {
+      out += markdownToTelegramHtml(this.buffer);
+    }
+    if (!out.trim()) {
+      out = '⏳ Thinking...';
+    }
+    return out.slice(0, 4096);
+  }
+
+  /** Finalize: stop the edit loop and send the final response. */
+  async finalize(text: string): Promise<void> {
+    this.finalized = true;
+    this.stopTyping();
+    if (this.editTimer) {
+      clearInterval(this.editTimer);
+      this.editTimer = null;
+    }
+
+    const html = this.renderFinal(text);
+
+    // Large output fallback: send as .md file attachment
+    if (text.length > this.fileThresholdChars) {
+      // Edit placeholder to a summary
+      const summary = text.slice(0, 200).replace(/\n/g, ' ').trim();
+      const summaryHtml = `📄 Response is ${text.length.toLocaleString()} chars — sent as file.\n\n<i>${escapeHtml(summary)}…</i>`;
+      if (this.messageId) {
+        await this.bot.api.editMessageText(this.chatId, this.messageId, summaryHtml, {
+          parse_mode: 'HTML',
+        }).catch(() => {});
+      }
+      const fileContent = Buffer.from(text, 'utf-8');
+      await this.bot.api.sendDocument(this.chatId, new InputFile(fileContent, 'response.md'), {
+        caption: `Full response (${text.length.toLocaleString()} chars)`,
+      }).catch((e: any) => {
+        console.error(`[bot] sendDocument error: ${e?.message ?? e}`);
+      });
+      return;
+    }
+
+    const chunks = splitMessage(html, 4096);
+
+    // Edit the first message with the first chunk
+    if (this.messageId && chunks.length > 0) {
+      try {
+        await this.bot.api.editMessageText(this.chatId, this.messageId, chunks[0], {
+          parse_mode: 'HTML',
+        });
+      } catch (e: any) {
+        // If edit fails (too old, etc.), send as new message
+        const desc = e?.description ?? '';
+        if (desc.includes('message to edit not found')) {
+          await this.bot.api.sendMessage(this.chatId, chunks[0], { parse_mode: 'HTML' }).catch(() => {});
+        }
+      }
+    }
+
+    // Send remaining chunks as new messages
+    for (let i = 1; i < chunks.length && i < 10; i++) {
+      try {
+        await this.bot.api.sendMessage(this.chatId, chunks[i], { parse_mode: 'HTML' });
+      } catch (e: any) {
+        console.error(`[bot] send chunk ${i} error: ${e?.message ?? e}`);
+        break;
+      }
+    }
+
+    if (chunks.length > 10) {
+      await this.bot.api.sendMessage(
+        this.chatId,
+        '[truncated — response too long]'
+      ).catch(() => {});
+    }
+  }
+
+  private renderFinal(text: string): string {
+    let out = '';
+    if (this.toolLines.length) {
+      out += `<pre>${escapeHtml(this.toolLines.join('\n'))}</pre>\n\n`;
+    }
+    out += markdownToTelegramHtml(text);
+    return out || '(empty response)';
+  }
+
+  /** Finalize with an error message. */
+  async finalizeError(errMsg: string): Promise<void> {
+    this.finalized = true;
+    this.stopTyping();
+    if (this.editTimer) {
+      clearInterval(this.editTimer);
+      this.editTimer = null;
+    }
+
+    let html = '';
+    if (this.toolLines.length) {
+      html += `<pre>${escapeHtml(this.toolLines.join('\n'))}</pre>\n\n`;
+    }
+    if (this.buffer.trim()) {
+      html += markdownToTelegramHtml(this.buffer) + '\n\n';
+    }
+    html += `❌ ${escapeHtml(errMsg)}`;
+
+    if (this.messageId) {
+      try {
+        await this.bot.api.editMessageText(this.chatId, this.messageId, html.slice(0, 4096), {
+          parse_mode: 'HTML',
+        });
+        return;
+      } catch {
+        // fall through to send
+      }
+    }
+    await this.bot.api.sendMessage(this.chatId, html.slice(0, 4096), { parse_mode: 'HTML' }).catch(() => {});
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Bot startup
+// ---------------------------------------------------------------------------
+
+export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTelegramConfig): Promise<void> {
+  // Validate config
+  const token = process.env.IDLEHANDS_TG_TOKEN || botConfig.token;
+  if (!token) {
+    console.error('[bot] IDLEHANDS_TG_TOKEN not set and bot.telegram.token is empty.');
+    process.exit(1);
+  }
+
+  const allowedUsersEnv = process.env.IDLEHANDS_TG_ALLOWED_USERS;
+  const rawUsers = allowedUsersEnv
+    ? allowedUsersEnv.split(',').map(Number).filter(Boolean)
+    : Array.isArray(botConfig.allowed_users)
+      ? botConfig.allowed_users
+      : botConfig.allowed_users != null
+        ? [Number(botConfig.allowed_users)].filter(Boolean)
+        : [];
+  const allowedUsers = new Set(rawUsers);
+  if (allowedUsers.size === 0) {
+    console.error('[bot] bot.telegram.allowed_users is empty — refusing to start an unauthenticated bot.');
+    process.exit(1);
+  }
+
+  const bot = new Bot(token);
+  const sessions = new SessionManager(
+    config,
+    botConfig,
+    (chatId) => new TelegramConfirmProvider(bot, chatId, botConfig.confirm_timeout_sec ?? 300),
+  );
+  const editIntervalMs = botConfig.edit_interval_ms ?? 1500;
+
+  // Override default_dir from env
+  if (process.env.IDLEHANDS_TG_DIR) {
+    botConfig.default_dir = process.env.IDLEHANDS_TG_DIR;
+  }
+
+  const cmdCtx = (ctx: any) => ({
+    ctx,
+    sessions,
+    botConfig: {
+      model: config.model,
+      endpoint: config.endpoint,
+      defaultDir: botConfig.default_dir || config.dir,
+    },
+  });
+
+  // ---------------------------------------------------------------------------
+  // Auth middleware
+  // ---------------------------------------------------------------------------
+
+  bot.use(async (ctx, next) => {
+    const userId = ctx.from?.id;
+    if (!userId || !allowedUsers.has(userId)) {
+      // Silent ignore — don't reveal the bot exists
+      if (config.verbose) {
+        console.error(`[bot] ignored message from unauthorized user ${userId}`);
+      }
+      return;
+    }
+    // Group chat guard
+    if (!(botConfig.allow_groups ?? false)) {
+      const chatType = ctx.chat?.type;
+      if (chatType && chatType !== 'private') {
+        return; // Silent ignore
+      }
+    }
+    await next();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Command handlers
+  // ---------------------------------------------------------------------------
+
+  bot.command('start', (ctx) => handleStart(cmdCtx(ctx)));
+  bot.command('help', (ctx) => handleHelp(cmdCtx(ctx)));
+  bot.command('new', (ctx) => handleNew(cmdCtx(ctx)));
+  bot.command('cancel', (ctx) => handleCancel(cmdCtx(ctx)));
+  bot.command('status', (ctx) => handleStatus(cmdCtx(ctx)));
+  bot.command('dir', (ctx) => handleDir(cmdCtx(ctx)));
+  bot.command('model', (ctx) => handleModel(cmdCtx(ctx)));
+  bot.command('compact', (ctx) => handleCompact(cmdCtx(ctx)));
+  bot.command('approval', (ctx) => handleApproval(cmdCtx(ctx)));
+  bot.command('mode', (ctx) => handleMode(cmdCtx(ctx)));
+  bot.command('subagents', (ctx) => handleSubAgents(cmdCtx(ctx)));
+  bot.command('changes', (ctx) => handleChanges(cmdCtx(ctx)));
+  bot.command('undo', (ctx) => handleUndo(cmdCtx(ctx)));
+  bot.command('vault', (ctx) => handleVault(cmdCtx(ctx)));
+  bot.command('anton', (ctx) => handleAnton(cmdCtx(ctx)));
+
+  bot.command('hosts', async (ctx) => {
+    try {
+      const { loadRuntimes, redactConfig } = await import('../runtime/store.js');
+      const config = await loadRuntimes();
+      const redacted = redactConfig(config);
+      if (!redacted.hosts.length) {
+        await ctx.reply('No hosts configured. Use `idlehands hosts add` in CLI.');
+        return;
+      }
+      const lines = redacted.hosts.map((h) =>
+        `${h.enabled ? '🟢' : '🔴'} *${h.display_name}* (\`${h.id}\`)\n  Transport: ${h.transport}`,
+      );
+      await ctx.reply(lines.join('\n\n'), { parse_mode: 'Markdown' });
+    } catch (e: any) {
+      await ctx.reply(`❌ Failed to load hosts: ${e?.message ?? String(e)}`);
+    }
+  });
+
+  bot.command('backends', async (ctx) => {
+    try {
+      const { loadRuntimes, redactConfig } = await import('../runtime/store.js');
+      const config = await loadRuntimes();
+      const redacted = redactConfig(config);
+      if (!redacted.backends.length) {
+        await ctx.reply('No backends configured. Use `idlehands backends add` in CLI.');
+        return;
+      }
+      const lines = redacted.backends.map((b) =>
+        `${b.enabled ? '🟢' : '🔴'} *${b.display_name}* (\`${b.id}\`)\n  Type: ${b.type}`,
+      );
+      await ctx.reply(lines.join('\n\n'), { parse_mode: 'Markdown' });
+    } catch (e: any) {
+      await ctx.reply(`❌ Failed to load backends: ${e?.message ?? String(e)}`);
+    }
+  });
+
+  bot.command('rtmodels', async (ctx) => {
+    try {
+      const { loadRuntimes } = await import('../runtime/store.js');
+      const config = await loadRuntimes();
+      if (!config.models.length) {
+        await ctx.reply('No runtime models configured.');
+        return;
+      }
+      const lines = config.models.map((m) =>
+        `${m.enabled ? '🟢' : '🔴'} *${m.display_name}* (\`${m.id}\`)\n  Source: \`${m.source}\``,
+      );
+      await ctx.reply(lines.join('\n\n'), { parse_mode: 'Markdown' });
+    } catch (e: any) {
+      await ctx.reply(`❌ Failed to load runtime models: ${e?.message ?? String(e)}`);
+    }
+  });
+
+  bot.command('rtstatus', async (ctx) => {
+    try {
+      const { loadActiveRuntime } = await import('../runtime/executor.js');
+      const active = await loadActiveRuntime();
+      if (!active) {
+        await ctx.reply('No active runtime.');
+        return;
+      }
+
+      const lines = [
+        '*Active Runtime*',
+        `Model: \`${active.modelId}\``,
+        `Backend: \`${active.backendId ?? 'none'}\``,
+        `Hosts: ${active.hostIds.map((id) => `\`${id}\``).join(', ') || 'none'}`,
+        `Healthy: ${active.healthy ? '✅ yes' : '❌ no'}`,
+        `Endpoint: \`${active.endpoint ?? 'unknown'}\``,
+        `Started: \`${active.startedAt}\``,
+      ];
+      await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+    } catch (e: any) {
+      await ctx.reply(`❌ Failed to read runtime status: ${e?.message ?? String(e)}`);
+    }
+  });
+
+  bot.command('switch', async (ctx) => {
+    try {
+      const modelId = ctx.match?.trim();
+      if (!modelId) {
+        await ctx.reply('Usage: /switch <model-id>');
+        return;
+      }
+
+      const { plan } = await import('../runtime/planner.js');
+      const { execute, loadActiveRuntime } = await import('../runtime/executor.js');
+      const { loadRuntimes } = await import('../runtime/store.js');
+
+      const rtConfig = await loadRuntimes();
+      const active = await loadActiveRuntime();
+      const result = plan({ modelId, mode: 'live' }, rtConfig, active);
+
+      if (!result.ok) {
+        await ctx.reply(`❌ Plan failed: ${result.reason}`);
+        return;
+      }
+
+      if (result.reuse) {
+        await ctx.reply('✅ Runtime already active and healthy.');
+        return;
+      }
+
+      const statusMsg = await ctx.reply(`⏳ Switching to *${result.model.display_name}*...`, { parse_mode: 'Markdown' });
+
+      const execResult = await execute(result, {
+        onStep: async (step, status) => {
+          if (status === 'done') {
+            await ctx.api.editMessageText(
+              ctx.chat.id,
+              statusMsg.message_id,
+              `⏳ ${step.description}... ✓`,
+            ).catch(() => {});
+          }
+        },
+        confirm: async (prompt) => {
+          await ctx.reply(`⚠️ ${prompt}\nAuto-approving for bot context.`);
+          return true;
+        },
+      });
+
+      if (execResult.ok) {
+        await ctx.reply(`✅ Switched to *${result.model.display_name}*`, { parse_mode: 'Markdown' });
+      } else {
+        await ctx.reply(`❌ Switch failed: ${execResult.error || 'unknown error'}`);
+      }
+    } catch (e: any) {
+      await ctx.reply(`❌ Switch failed: ${e?.message ?? String(e)}`);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Callback query handler (inline button presses for confirmations)
+  // ---------------------------------------------------------------------------
+
+  bot.on('callback_query:data', async (ctx) => {
+    const data = ctx.callbackQuery.data;
+    const chatId = ctx.chat?.id;
+    if (!chatId) return;
+
+    const managed = sessions.get(chatId);
+    if (!managed?.confirmProvider) {
+      await ctx.answerCallbackQuery({ text: 'No active session.' }).catch(() => {});
+      return;
+    }
+
+    const provider = managed.confirmProvider as TelegramConfirmProvider;
+    const handled = await provider.handleCallback(data);
+    await ctx.answerCallbackQuery(handled ? undefined : { text: 'Unknown action.' }).catch(() => {});
+  });
+
+  // ---------------------------------------------------------------------------
+  // Message handler (core flow)
+  // ---------------------------------------------------------------------------
+
+  bot.on('message:text', async (ctx) => {
+    const chatId = ctx.chat.id;
+    const userId = ctx.from.id;
+    const text = ctx.message.text;
+
+    // Skip commands (already handled above)
+    if (text.startsWith('/')) return;
+
+    const msgPreview = text.length > 50 ? text.slice(0, 47) + '...' : text;
+    console.error(`[bot] ${chatId} ${ctx.from.username ?? userId}: "${msgPreview}"`);
+
+    // Get or create session
+    const managed = await sessions.getOrCreate(chatId, userId);
+    if (!managed) {
+      await ctx.reply('⚠️ Too many active sessions. Try again later or /reset an existing one.');
+      return;
+    }
+
+    // Concurrency guard
+    if (managed.inFlight) {
+      if (managed.pendingQueue.length >= sessions.maxQueue) {
+        await ctx.reply(`⏳ Queued (${managed.pendingQueue.length} pending). Use /cancel to abort the current task.`);
+        return;
+      }
+      managed.pendingQueue.push(text);
+      await ctx.reply(`⏳ Queued (#${managed.pendingQueue.length}). Still working on the previous request.`);
+      return;
+    }
+
+    const fileThreshold = botConfig.file_threshold_chars ?? 8192;
+    await processMessage(bot, sessions, managed, text, editIntervalMs, fileThreshold, ctx.message.message_id);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Session cleanup on timeout
+  // ---------------------------------------------------------------------------
+
+  const origCleanup = sessions.cleanupExpired.bind(sessions);
+  const wrappedCleanup = () => {
+    const expired = origCleanup();
+    for (const chatId of expired) {
+      console.error(`[bot] session ${chatId} expired`);
+      bot.api.sendMessage(chatId, '⏱ Session expired due to inactivity. Send a new message to start fresh.').catch(() => {});
+    }
+  };
+  // Override the internal cleanup to also notify users
+  // (The SessionManager calls cleanupExpired internally on interval;
+  //  we handle notification here on the bot level.)
+  const cleanupInterval = setInterval(wrappedCleanup, 60_000);
+
+  // ---------------------------------------------------------------------------
+  // Graceful shutdown
+  // ---------------------------------------------------------------------------
+
+  const shutdown = () => {
+    console.error('[bot] Shutting down...');
+    clearInterval(cleanupInterval);
+    sessions.stop();
+    bot.stop();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+
+  // ---------------------------------------------------------------------------
+  // Register commands with Telegram
+  // ---------------------------------------------------------------------------
+
+  await bot.api.setMyCommands([
+    { command: 'start', description: 'Welcome + config summary' },
+    { command: 'help', description: 'List commands' },
+    { command: 'new', description: 'Start a new session' },
+    { command: 'cancel', description: 'Abort current generation' },
+    { command: 'status', description: 'Session stats' },
+    { command: 'dir', description: 'Get/set working directory' },
+    { command: 'model', description: 'Show current model' },
+    { command: 'compact', description: 'Compact context' },
+    { command: 'approval', description: 'Get/set approval mode' },
+    { command: 'mode', description: 'Get/set mode (code/sys)' },
+    { command: 'subagents', description: 'Toggle sub-agents on/off' },
+    { command: 'changes', description: 'Files modified this session' },
+    { command: 'undo', description: 'Undo last edit' },
+    { command: 'vault', description: 'Search vault entries' },
+    { command: 'hosts', description: 'List runtime hosts' },
+    { command: 'backends', description: 'List runtime backends' },
+    { command: 'rtmodels', description: 'List runtime models' },
+    { command: 'rtstatus', description: 'Show active runtime status' },
+    { command: 'switch', description: 'Switch runtime model' },
+    { command: 'anton', description: 'Autonomous task runner' },
+  ]).catch((e) => console.error(`[bot] setMyCommands failed: ${e?.message}`));
+
+  // ---------------------------------------------------------------------------
+  // Start polling
+  // ---------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------
+  // BotFather hardening check
+  // ---------------------------------------------------------------------------
+
+  try {
+    const botInfo = await bot.api.getMe();
+    if (botInfo.can_join_groups) {
+      console.error('[bot] ⚠️  WARNING: Bot has "Allow Groups" enabled in BotFather.');
+      console.error('[bot]    Groups are blocked in code, but disable at the source:');
+      console.error('[bot]    → Open @BotFather → /mybots → select bot → Bot Settings → Allow Groups → Turn OFF');
+    }
+    if (botInfo.can_read_all_group_messages) {
+      console.error('[bot] ⚠️  WARNING: Bot has "Group Privacy" disabled (can read all messages).');
+      console.error('[bot]    → Open @BotFather → /mybots → select bot → Bot Settings → Group Privacy → Turn ON');
+    }
+  } catch (e: any) {
+    console.error(`[bot] getMe() failed: ${e?.message ?? e}`);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Start polling
+  // ---------------------------------------------------------------------------
+
+  sessions.start();
+  // ---------------------------------------------------------------------------
+  // Global error handler — catches unhandled errors in middleware/handlers
+  // ---------------------------------------------------------------------------
+
+  bot.catch(async (err: any) => {
+    const desc = err?.error?.message ?? err?.message ?? String(err);
+    console.error(`[bot] unhandled error: ${desc}`);
+
+    const chatId = err?.ctx?.chat?.id;
+    if (!chatId) return;
+
+    const userMsg = desc.length > 300 ? desc.slice(0, 297) + '...' : desc;
+    await bot.api.sendMessage(chatId, `⚠️ Bot error: ${userMsg}`).catch(() => {});
+  });
+
+  // ---------------------------------------------------------------------------
+  // Start polling
+  // ---------------------------------------------------------------------------
+
+  console.error(`[bot] Telegram bot started (polling)`);
+  console.error(`[bot] Model: ${config.model || 'auto'} | Endpoint: ${config.endpoint}`);
+  console.error(`[bot] Allowed users: [${[...allowedUsers].join(', ')}]`);
+  console.error(`[bot] Default dir: ${botConfig.default_dir || config.dir || '~'}`);
+
+  bot.start({
+    onStart: () => console.error('[bot] Polling active'),
+  });
+}
+
+
+async function probeModelEndpoint(endpoint: string): Promise<boolean> {
+  const base = endpoint.replace(/\/$/, '');
+  const healthUrl = base.replace(/\/v1$/, '') + '/health';
+  const modelsUrl = base.replace(/\/$/, '') + '/models';
+  try {
+    const h = await fetch(healthUrl, { method: 'GET' as const });
+    if (!h.ok) return false;
+    const m = await fetch(modelsUrl, { method: 'GET' as const });
+    return m.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForModelEndpoint(endpoint: string, totalMs = 60_000, stepMs = 2_500): Promise<boolean> {
+  const started = Date.now();
+  while (Date.now() - started < totalMs) {
+    if (await probeModelEndpoint(endpoint)) return true;
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Core: process a user message through the agent
+// ---------------------------------------------------------------------------
+
+async function processMessage(
+  bot: Bot,
+  sessions: SessionManager,
+  managed: ManagedSession,
+  text: string,
+  editIntervalMs: number,
+  fileThresholdChars: number,
+  replyToId?: number,
+): Promise<void> {
+  const turn = sessions.beginTurn(managed.chatId);
+  if (!turn) return;
+  const turnId = turn.turnId;
+
+  const streaming = new StreamingMessage(bot, managed.chatId, editIntervalMs, replyToId, fileThresholdChars);
+  await streaming.init();
+
+  const hooks: AgentHooks = {
+    onToken: (t) => {
+      if (!sessions.isTurnActive(managed.chatId, turnId)) return;
+      sessions.markProgress(managed.chatId, turnId);
+      streaming.onToken(t);
+    },
+    onToolCall: (call) => {
+      if (!sessions.isTurnActive(managed.chatId, turnId)) return;
+      sessions.markProgress(managed.chatId, turnId);
+      streaming.onToolCall(call);
+    },
+    onToolResult: (result) => {
+      if (!sessions.isTurnActive(managed.chatId, turnId)) return;
+      sessions.markProgress(managed.chatId, turnId);
+      streaming.onToolResult(result);
+    },
+  };
+
+  const watchdogMs = 120_000;
+  const watchdog = setInterval(() => {
+    const current = sessions.get(managed.chatId);
+    if (!current || current.activeTurnId !== turnId || !current.inFlight) return;
+    if (Date.now() - current.lastProgressAt > watchdogMs) {
+      console.error(`[bot] ${managed.chatId} watchdog timeout on turn ${turnId}`);
+      sessions.cancelActive(managed.chatId);
+    }
+  }, 5_000);
+
+  const startTime = Date.now();
+
+  try {
+    const result = await managed.session.ask(text, { ...hooks, signal: turn.controller.signal });
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.error(`[bot] ${managed.chatId} ask() completed: ${result.turns} turns, ${result.toolCalls} tool calls, ${elapsed}s`);
+
+    if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalize(result.text);
+  } catch (e: any) {
+    const msg = e?.message ?? String(e);
+    console.error(`[bot] ${managed.chatId} ask() error: ${msg}`);
+
+    if (msg.includes('aborted') || msg.includes('AbortError')) {
+      if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalizeError('Aborted.');
+    } else if (msg.includes('ECONNREFUSED') || msg.includes('Connection timeout') || msg.includes('503') || msg.includes('model loading')) {
+      const endpoint = (managed.session as any)?.endpoint || '';
+      const recovered = endpoint ? await waitForModelEndpoint(endpoint, 60_000, 2_500) : false;
+      if (recovered) {
+        try {
+          const retry = await managed.session.ask(text, { ...hooks, signal: turn.controller.signal });
+          if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalize(retry.text);
+          return;
+        } catch (retryErr: any) {
+          const retryMsg = retryErr?.message ?? String(retryErr);
+          if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalizeError(`Model server came back but retry failed: ${retryMsg.length > 140 ? retryMsg.slice(0, 137) + '...' : retryMsg}`);
+          return;
+        }
+      }
+      if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalizeError('Model server is starting up or restarting. I waited up to 60s but it is still unavailable — please retry shortly.');
+    } else {
+      if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalizeError(msg.length > 200 ? msg.slice(0, 197) + '...' : msg);
+    }
+  } finally {
+    clearInterval(watchdog);
+    const current = sessions.finishTurn(managed.chatId, turnId);
+    if (!current) return;
+
+    // Process queued messages only if this session still exists and is idle.
+    const next = sessions.dequeueNext(managed.chatId);
+    if (next && current.state === 'idle' && !current.inFlight) {
+      setTimeout(() => {
+        const fresh = sessions.get(managed.chatId);
+        if (!fresh) return;
+        void processMessage(bot, sessions, fresh, next, editIntervalMs, fileThresholdChars);
+      }, 500);
+    }
+  }
+}

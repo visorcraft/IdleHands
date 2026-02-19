@@ -1,0 +1,13 @@
+{
+  "name": "noisy_build_compare",
+  "engine": "both",
+  "workspace": { "kind": "temp", "prefix": "idlehands-bench-noisy-build-" },
+  "setup": [
+    "cp -a /home/user/projects/visorcraft/idlehands/bench/fixtures/noisy-build/. ."
+  ],
+  "instruction": "In this workspace: run `npm run build` and do NOT paste the full output. Confirm the build succeeded, then respond with exactly: OK",
+  "success": { "type": "exec", "command": "cat build/output.txt", "stdoutEquals": "ok" },
+  "repetitions": 5,
+  "max_tokens": 512,
+  "model": "Qwen3-Coder-Next-Q4_K_M.gguf"
+}

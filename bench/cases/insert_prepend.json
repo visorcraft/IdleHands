@@ -1,0 +1,10 @@
+{
+  "name": "insert_prepend",
+  "workspace": { "kind": "temp", "prefix": "idlehands-insert-prepend-" },
+  "setup": ["printf 'b\n' > t.txt"],
+  "instruction": "Insert the line 'a' at the top of t.txt, so the file becomes two lines: a then b.",
+  "success": { "type": "exec", "command": "cat t.txt", "stdoutEquals": "a\nb" },
+  "repetitions": 3,
+  "max_tokens": 512,
+  "model": "Qwen3-Coder-Next-Q4_K_M.gguf"
+}

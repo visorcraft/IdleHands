@@ -1,0 +1,37 @@
+name: security-sweep
+
+on:
+  pull_request:
+  push:
+    branches: [main, cleanup, npmjs]
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          URL=$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest \
+            | grep browser_download_url \
+            | grep -E 'linux_x64\.tar\.gz"$' \
+            | head -n1 \
+            | cut -d '"' -f4)
+          test -n "$URL"
+          curl -fsSL "$URL" | sudo tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Install dependencies for package checks
+        run: npm ci --include=dev
+
+      - name: Run repository security/privacy sweep
+        run: ./scripts/security-sweep.sh

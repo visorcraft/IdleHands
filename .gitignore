@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+*.log
+*.tgz
+memory/
+AGENTS.md
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/

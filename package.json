@@ -1,0 +1,67 @@
+{
+  "name": "@visorcraft/idlehands",
+  "version": "1.0.1",
+  "type": "module",
+  "description": "Local-first coding agent CLI for OpenAI-compatible endpoints",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/visorcraft/idlehands.git"
+  },
+  "bugs": {
+    "url": "https://github.com/visorcraft/idlehands/issues"
+  },
+  "homepage": "https://github.com/visorcraft/idlehands#readme",
+  "keywords": [
+    "llm",
+    "agent",
+    "cli",
+    "openai",
+    "local-llm",
+    "tool-calling"
+  ],
+  "bin": {
+    "idlehands": "dist/index.js"
+  },
+  "files": [
+    "dist/**",
+    "src/sys/snapshot.sh",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/index.js && cp src/sys/snapshot.sh dist/sys/snapshot.sh 2>/dev/null || true",
+    "prepack": "npm run build --silent",
+    "start": "node --enable-source-maps dist/index.js",
+    "dev": "tsc -p tsconfig.json -w",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "IDLEHANDS_QUIET_WARNINGS=1 npm run build --silent && IDLEHANDS_QUIET_WARNINGS=1 node --test --test-concurrency=1 tests/*.test.ts tests/tui/*.test.ts",
+    "lint": "node -e \"console.log('no lint configured yet')\"",
+    "bench:build": "tsc -p tsconfig.json",
+    "bench:run": "node dist/bench/runner.js",
+    "bench:report": "node dist/bench/report.js",
+    "bench:compare": "node dist/bench/compare.js",
+    "bundle:mjs": "node scripts/bundle-mjs.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "discord.js": "^14.23.2",
+    "grammy": "^1.40.0",
+    "picocolors": "^1.1.1",
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "^0.26.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.9",
+    "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "undici": "^6.23.0"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
+  }
+}
