@@ -195,6 +195,20 @@ function formatDurationMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function looksLikePlanningNarration(text: string, finishReason?: string): boolean {
+  const s = String(text ?? '').trim().toLowerCase();
+  if (!s) return false;
+
+  // Incomplete streamed answer: likely still needs another turn.
+  if (finishReason === 'length') return true;
+
+  // Strong completion cues: treat as final answer.
+  if (/(^|\n)\s*(done|completed|finished|final answer|summary:)\b/.test(s)) return false;
+
+  // Typical "thinking out loud"/plan chatter that should continue with tools.
+  return /\b(let me|i(?:'|’)ll|i will|i'm going to|i am going to|next i(?:'|’)ll|first i(?:'|’)ll|i need to|i should|checking|reviewing|exploring|starting by)\b/.test(s);
+}
+
 function approxTokenCharCap(maxTokens: number): number {
   const safe = Math.max(64, Math.floor(maxTokens));
   return safe * 4;
@@ -2180,6 +2194,9 @@ export async function createSession(opts: {
     let malformedCount = 0;
     let noProgressTurns = 0;
     const NO_PROGRESS_TURN_CAP = 3;
+    let noToolTurns = 0;
+    const NO_TOOL_REPROMPT_THRESHOLD = 2;
+    let repromptUsed = false;
     let blockedPackageInstallAttempts = 0;
 
     const maybeInjectVaultContext = async () => {
@@ -2513,6 +2530,7 @@ export async function createSession(opts: {
         noProgressTurns = 0;
 
         if (toolCallsArr && toolCallsArr.length) {
+          noToolTurns = 0;
           // Deduplicate ghost tool calls: if llama-server's XML parser splits one
           // tool call into two entries (one with full args, one empty/partial),
           // drop the empty one. Only removes entries where a richer version of the
@@ -3072,8 +3090,72 @@ export async function createSession(opts: {
           continue;
         }
 
+        const assistantText = visible || content || '';
+
+        // Recovery fuse: if the model keeps narrating/planning without tool use,
+        // nudge it once with the original task. Never resend more than once per ask().
+        if (looksLikePlanningNarration(assistantText, finishReason)) {
+          noToolTurns += 1;
+
+          messages.push({ role: 'assistant', content: assistantText });
+
+          if (noToolTurns >= NO_TOOL_REPROMPT_THRESHOLD) {
+            if (!repromptUsed) {
+              repromptUsed = true;
+              noToolTurns = 0;
+              const reminder = userContentToText(instruction).trim();
+              const clippedReminder = reminder.length > 4000 ? `${reminder.slice(0, 4000)}\n[truncated]` : reminder;
+              messages.push({
+                role: 'user',
+                content: `[system] You seem to be stuck narrating without using tools. Resume execution now.\n` +
+                  `Original task:\n${clippedReminder}\n\n` +
+                  `Call the needed tools directly. If everything is truly complete, provide the final answer.`
+              });
+
+              await hookObj.onTurnEnd?.({
+                turn: turns,
+                toolCalls,
+                promptTokens: cumulativeUsage.prompt,
+                completionTokens: cumulativeUsage.completion,
+                promptTokensTurn,
+                completionTokensTurn,
+                ttftMs,
+                ttcMs,
+                ppTps,
+                tgTps,
+              });
+              continue;
+            }
+
+            throw new Error(
+              `no-tool loop detected: model produced planning/narration without tool calls for ${NO_TOOL_REPROMPT_THRESHOLD} turns even after one recovery reprompt`
+            );
+          }
+
+          messages.push({
+            role: 'user',
+            content: '[system] Continue executing the task. Use tools now (do not just narrate plans). If complete, give the final answer.'
+          });
+
+          await hookObj.onTurnEnd?.({
+            turn: turns,
+            toolCalls,
+            promptTokens: cumulativeUsage.prompt,
+            completionTokens: cumulativeUsage.completion,
+            promptTokensTurn,
+            completionTokensTurn,
+            ttftMs,
+            ttcMs,
+            ppTps,
+            tgTps,
+          });
+          continue;
+        }
+
+        noToolTurns = 0;
+
         // final assistant message
-        messages.push({ role: 'assistant', content: visible || content || '' });
+        messages.push({ role: 'assistant', content: assistantText });
         await hookObj.onTurnEnd?.({
           turn: turns,
           toolCalls,
@@ -3086,7 +3168,7 @@ export async function createSession(opts: {
           ppTps,
           tgTps,
         });
-        return { text: visible || content || '', turns, toolCalls };
+        return { text: assistantText, turns, toolCalls };
       }
 
       const reason = `max iterations exceeded (${maxIters})`;

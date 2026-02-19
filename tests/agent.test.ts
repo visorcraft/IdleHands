@@ -279,6 +279,111 @@ describe('agent no-progress watchdog', () => {
   });
 });
 
+describe('agent no-tool reprompt recovery', () => {
+  it('reprompts once after two planning-only turns and recovers if model resumes tool use', async () => {
+    let callNo = 0;
+
+    const fakeClient: any = {
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
+      async warmup() {},
+      async chatStream() {
+        callNo += 1;
+
+        if (callNo === 1) {
+          return {
+            id: 'r1',
+            choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: "I'll start by checking the project structure." } }],
+            usage: { prompt_tokens: 1, completion_tokens: 1 },
+          };
+        }
+
+        if (callNo === 2) {
+          return {
+            id: 'r2',
+            choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'Next I will inspect key files before editing.' } }],
+            usage: { prompt_tokens: 1, completion_tokens: 1 },
+          };
+        }
+
+        if (callNo === 3) {
+          return {
+            id: 'r3',
+            choices: [{
+              index: 0,
+              finish_reason: 'tool_calls',
+              message: {
+                role: 'assistant',
+                content: '',
+                tool_calls: [{
+                  id: 'l1',
+                  type: 'function',
+                  function: { name: 'list_dir', arguments: JSON.stringify({ path: '.' }) },
+                }],
+              },
+            }],
+            usage: { prompt_tokens: 1, completion_tokens: 1 },
+          };
+        }
+
+        return {
+          id: 'r4',
+          choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'done' } }],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        };
+      }
+    };
+
+    const session = await createSession({
+      config: baseConfig(tmpDir, { max_iterations: 10 }),
+      runtime: { client: fakeClient },
+    });
+
+    try {
+      const out = await session.ask('build it');
+      assert.equal(out.text, 'done');
+      assert.equal(callNo, 4);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('fails if no-tool planning loop continues after one reprompt', async () => {
+    let callNo = 0;
+
+    const fakeClient: any = {
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
+      async warmup() {},
+      async chatStream() {
+        callNo += 1;
+        return {
+          id: `p-${callNo}`,
+          choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: "I'll continue planning the next step." } }],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        };
+      }
+    };
+
+    const session = await createSession({
+      config: baseConfig(tmpDir, { max_iterations: 10 }),
+      runtime: { client: fakeClient },
+    });
+
+    try {
+      await assert.rejects(
+        () => session.ask('build it'),
+        /no-tool loop detected/i
+      );
+      assert.equal(callNo, 4, `expected break on 4th planning-only turn, got ${callNo}`);
+    } finally {
+      await session.close();
+    }
+  });
+});
+
 describe('agent package-install retry guard', () => {
   it('stops quickly when package installs are repeatedly blocked in non-yolo mode', async () => {
     let callNo = 0;

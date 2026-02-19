@@ -343,7 +343,10 @@ export async function undo_path(ctx: ToolContext, args: any) {
 export async function read_file(ctx: ToolContext, args: any) {
   const p = resolvePath(ctx, args?.path);
   const offset = args?.offset ? Number(args.offset) : undefined;
-  const limit = Math.max(10, Math.min(args?.limit ? Number(args.limit) : 100, 500));
+  const rawLimit = args?.limit != null ? Number(args.limit) : undefined;
+  const limit = Number.isFinite(rawLimit as number) && (rawLimit as number) > 0
+    ? Math.max(1, Math.floor(rawLimit as number))
+    : undefined;
   const search = typeof args?.search === 'string' ? args.search : undefined;
   const context = args?.context ? Number(args.context) : 10;
   const maxBytes = 100 * 1024;
@@ -384,7 +387,7 @@ export async function read_file(ctx: ToolContext, args: any) {
   const lines = text.split(/\r?\n/);
 
   let start = 1;
-  let end = Math.min(lines.length, limit);
+  let end = limit ? Math.min(lines.length, limit) : lines.length;
 
   if (search) {
     const matchLines: number[] = [];
@@ -408,22 +411,8 @@ export async function read_file(ctx: ToolContext, args: any) {
     return out.join('\n');
   } else if (offset && offset >= 1) {
     start = offset;
-    end = Math.min(lines.length, offset + limit - 1);
+    end = limit ? Math.min(lines.length, offset + limit - 1) : lines.length;
   }
-
-  // Lens projection: only for large files (200+ lines) without search/offset.
-  // Small files should return full content — the agent needs exact text for edits,
-  // and a structural skeleton for a 15-line file just wastes a tool call.
-  if (!search && !offset && lines.length >= 200) {
-    try {
-      const lensSummary = await ctx.lens?.projectFile(p, text);
-      if (lensSummary) return lensSummary;
-    } catch (e: any) {
-      // Lens parse failure should not block read_file.
-      console.warn(`[warn] lens unavailable for ${p}: ${e?.message ?? 'failed'}`);
-    }
-  }
-
 
   const out: string[] = [];
   out.push(`# ${p}`);

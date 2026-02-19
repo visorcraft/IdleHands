@@ -93,10 +93,9 @@ describe('lens', () => {
     assert.ok(summary?.includes('signature'));
   });
 
-  it('read_file uses lens projection for large files (200+ lines)', async () => {
+  it('read_file returns full content for large files (no lens projection cap)', async () => {
     const lens = new LensStore();
     const file = path.join(tmpDir, 'large.ts');
-    // Generate a 210-line file to cross the lens threshold
     const lines = Array.from({ length: 210 }, (_, i) => `function fn${i}() { return ${i}; }`);
     await fs.writeFile(file, lines.join('\n') + '\n');
 
@@ -107,10 +106,10 @@ describe('lens', () => {
       lens
     };
 
-    const out = await read_file(ctx, { path: 'large.ts', max_bytes: 50000 });
-    assert.ok(out.includes('# lens:'), 'lens should be used for 210-line file');
-    assert.ok(out.includes('large.ts'));
-    assert.ok(out.includes('function'));
+    const out = await read_file(ctx, { path: 'large.ts' });
+    assert.ok(!out.includes('# lens:'), 'lens should NOT be used by read_file');
+    assert.ok(out.includes('function fn0()'));
+    assert.ok(out.includes('function fn209()'));
   });
 
   it('read_file returns full content (no lens) for small files (<200 lines)', async () => {

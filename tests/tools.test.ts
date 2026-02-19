@@ -51,6 +51,17 @@ describe('read_file', () => {
     assert.ok(r.includes('is a directory'), 'should detect directory');
     assert.ok(r.includes('list_dir'), 'should suggest list_dir');
   });
+
+  it('does not enforce a line cap when limit is omitted', async () => {
+    const p = path.join(tmpDir, 'many-lines.txt');
+    const content = Array.from({ length: 650 }, (_, i) => `line-${i + 1}`).join('\n') + '\n';
+    await fs.writeFile(p, content, 'utf8');
+
+    const r = await read_file(ctx, { path: 'many-lines.txt' });
+    assert.ok(r.includes('line-1'));
+    assert.ok(r.includes('line-650'));
+    assert.ok(!r.includes('more lines)'), 'should not be truncated by default line caps');
+  });
 });
 
 describe('write_file', () => {
