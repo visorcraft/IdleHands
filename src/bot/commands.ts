@@ -14,6 +14,8 @@ import { formatRunSummary, formatProgressBar, formatTaskStart, formatTaskEnd, fo
 import type { AntonRunConfig, AntonProgressCallback } from '../anton/types.js';
 import { projectDir } from '../utils.js';
 
+import type { BotTelegramConfig } from '../types.js';
+
 type CommandContext = {
   ctx: Context;
   sessions: SessionManager;
@@ -21,6 +23,7 @@ type CommandContext = {
     model?: string;
     endpoint?: string;
     defaultDir?: string;
+    telegram?: BotTelegramConfig;
   };
 };
 
@@ -46,6 +49,10 @@ export async function handleHelp({ ctx }: CommandContext): Promise<void> {
     '/new — Start a new session',
     '/cancel — Abort current generation',
     '/status — Session stats',
+    '/agent — Show current agent info',
+    '/agents — List all configured agents',
+    '/escalate [model] — Use larger model for next message',
+    '/deescalate — Return to base model',
     '/dir [path] — Get/set working directory',
     '/model — Show current model',
     '/approval [mode] — Get/set approval mode',
@@ -520,4 +527,166 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
     session.antonProgress = null;
     ctx.reply(`Anton error: ${err.message}`).catch(() => {});
   });
+}
+
+// ── Multi-agent commands ───────────────────────────────────────────────
+
+export async function handleAgent({ ctx, sessions, botConfig }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const managed = sessions.get(chatId);
+  
+  if (!managed?.agentPersona) {
+    await ctx.reply('No agent configured. Using global config.');
+    return;
+  }
+  
+  const p = managed.agentPersona;
+  const lines = [
+    `<b>Agent: ${escapeHtml(p.display_name || managed.agentId)}</b> (<code>${escapeHtml(managed.agentId)}</code>)`,
+    ...(p.model ? [`<b>Model:</b> <code>${escapeHtml(p.model)}</code>`] : []),
+    ...(p.endpoint ? [`<b>Endpoint:</b> <code>${escapeHtml(p.endpoint)}</code>`] : []),
+    ...(p.approval_mode ? [`<b>Approval:</b> <code>${escapeHtml(p.approval_mode)}</code>`] : []),
+    ...(p.default_dir ? [`<b>Default dir:</b> <code>${escapeHtml(p.default_dir)}</code>`] : []),
+    ...(p.allowed_dirs?.length ? [`<b>Allowed dirs:</b> ${p.allowed_dirs.map(d => `<code>${escapeHtml(d)}</code>`).join(', ')}`] : []),
+  ];
+  
+  // Show escalation info if configured
+  if (p.escalation?.models?.length) {
+    lines.push('');
+    lines.push(`<b>Escalation models:</b> ${p.escalation.models.map(m => `<code>${escapeHtml(m)}</code>`).join(', ')}`);
+    if (managed.currentModelIndex > 0) {
+      lines.push(`<b>Current tier:</b> ${managed.currentModelIndex} (escalated)`);
+    }
+    if (managed.pendingEscalation) {
+      lines.push(`<b>Pending escalation:</b> <code>${escapeHtml(managed.pendingEscalation)}</code>`);
+    }
+  }
+  
+  await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
+}
+
+export async function handleAgents({ ctx, sessions, botConfig }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  
+  const agents = botConfig.telegram?.agents;
+  if (!agents || Object.keys(agents).length === 0) {
+    await ctx.reply('No agents configured. Using global config.');
+    return;
+  }
+  
+  const managed = sessions.get(chatId);
+  const currentAgentId = managed?.agentId;
+  
+  const lines = ['<b>Configured Agents:</b>', ''];
+  for (const [id, agent] of Object.entries(agents)) {
+    const current = id === currentAgentId ? ' ← current' : '';
+    const model = agent.model ? ` (${escapeHtml(agent.model)})` : '';
+    lines.push(`• <b>${escapeHtml(agent.display_name || id)}</b> (<code>${escapeHtml(id)}</code>)${model}${current}`);
+  }
+  
+  // Show routing rules
+  const routing = botConfig.telegram?.routing;
+  if (routing) {
+    lines.push('', '<b>Routing:</b>');
+    if (routing.default) lines.push(`Default: <code>${escapeHtml(routing.default)}</code>`);
+    if (routing.users && Object.keys(routing.users).length > 0) {
+      lines.push(`Users: ${Object.entries(routing.users).map(([u, a]) => `${u}→${escapeHtml(a)}`).join(', ')}`);
+    }
+    if (routing.chats && Object.keys(routing.chats).length > 0) {
+      lines.push(`Chats: ${Object.entries(routing.chats).map(([c, a]) => `${c}→${escapeHtml(a)}`).join(', ')}`);
+    }
+  }
+  
+  await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
+}
+
+export async function handleEscalate({ ctx, sessions, botConfig }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  const userId = ctx.from?.id;
+  if (!chatId || !userId) return;
+  
+  const managed = sessions.get(chatId);
+  if (!managed) {
+    await ctx.reply('No active session. Send a message first.');
+    return;
+  }
+  
+  const escalation = managed.agentPersona?.escalation;
+  if (!escalation || !escalation.models?.length) {
+    await ctx.reply('❌ No escalation models configured for this agent.');
+    return;
+  }
+  
+  const text = ctx.message?.text ?? '';
+  const arg = text.replace(/^\/escalate\s*/, '').trim();
+  
+  // No arg: show available models and current state
+  if (!arg) {
+    const currentModel = managed.config.model || botConfig.model || 'default';
+    const lines = [
+      `<b>Current model:</b> <code>${escapeHtml(currentModel)}</code>`,
+      `<b>Escalation models:</b> ${escalation.models.map(m => `<code>${escapeHtml(m)}</code>`).join(', ')}`,
+      '',
+      'Usage: /escalate &lt;model&gt; or /escalate next',
+      'Then send your message - it will use the escalated model.',
+    ];
+    if (managed.pendingEscalation) {
+      lines.push('', `⚡ <b>Pending escalation:</b> <code>${escapeHtml(managed.pendingEscalation)}</code> (next message will use this)`);
+    }
+    await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
+    return;
+  }
+  
+  // Handle 'next' - escalate to next model in chain
+  let targetModel: string;
+  let targetEndpoint: string | undefined;
+  if (arg.toLowerCase() === 'next') {
+    const nextIndex = Math.min(managed.currentModelIndex, escalation.models.length - 1);
+    targetModel = escalation.models[nextIndex];
+    targetEndpoint = escalation.tiers?.[nextIndex]?.endpoint;
+  } else {
+    // Specific model requested
+    if (!escalation.models.includes(arg)) {
+      await ctx.reply(`❌ Model <code>${escapeHtml(arg)}</code> not in escalation chain. Available: ${escalation.models.map(m => `<code>${escapeHtml(m)}</code>`).join(', ')}`, { parse_mode: 'HTML' });
+      return;
+    }
+    targetModel = arg;
+    const idx = escalation.models.indexOf(arg);
+    targetEndpoint = escalation.tiers?.[idx]?.endpoint;
+  }
+  
+  managed.pendingEscalation = targetModel;
+  managed.pendingEscalationEndpoint = targetEndpoint || null;
+  await ctx.reply(`⚡ Next message will use <code>${escapeHtml(targetModel)}</code>. Send your request now.`, { parse_mode: 'HTML' });
+}
+
+export async function handleDeescalate({ ctx, sessions, botConfig }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  
+  const managed = sessions.get(chatId);
+  if (!managed) {
+    await ctx.reply('No active session.');
+    return;
+  }
+  
+  if (managed.currentModelIndex === 0 && !managed.pendingEscalation) {
+    await ctx.reply('Already using base model.');
+    return;
+  }
+  
+  const baseModel = managed.agentPersona?.model || botConfig.model || 'default';
+  managed.pendingEscalation = null;
+  managed.pendingEscalationEndpoint = null;
+  managed.currentModelIndex = 0;
+  
+  // Recreate session with base model
+  try {
+    await sessions.recreateSession(chatId, { model: baseModel });
+    await ctx.reply(`✅ Returned to base model: <code>${escapeHtml(baseModel)}</code>`, { parse_mode: 'HTML' });
+  } catch (e: any) {
+    await ctx.reply(`❌ Failed to deescalate: ${e?.message ?? e}`);
+  }
 }

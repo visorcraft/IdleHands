@@ -4,7 +4,7 @@
  */
 
 import { Bot, InputFile } from 'grammy';
-import type { IdlehandsConfig, BotTelegramConfig, ToolCallEvent, ToolResultEvent } from '../types.js';
+import type { IdlehandsConfig, BotTelegramConfig, ToolCallEvent, ToolResultEvent, ModelEscalation } from '../types.js';
 import type { AgentHooks } from '../agent.js';
 import { SessionManager, type ManagedSession } from './session-manager.js';
 import { markdownToTelegramHtml, splitMessage, escapeHtml, formatToolCallSummary } from './format.js';
@@ -12,9 +12,128 @@ import {
   handleStart, handleHelp, handleNew, handleCancel,
   handleStatus, handleDir, handleModel, handleCompact,
   handleApproval, handleMode, handleSubAgents, handleChanges, handleUndo, handleVault,
-  handleAnton,
+  handleAnton, handleAgent, handleAgents, handleEscalate, handleDeescalate,
 } from './commands.js';
 import { TelegramConfirmProvider } from './confirm-telegram.js';
+
+// ---------------------------------------------------------------------------
+// Escalation helpers (mirrored from discord.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Check if the model response contains an escalation request.
+ * Returns { escalate: true, reason: string } if escalation marker found at start of response.
+ */
+function detectEscalation(text: string): { escalate: boolean; reason?: string } {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^\[ESCALATE:\s*([^\]]+)\]/i);
+  if (match) {
+    return { escalate: true, reason: match[1].trim() };
+  }
+  return { escalate: false };
+}
+
+/** Keyword presets for common escalation triggers */
+const KEYWORD_PRESETS: Record<string, string[]> = {
+  coding: ['build', 'implement', 'create', 'develop', 'architect', 'refactor', 'debug', 'fix', 'code', 'program', 'write'],
+  planning: ['plan', 'design', 'roadmap', 'strategy', 'analyze', 'research', 'evaluate', 'compare'],
+  complex: ['full', 'complete', 'comprehensive', 'multi-step', 'integrate', 'migration', 'overhaul', 'entire', 'whole'],
+};
+
+/**
+ * Check if text matches a set of keywords.
+ * Returns matched keywords or empty array if none match.
+ */
+function matchKeywords(text: string, keywords: string[], presets?: string[]): string[] {
+  const allKeywords: string[] = [...keywords];
+  
+  // Add preset keywords
+  if (presets) {
+    for (const preset of presets) {
+      const presetWords = KEYWORD_PRESETS[preset];
+      if (presetWords) allKeywords.push(...presetWords);
+    }
+  }
+  
+  if (allKeywords.length === 0) return [];
+  
+  const lowerText = text.toLowerCase();
+  const matched: string[] = [];
+  
+  for (const kw of allKeywords) {
+    if (kw.startsWith('re:')) {
+      // Regex pattern
+      try {
+        const regex = new RegExp(kw.slice(3), 'i');
+        if (regex.test(text)) matched.push(kw);
+      } catch {
+        // Invalid regex, skip
+      }
+    } else {
+      // Word boundary match (case-insensitive)
+      const wordRegex = new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+      if (wordRegex.test(lowerText)) matched.push(kw);
+    }
+  }
+  
+  return matched;
+}
+
+/**
+ * Check if user message matches keyword escalation triggers.
+ * Returns { escalate: true, tier: number, reason: string } if keywords match.
+ * Tier indicates which model index to escalate to (highest matching tier wins).
+ */
+function checkKeywordEscalation(
+  text: string,
+  escalation: ModelEscalation | undefined
+): { escalate: boolean; tier?: number; reason?: string } {
+  if (!escalation) return { escalate: false };
+  
+  // Tiered keyword escalation
+  if (escalation.tiers && escalation.tiers.length > 0) {
+    let highestTier = -1;
+    let highestReason = '';
+    
+    // Check each tier, highest matching tier wins
+    for (let i = 0; i < escalation.tiers.length; i++) {
+      const tier = escalation.tiers[i];
+      const matched = matchKeywords(
+        text,
+        tier.keywords || [],
+        tier.keyword_presets as string[] | undefined
+      );
+      
+      if (matched.length > 0 && i > highestTier) {
+        highestTier = i;
+        highestReason = `tier ${i} keyword match: ${matched.slice(0, 3).join(', ')}${matched.length > 3 ? '...' : ''}`;
+      }
+    }
+    
+    if (highestTier >= 0) {
+      return { escalate: true, tier: highestTier, reason: highestReason };
+    }
+    
+    return { escalate: false };
+  }
+  
+  // Legacy flat keywords (treated as tier 0)
+  const matched = matchKeywords(
+    text,
+    escalation.keywords || [],
+    escalation.keyword_presets as string[] | undefined
+  );
+  
+  if (matched.length > 0) {
+    return { 
+      escalate: true,
+      tier: 0,
+      reason: `keyword match: ${matched.slice(0, 3).join(', ')}${matched.length > 3 ? '...' : ''}`
+    };
+  }
+  
+  return { escalate: false };
+}
 
 // ---------------------------------------------------------------------------
 // Streaming message helper
@@ -286,6 +405,7 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
       model: config.model,
       endpoint: config.endpoint,
       defaultDir: botConfig.default_dir || config.dir,
+      telegram: botConfig,
     },
   });
 
@@ -331,6 +451,10 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
   bot.command('undo', (ctx) => handleUndo(cmdCtx(ctx)));
   bot.command('vault', (ctx) => handleVault(cmdCtx(ctx)));
   bot.command('anton', (ctx) => handleAnton(cmdCtx(ctx)));
+  bot.command('agent', (ctx) => handleAgent(cmdCtx(ctx)));
+  bot.command('agents', (ctx) => handleAgents(cmdCtx(ctx)));
+  bot.command('escalate', (ctx) => handleEscalate(cmdCtx(ctx)));
+  bot.command('deescalate', (ctx) => handleDeescalate(cmdCtx(ctx)));
 
   bot.command('hosts', async (ctx) => {
     try {
@@ -525,6 +649,7 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
       editIntervalMs,
       fileThreshold,
       replyToUserMessages ? ctx.message.message_id : undefined,
+      config,
     );
   });
 
@@ -569,6 +694,10 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
     { command: 'new', description: 'Start a new session' },
     { command: 'cancel', description: 'Abort current generation' },
     { command: 'status', description: 'Session stats' },
+    { command: 'agent', description: 'Show current agent info' },
+    { command: 'agents', description: 'List all configured agents' },
+    { command: 'escalate', description: 'Use larger model for next message' },
+    { command: 'deescalate', description: 'Return to base model' },
     { command: 'dir', description: 'Get/set working directory' },
     { command: 'model', description: 'Show current model' },
     { command: 'compact', description: 'Compact context' },
@@ -652,6 +781,17 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
   console.error(`[bot] Model: ${config.model || 'auto'} | Endpoint: ${config.endpoint}`);
   console.error(`[bot] Allowed users: [${[...allowedUsers].join(', ')}]`);
   console.error(`[bot] Default dir: ${botConfig.default_dir || config.dir || '~'}`);
+  
+  // Log multi-agent config
+  const agents = botConfig.agents;
+  if (agents && Object.keys(agents).length > 0) {
+    const agentIds = Object.keys(agents);
+    console.error(`[bot] Multi-agent mode: ${agentIds.length} agents configured [${agentIds.join(', ')}]`);
+    const routing = botConfig.routing;
+    if (routing?.default) {
+      console.error(`[bot] Default agent: ${routing.default}`);
+    }
+  }
 
   bot.start({
     onStart: () => console.error('[bot] Polling active'),
@@ -694,10 +834,94 @@ async function processMessage(
   editIntervalMs: number,
   fileThresholdChars: number,
   replyToId?: number,
+  baseConfig?: IdlehandsConfig,
 ): Promise<void> {
-  const turn = sessions.beginTurn(managed.chatId);
+  let turn = sessions.beginTurn(managed.chatId);
   if (!turn) return;
-  const turnId = turn.turnId;
+  let turnId = turn.turnId;
+
+  // Handle pending escalation - switch model before processing
+  if (managed.pendingEscalation) {
+    const targetModel = managed.pendingEscalation;
+    const targetEndpoint = managed.pendingEscalationEndpoint;
+    managed.pendingEscalation = null;
+    managed.pendingEscalationEndpoint = null;
+    
+    // Find the model index in escalation chain
+    const escalation = managed.agentPersona?.escalation;
+    if (escalation?.models) {
+      const idx = escalation.models.indexOf(targetModel);
+      if (idx !== -1) {
+        managed.currentModelIndex = idx + 1;  // +1 because 0 is base model
+        managed.escalationCount += 1;
+      }
+    }
+    
+    // Recreate session with escalated model
+    try {
+      await sessions.recreateSession(managed.chatId, {
+        model: targetModel,
+        ...(targetEndpoint && { endpoint: targetEndpoint }),
+      });
+      console.error(`[bot:telegram] ${managed.userId} escalated to ${targetModel}`);
+    } catch (e: any) {
+      console.error(`[bot:telegram] escalation failed: ${e?.message ?? e}`);
+      // Continue with current model if escalation fails
+    }
+    
+    // Re-acquire turn after recreation - must update turnId!
+    const newTurn = sessions.beginTurn(managed.chatId);
+    if (!newTurn) {
+      // Queue the message for retry instead of dropping
+      managed.pendingQueue.unshift(text);
+      return;
+    }
+    turn = newTurn;
+    turnId = newTurn.turnId;
+    // Re-fetch managed session after recreation
+    const refreshed = sessions.get(managed.chatId);
+    if (refreshed) Object.assign(managed, refreshed);
+  }
+
+  // Check for keyword-based escalation BEFORE calling the model
+  const escalation = managed.agentPersona?.escalation;
+  if (escalation?.models?.length) {
+    const kwResult = checkKeywordEscalation(text, escalation);
+    if (kwResult.escalate && kwResult.tier !== undefined) {
+      // Use the tier to select the target model
+      const targetModelIndex = Math.min(kwResult.tier, escalation.models.length - 1);
+      const currentTier = managed.currentModelIndex - 1;  // -1 because 0 is base model
+      if (targetModelIndex > currentTier) {
+        const targetModel = escalation.models[targetModelIndex];
+        const tierEndpoint = escalation.tiers?.[targetModelIndex]?.endpoint;
+        console.error(`[bot:telegram] ${managed.userId} keyword escalation: ${kwResult.reason} → ${targetModel}${tierEndpoint ? ` @ ${tierEndpoint}` : ''}`);
+        
+        // Set up escalation
+        managed.currentModelIndex = targetModelIndex + 1;
+        managed.escalationCount += 1;
+        
+        // Recreate session with escalated model
+        try {
+          await sessions.recreateSession(managed.chatId, {
+            model: targetModel,
+            ...(tierEndpoint && { endpoint: tierEndpoint }),
+          });
+          // Re-acquire turn after recreation
+          const newTurn = sessions.beginTurn(managed.chatId);
+          if (!newTurn) {
+            managed.pendingQueue.unshift(text);
+            return;
+          }
+          turn = newTurn;
+          turnId = newTurn.turnId;
+          const refreshed = sessions.get(managed.chatId);
+          if (refreshed) Object.assign(managed, refreshed);
+        } catch (e: any) {
+          console.error(`[bot:telegram] keyword escalation failed: ${e?.message ?? e}`);
+        }
+      }
+    }
+  }
 
   const streaming = new StreamingMessage(bot, managed.chatId, editIntervalMs, replyToId, fileThresholdChars);
   await streaming.init();
@@ -737,6 +961,49 @@ async function processMessage(
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.error(`[bot] ${managed.chatId} ask() completed: ${result.turns} turns, ${result.toolCalls} tool calls, ${elapsed}s`);
 
+    // Check for auto-escalation request in response
+    const escalation = managed.agentPersona?.escalation;
+    const autoEscalate = escalation?.auto !== false && escalation?.models?.length;
+    const maxEscalations = escalation?.max_escalations ?? 2;
+    
+    if (autoEscalate && managed.escalationCount < maxEscalations) {
+      const escResult = detectEscalation(result.text);
+      if (escResult.escalate) {
+        // Determine next model in escalation chain
+        const nextIndex = Math.min(managed.currentModelIndex, escalation!.models!.length - 1);
+        const targetModel = escalation!.models![nextIndex];
+        const tierEndpoint = escalation!.tiers?.[nextIndex]?.endpoint;
+        
+        console.error(`[bot:telegram] ${managed.userId} auto-escalation requested: ${escResult.reason}${tierEndpoint ? ` @ ${tierEndpoint}` : ''}`);
+        
+        // Notify user about escalation
+        await streaming.finalizeError(`⚡ Escalating to \`${targetModel}\` (${escResult.reason})...`);
+        
+        // Set up escalation for re-run
+        managed.pendingEscalation = targetModel;
+        managed.pendingEscalationEndpoint = tierEndpoint || null;
+        managed.currentModelIndex = nextIndex + 1;
+        managed.escalationCount += 1;
+        
+        // Recreate session with escalated model
+        await sessions.recreateSession(managed.chatId, {
+          model: targetModel,
+          ...(tierEndpoint && { endpoint: tierEndpoint }),
+        });
+        
+        // Finish this turn and re-run with escalated model
+        clearInterval(watchdog);
+        sessions.finishTurn(managed.chatId, turnId);
+        
+        // Re-process the original message with the escalated model
+        const refreshed = sessions.get(managed.chatId);
+        if (refreshed) {
+          await processMessage(bot, sessions, refreshed, text, editIntervalMs, fileThresholdChars, undefined, baseConfig);
+        }
+        return;
+      }
+    }
+
     if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalize(result.text);
   } catch (e: any) {
     const msg = e?.message ?? String(e);
@@ -767,13 +1034,27 @@ async function processMessage(
     const current = sessions.finishTurn(managed.chatId, turnId);
     if (!current) return;
 
+    // Auto-deescalate back to base model after each request
+    if (current.currentModelIndex > 0 && current.agentPersona?.escalation) {
+      const baseModel = current.agentPersona.model || baseConfig?.model || 'default';
+      current.currentModelIndex = 0;
+      current.escalationCount = 0;
+      
+      try {
+        await sessions.recreateSession(current.chatId, { model: baseModel });
+        console.error(`[bot:telegram] ${current.userId} auto-deescalated to ${baseModel}`);
+      } catch (e: any) {
+        console.error(`[bot:telegram] auto-deescalation failed: ${e?.message ?? e}`);
+      }
+    }
+
     // Process queued messages only if this session still exists and is idle.
     const next = sessions.dequeueNext(managed.chatId);
     if (next && current.state === 'idle' && !current.inFlight) {
       setTimeout(() => {
         const fresh = sessions.get(managed.chatId);
         if (!fresh) return;
-        void processMessage(bot, sessions, fresh, next, editIntervalMs, fileThresholdChars);
+        void processMessage(bot, sessions, fresh, next, editIntervalMs, fileThresholdChars, undefined, baseConfig);
       }, 500);
     }
   }

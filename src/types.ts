@@ -430,6 +430,23 @@ export type BotTelegramConfig = {
   allow_groups?: boolean;
   /** When true, bot replies are sent as Telegram native replies to the triggering message. Default: false. */
   reply_to_user_messages?: boolean;
+  /** Multi-agent personas. Key is agent id. */
+  agents?: Record<string, AgentPersona>;
+  /** Routing rules for multi-agent mode. */
+  routing?: TelegramAgentRouting;
+};
+
+/**
+ * Routing rules for multi-agent Telegram bot.
+ * Priority: user > chat > default
+ */
+export type TelegramAgentRouting = {
+  /** Default agent id when no other rule matches */
+  default?: string;
+  /** Map of Telegram user id → agent id */
+  users?: Record<string, string>;
+  /** Map of Telegram chat id → agent id */
+  chats?: Record<string, string>;
 };
 
 export type BotDiscordConfig = {
