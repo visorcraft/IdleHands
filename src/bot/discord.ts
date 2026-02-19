@@ -3,8 +3,12 @@ import {
   Events,
   GatewayIntentBits,
   Partials,
+  REST,
+  Routes,
+  SlashCommandBuilder,
   type Message,
   type TextBasedChannel,
+  type ChatInputCommandInteraction,
 } from 'discord.js';
 import { createSession, type AgentSession, type AgentHooks } from '../agent.js';
 import type { ApprovalMode, BotDiscordConfig, IdlehandsConfig, AgentPersona, AgentRouting, ModelEscalation } from '../types.js';
@@ -516,16 +520,19 @@ When you escalate, your request will be re-run on a more capable model.`;
         const currentTier = managed.currentModelIndex - 1;  // -1 because 0 is base model
         if (targetModelIndex > currentTier) {
           const targetModel = escalation.models[targetModelIndex];
-          console.error(`[bot:discord] ${managed.userId} keyword escalation: ${kwResult.reason} → ${targetModel}`);
+          // Get endpoint from tier if defined
+          const tierEndpoint = escalation.tiers?.[targetModelIndex]?.endpoint;
+          console.error(`[bot:discord] ${managed.userId} keyword escalation: ${kwResult.reason} → ${targetModel}${tierEndpoint ? ` @ ${tierEndpoint}` : ''}`);
           
           // Set up escalation
           managed.currentModelIndex = targetModelIndex + 1;  // +1 because 0 is base model
           managed.escalationCount += 1;
           
-          // Recreate session with escalated model
+          // Recreate session with escalated model and optional endpoint override
           const cfg: IdlehandsConfig = {
             ...managed.config,
             model: targetModel,
+            ...(tierEndpoint && { endpoint: tierEndpoint }),
           };
           
           try {
@@ -580,8 +587,10 @@ When you escalate, your request will be re-run on a more capable model.`;
           // Determine next model in escalation chain
           const nextIndex = Math.min(managed.currentModelIndex, escalation!.models!.length - 1);
           const targetModel = escalation!.models![nextIndex];
+          // Get endpoint from tier if defined
+          const tierEndpoint = escalation!.tiers?.[nextIndex]?.endpoint;
           
-          console.error(`[bot:discord] ${managed.userId} auto-escalation requested: ${escResult.reason}`);
+          console.error(`[bot:discord] ${managed.userId} auto-escalation requested: ${escResult.reason}${tierEndpoint ? ` @ ${tierEndpoint}` : ''}`);
           
           // Update placeholder with escalation notice
           if (placeholder) {
@@ -593,10 +602,11 @@ When you escalate, your request will be re-run on a more capable model.`;
           managed.currentModelIndex = nextIndex + 1;
           managed.escalationCount += 1;
           
-          // Recreate session with escalated model (preserving context is optional - here we start fresh)
+          // Recreate session with escalated model and optional endpoint override
           const cfg: IdlehandsConfig = {
             ...managed.config,
             model: targetModel,
+            ...(tierEndpoint && { endpoint: tierEndpoint }),
           };
           await recreateSession(managed, cfg);
           
@@ -693,7 +703,7 @@ When you escalate, your request will be re-run on a more capable model.`;
     managed.lastActivity = Date.now();
   }
 
-  client.on(Events.ClientReady, () => {
+  client.on(Events.ClientReady, async () => {
     console.error(`[bot:discord] Connected as ${client.user?.tag ?? 'unknown'}`);
     console.error(`[bot:discord] Allowed users: [${[...allowedUsers].join(', ')}]`);
     console.error(`[bot:discord] Default dir: ${defaultDir}`);
@@ -709,6 +719,229 @@ When you escalate, your request will be re-run on a more capable model.`;
       const routing = botConfig.routing;
       if (routing?.default) {
         console.error(`[bot:discord] Default agent: ${routing.default}`);
+      }
+    }
+    
+    // Register slash commands
+    try {
+      const commands = [
+        new SlashCommandBuilder().setName('help').setDescription('Show available commands'),
+        new SlashCommandBuilder().setName('new').setDescription('Start a new session'),
+        new SlashCommandBuilder().setName('status').setDescription('Show session statistics'),
+        new SlashCommandBuilder().setName('agent').setDescription('Show current agent info'),
+        new SlashCommandBuilder().setName('agents').setDescription('List all configured agents'),
+        new SlashCommandBuilder().setName('cancel').setDescription('Cancel the current operation'),
+        new SlashCommandBuilder().setName('reset').setDescription('Reset the session'),
+        new SlashCommandBuilder().setName('escalate').setDescription('Escalate to a larger model')
+          .addStringOption(option => option.setName('model').setDescription('Model name or "next"').setRequired(false)),
+        new SlashCommandBuilder().setName('deescalate').setDescription('Return to base model'),
+      ].map(cmd => cmd.toJSON());
+      
+      const rest = new REST({ version: '10' }).setToken(token);
+      
+      // Register globally (takes up to 1 hour to propagate) or per-guild (instant)
+      if (guildId) {
+        await rest.put(Routes.applicationGuildCommands(client.user!.id, guildId), { body: commands });
+        console.error(`[bot:discord] Registered ${commands.length} slash commands for guild ${guildId}`);
+      } else {
+        await rest.put(Routes.applicationCommands(client.user!.id), { body: commands });
+        console.error(`[bot:discord] Registered ${commands.length} global slash commands`);
+      }
+    } catch (e: any) {
+      console.error(`[bot:discord] Failed to register slash commands: ${e?.message ?? e}`);
+    }
+  });
+
+  // Handle slash command interactions
+  client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (!allowedUsers.has(interaction.user.id)) {
+      await interaction.reply({ content: '⚠️ You are not authorized to use this bot.', ephemeral: true });
+      return;
+    }
+    
+    const cmd = interaction.commandName;
+    // Create a fake message object with enough properties to work with existing handlers
+    const fakeMsg = {
+      author: interaction.user,
+      channel: interaction.channel,
+      channelId: interaction.channelId,
+      guildId: interaction.guildId,
+      content: `/${cmd}`,
+      reply: async (content: string) => {
+        if (interaction.replied || interaction.deferred) {
+          return await interaction.followUp(content);
+        }
+        return await interaction.reply(content);
+      },
+    } as unknown as Message;
+    
+    // Defer reply for commands that might take a while
+    if (cmd === 'status' || cmd === 'agent' || cmd === 'agents') {
+      await interaction.deferReply();
+    }
+    
+    // Resolve agent for this interaction
+    const { agentId, persona } = resolveAgentForMessage(fakeMsg, botConfig.agents, botConfig.routing);
+    const key = sessionKeyForMessage(fakeMsg, allowGuilds, agentId);
+    
+    switch (cmd) {
+      case 'help': {
+        const lines = [
+          '**IdleHands Commands**',
+          '',
+          '/help — This message',
+          '/new — Start fresh session',
+          '/status — Session stats',
+          '/agent — Show current agent',
+          '/agents — List all configured agents',
+          '/cancel — Abort running task',
+          '/reset — Full session reset',
+        ];
+        await interaction.reply(lines.join('\n'));
+        break;
+      }
+      case 'new': {
+        destroySession(key);
+        const agentName = persona?.display_name || agentId;
+        const agentMsg = persona ? ` (agent: ${agentName})` : '';
+        await interaction.reply(`✨ New session started${agentMsg}. Send a message to begin.`);
+        break;
+      }
+      case 'status': {
+        const managed = sessions.get(key);
+        if (!managed) {
+          await interaction.editReply('No active session.');
+        } else {
+          const lines = [
+            `**Session:** ${managed.key}`,
+            `**Agent:** ${managed.agentPersona?.display_name || managed.agentId}`,
+            `**Model:** ${managed.config.model ?? 'default'}`,
+            `**State:** ${managed.state}`,
+            `**Turns:** ${managed.session.messages.length}`,
+          ];
+          await interaction.editReply(lines.join('\n'));
+        }
+        break;
+      }
+      case 'agent': {
+        const agentName = persona?.display_name || agentId;
+        if (persona) {
+          const lines = [
+            `**Current Agent:** ${agentName}`,
+            persona.model ? `**Model:** ${persona.model}` : null,
+            persona.system_prompt ? `**System Prompt:** ${persona.system_prompt.slice(0, 100)}...` : null,
+          ].filter(Boolean);
+          await interaction.editReply(lines.join('\n'));
+        } else {
+          await interaction.editReply(`**Current Agent:** Default (no persona configured)`);
+        }
+        break;
+      }
+      case 'agents': {
+        const agentsConfig = botConfig.agents;
+        if (!agentsConfig || Object.keys(agentsConfig).length === 0) {
+          await interaction.editReply('No agents configured.');
+        } else {
+          const lines = ['**Configured Agents:**', ''];
+          for (const [id, agent] of Object.entries(agentsConfig)) {
+            const name = agent.display_name || id;
+            const model = agent.model ? ` (${agent.model})` : '';
+            lines.push(`• **${name}**${model}`);
+          }
+          await interaction.editReply(lines.join('\n'));
+        }
+        break;
+      }
+      case 'cancel': {
+        const managed = sessions.get(key);
+        if (!managed) {
+          await interaction.reply('No active session.');
+        } else if (managed.state !== 'running') {
+          await interaction.reply('Nothing to cancel.');
+        } else {
+          cancelActive(managed);
+          await interaction.reply('🛑 Cancelling...');
+        }
+        break;
+      }
+      case 'reset': {
+        destroySession(key);
+        await interaction.reply('🔄 Session reset.');
+        break;
+      }
+      case 'escalate': {
+        const managed = sessions.get(key);
+        const escalation = persona?.escalation;
+        if (!escalation || !escalation.models?.length) {
+          await interaction.reply('❌ No escalation models configured for this agent.');
+          break;
+        }
+        
+        const arg = interaction.options.getString('model');
+        
+        // No arg: show available models and current state
+        if (!arg) {
+          const currentModel = managed?.config.model || config.model || 'default';
+          const lines = [
+            `**Current model:** \`${currentModel}\``,
+            `**Escalation models:** ${escalation.models.map(m => `\`${m}\``).join(', ')}`,
+            '',
+            'Usage: `/escalate model:<name>` or `/escalate model:next`',
+          ];
+          if (managed?.pendingEscalation) {
+            lines.push('', `⚡ **Pending escalation:** \`${managed.pendingEscalation}\``);
+          }
+          await interaction.reply(lines.join('\n'));
+          break;
+        }
+        
+        if (!managed) {
+          await interaction.reply('No active session. Send a message first.');
+          break;
+        }
+        
+        // Handle 'next' - escalate to next model in chain
+        let targetModel: string;
+        if (arg.toLowerCase() === 'next') {
+          const nextIndex = Math.min(managed.currentModelIndex, escalation.models.length - 1);
+          targetModel = escalation.models[nextIndex];
+        } else {
+          // Specific model requested
+          if (!escalation.models.includes(arg)) {
+            await interaction.reply(`❌ Model \`${arg}\` not in escalation chain. Available: ${escalation.models.map(m => `\`${m}\``).join(', ')}`);
+            break;
+          }
+          targetModel = arg;
+        }
+        
+        managed.pendingEscalation = targetModel;
+        await interaction.reply(`⚡ Next message will use \`${targetModel}\`. Send your request now.`);
+        break;
+      }
+      case 'deescalate': {
+        const managed = sessions.get(key);
+        if (!managed) {
+          await interaction.reply('No active session.');
+          break;
+        }
+        if (managed.currentModelIndex === 0 && !managed.pendingEscalation) {
+          await interaction.reply('Already using base model.');
+          break;
+        }
+        
+        const baseModel = persona?.model || config.model || 'default';
+        managed.pendingEscalation = null;
+        managed.currentModelIndex = 0;
+        
+        // Recreate session with base model
+        const cfg: IdlehandsConfig = {
+          ...managed.config,
+          model: baseModel,
+        };
+        await recreateSession(managed, cfg);
+        await interaction.reply(`✅ Returned to base model: \`${baseModel}\``);
+        break;
       }
     }
   });

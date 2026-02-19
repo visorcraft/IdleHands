@@ -322,6 +322,10 @@ export type KeywordTier = {
    * "complex" = full, complete, comprehensive, multi-step, integrate
    */
   keyword_presets?: Array<'coding' | 'planning' | 'complex'>;
+  /**
+   * Endpoint override for this tier. Falls back to global config.endpoint.
+   */
+  endpoint?: string;
 };
 
 export type ModelEscalation = {
