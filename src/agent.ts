@@ -2206,7 +2206,12 @@ export async function createSession(opts: {
     let noToolTurns = 0;
     const NO_TOOL_REPROMPT_THRESHOLD = 2;
     let repromptUsed = false;
-    let blockedPackageInstallAttempts = 0;
+    // Track blocked command loops by exact reason+command signature.
+    const blockedExecAttemptsBySig = new Map<string, number>();
+    // Keep a lightweight breadcrumb for diagnostics on partial failures.
+    let lastSuccessfulTestRun: any = null;
+    // One-time nudge to prevent post-success churn after green test runs.
+    let finalizeAfterTestsNudgeUsed = false;
 
     const maybeInjectVaultContext = async () => {
       if (!vault || vaultMode !== 'passive') return;
@@ -2855,7 +2860,24 @@ export async function createSession(opts: {
               const value = await builtInFn(ctx as any, args);
               content = typeof value === 'string' ? value : JSON.stringify(value);
               if (name === 'exec') {
-                blockedPackageInstallAttempts = 0;
+                // Successful exec clears blocked-loop counters.
+                blockedExecAttemptsBySig.clear();
+                // Capture successful test runs for better partial-failure diagnostics.
+                try {
+                  const parsed = JSON.parse(content);
+                  const cmd = String(args?.command ?? '');
+                  const out = String(parsed?.out ?? '');
+                  const rc = Number(parsed?.rc ?? NaN);
+                  const looksLikeTest = /(^|\s)(node\s+--test|npm\s+test|pnpm\s+test|yarn\s+test|pytest|go\s+test|cargo\s+test|ctest)(\s|$)/i.test(cmd);
+                  if (looksLikeTest && Number.isFinite(rc) && rc === 0) {
+                    lastSuccessfulTestRun = {
+                      command: cmd,
+                      outputPreview: out.slice(0, 400),
+                    };
+                  }
+                } catch {
+                  // Ignore parse issues; non-JSON exec output is tolerated.
+                }
               }
             } else if (isLspTool && lspManager) {
               // LSP tool dispatch
@@ -2970,18 +2992,27 @@ export async function createSession(opts: {
             if (e instanceof AgentLoopBreak) throw e;
             const msg = e?.message ?? String(e);
 
-            // Fast-fail package-install bypass loops in non-yolo modes.
+            // Fast-fail repeated blocked command loops with accurate reason labeling.
             // Applies to direct exec attempts and spawn_task delegation attempts.
-            if (
-              (tc.function.name === 'exec' || tc.function.name === 'spawn_task') &&
-              /package install\/remove.*(?:blocked|restricted)|without --no-confirm\/--yolo/i.test(msg)
-            ) {
-              blockedPackageInstallAttempts += 1;
-              if (blockedPackageInstallAttempts >= 2) {
-                throw new AgentLoopBreak(
-                  `${tc.function.name}: repeated blocked package-install attempts in current approval mode. ` +
-                  'Do not retry or delegate this. Continue with a zero-dependency path, or ask the user to restart with --no-confirm/--yolo.'
-                );
+            if (tc.function.name === 'exec' || tc.function.name === 'spawn_task') {
+              const blockedMatch = msg.match(/^exec:\s*blocked\s*\(([^)]+)\)\s*without --no-confirm\/--yolo:\s*(.*)$/i)
+                || msg.match(/^(spawn_task):\s*blocked\s*—\s*(.*)$/i);
+              if (blockedMatch) {
+                const reason = (blockedMatch[1] || blockedMatch[2] || 'blocked command').trim();
+                let parsedArgs: any = {};
+                try { parsedArgs = JSON.parse(tc.function.arguments ?? '{}'); } catch {}
+                const cmd = tc.function.name === 'exec'
+                  ? String(parsedArgs?.command ?? '')
+                  : String(parsedArgs?.task ?? '');
+                const sig = `${tc.function.name}|${reason}|${cmd}`;
+                const count = (blockedExecAttemptsBySig.get(sig) ?? 0) + 1;
+                blockedExecAttemptsBySig.set(sig, count);
+                if (count >= 2) {
+                  throw new AgentLoopBreak(
+                    `${tc.function.name}: repeated blocked command attempts (${reason}) in current approval mode. ` +
+                    'Do not retry the same blocked command. Choose a safe alternative, skip cleanup, or ask the user to restart with --no-confirm/--yolo.'
+                  );
+                }
               }
             }
 
@@ -3057,6 +3088,18 @@ export async function createSession(opts: {
 
           for (const r of results) {
             messages.push({ role: 'tool', tool_call_id: r.id, content: r.content });
+          }
+
+          // If tests are green and we've already made edits, nudge for final summary
+          // once to avoid extra non-essential demo/cleanup turns.
+          if (!finalizeAfterTestsNudgeUsed && lastSuccessfulTestRun && mutationVersion > 0) {
+            finalizeAfterTestsNudgeUsed = true;
+            messages.push({
+              role: 'user' as const,
+              content:
+                '[system] Tests passed successfully. If the requested work is complete, provide the final summary now and stop. ' +
+                'Only continue with additional commands if the user explicitly requested extra demos/cleanup.',
+            });
           }
 
           // ── Escalating cumulative read budget (§ anti-scan guardrails) ──
@@ -3182,7 +3225,10 @@ export async function createSession(opts: {
       }
 
       const reason = `max iterations exceeded (${maxIters})`;
-      throw new Error(reason);
+      const diag = lastSuccessfulTestRun
+        ? ` Last successful test run: ${lastSuccessfulTestRun.command}`
+        : '';
+      throw new Error(reason + diag);
     } catch (e: unknown) {
       // Some code paths (or upstream libs) may incorrectly throw `undefined`.
       // Convert it to a real Error so benches can be stable and debuggable.
@@ -3203,6 +3249,10 @@ export async function createSession(opts: {
       }
 
       await persistFailure(e, `ask turn ${turns}`);
+      const lastTestCmd = lastSuccessfulTestRun?.command;
+      if (e instanceof AgentLoopBreak && lastTestCmd) {
+        (e as Error).message += `\n[diagnostic] last successful test run: ${lastTestCmd}`;
+      }
       // Never rethrow undefined; normalize to Error for debuggability.
       if (e === undefined) {
         throw new Error('BUG: threw undefined (normalized at ask() boundary)');
