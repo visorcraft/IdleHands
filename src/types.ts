@@ -299,6 +299,52 @@ export type ExecResult = {
 
 // --- Bot config (Phase 8.5) ---
 
+// --- Multi-agent routing (Phase 19) ---
+
+/**
+ * Agent persona definition for multi-agent Discord bot routing.
+ * Each persona can have its own model, system prompt, and restrictions.
+ */
+export type AgentPersona = {
+  /** Unique identifier for this agent (used in routing) */
+  id: string;
+  /** Display name shown in /agent and /status commands */
+  display_name?: string;
+  /** Model override (e.g., "qwen3-coder-next"). Falls back to global config.model */
+  model?: string;
+  /** Endpoint override. Falls back to global config.endpoint */
+  endpoint?: string;
+  /** Custom system prompt for this agent's personality */
+  system_prompt?: string;
+  /** Per-agent approval mode */
+  approval_mode?: ApprovalMode;
+  /** Restrict this agent to specific directories */
+  allowed_dirs?: string[];
+  /** Default working directory for this agent */
+  default_dir?: string;
+  /** Per-agent max tokens override */
+  max_tokens?: number;
+  /** Per-agent temperature override */
+  temperature?: number;
+  /** Per-agent top_p override */
+  top_p?: number;
+};
+
+/**
+ * Routing rules for multi-agent Discord bot.
+ * Priority: user > channel > guild > default
+ */
+export type AgentRouting = {
+  /** Default agent id when no other rule matches */
+  default?: string;
+  /** Map of Discord user id → agent id */
+  users?: Record<string, string>;
+  /** Map of Discord channel id → agent id */
+  channels?: Record<string, string>;
+  /** Map of Discord guild id → agent id */
+  guilds?: Record<string, string>;
+};
+
 export type BotTelegramConfig = {
   token?: string;
   allowed_users?: number[];
@@ -332,6 +378,10 @@ export type BotDiscordConfig = {
   guild_id?: string;
   /** When true, bot replies use Discord native reply threading to the triggering message. Default: false. */
   reply_to_user_messages?: boolean;
+  /** Multi-agent personas. Key is agent id. */
+  agents?: Record<string, AgentPersona>;
+  /** Routing rules for multi-agent mode. */
+  routing?: AgentRouting;
 };
 
 export type BotConfig = {
