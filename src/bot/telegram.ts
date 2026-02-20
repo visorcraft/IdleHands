@@ -614,10 +614,23 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
   bot.on('message:text', async (ctx) => {
     const chatId = ctx.chat.id;
     const userId = ctx.from.id;
-    const text = ctx.message.text;
+    let text = ctx.message.text;
 
     // Skip commands (already handled above)
     if (text.startsWith('/')) return;
+
+    // Check if this chat requires @mention to respond
+    const requireMentionChats = botConfig.routing?.require_mention_chats ?? [];
+    if (requireMentionChats.includes(String(chatId))) {
+      const botUsername = ctx.me.username;
+      const mentionPattern = botUsername ? new RegExp(`@${botUsername}\\b`, 'i') : null;
+      const isMentioned = mentionPattern && mentionPattern.test(text);
+      if (!isMentioned) return; // Silently ignore messages without mention
+
+      // Strip the bot mention from text so the agent sees clean input
+      if (mentionPattern) text = text.replace(mentionPattern, '').trim();
+      if (!text) return; // Nothing left after stripping mention
+    }
 
     const msgPreview = text.length > 50 ? text.slice(0, 47) + '...' : text;
     console.error(`[bot] ${chatId} ${ctx.from.username ?? userId}: "${msgPreview}"`);

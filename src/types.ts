@@ -449,6 +449,8 @@ export type TelegramAgentRouting = {
   users?: Record<string, string>;
   /** Map of Telegram chat id → agent id */
   chats?: Record<string, string>;
+  /** Chat IDs that require @mention to trigger a response */
+  require_mention_chats?: string[];
 };
 
 export type BotDiscordConfig = {
