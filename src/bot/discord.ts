@@ -48,6 +48,8 @@ type ManagedSession = {
   currentModelIndex: number;  // 0 = base model, 1+ = escalated
   escalationCount: number;    // how many times escalated this turn
   pendingEscalation: string | null;  // model to escalate to on next message
+  // Watchdog compaction recovery
+  watchdogCompactAttempts: number;  // how many times watchdog has compacted this turn
 };
 
 function parseAllowedUsers(cfg: BotDiscordConfig): Set<string> {
@@ -396,6 +398,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       currentModelIndex: 0,
       escalationCount: 0,
       pendingEscalation: null,
+      watchdogCompactAttempts: 0,
     };
     sessions.set(key, managed);
     
@@ -436,6 +439,7 @@ When you escalate, your request will be re-run on a more capable model.`;
     managed.activeAbortController = controller;
     managed.lastProgressAt = Date.now();
     managed.lastActivity = Date.now();
+    managed.watchdogCompactAttempts = 0;
     return { turnId: managed.activeTurnId, controller };
   }
 
@@ -562,91 +566,139 @@ When you escalate, your request will be re-run on a more capable model.`;
     };
 
     const watchdogMs = 120_000;
+    const maxWatchdogCompacts = 3;
+    let watchdogCompactPending = false;
     const watchdog = setInterval(() => {
       if (!isTurnActive(managed, turnId)) return;
+      if (watchdogCompactPending) return;
       if (Date.now() - managed.lastProgressAt > watchdogMs) {
-        console.error(`[bot:discord] ${managed.userId} watchdog timeout on turn ${turnId}`);
-        cancelActive(managed);
+        if (managed.watchdogCompactAttempts < maxWatchdogCompacts) {
+          managed.watchdogCompactAttempts++;
+          watchdogCompactPending = true;
+          console.error(`[bot:discord] ${managed.userId} watchdog timeout on turn ${turnId} — compacting and retrying (attempt ${managed.watchdogCompactAttempts}/${maxWatchdogCompacts})`);
+          // Cancel current request, compact, and re-send
+          try { managed.activeAbortController?.abort(); } catch {}
+          managed.session.compactHistory({ hard: true }).then((result) => {
+            console.error(`[bot:discord] ${managed.userId} watchdog compaction: freed ${result.freedTokens} tokens, dropped ${result.droppedMessages} messages`);
+            managed.lastProgressAt = Date.now();
+            watchdogCompactPending = false;
+          }).catch((e) => {
+            console.error(`[bot:discord] ${managed.userId} watchdog compaction failed: ${e?.message ?? e}`);
+            watchdogCompactPending = false;
+          });
+        } else {
+          console.error(`[bot:discord] ${managed.userId} watchdog timeout on turn ${turnId} — max compaction attempts reached, cancelling`);
+          cancelActive(managed);
+        }
       }
     }, 5_000);
 
     try {
-      const result = await managed.session.ask(msg.content, { ...hooks, signal: turn.controller.signal });
-      if (!isTurnActive(managed, turnId)) return;
-      markProgress(managed, turnId);
-      const finalText = safeContent(streamed || result.text);
-      
-      // Check for auto-escalation request in response
-      const escalation = managed.agentPersona?.escalation;
-      const autoEscalate = escalation?.auto !== false && escalation?.models?.length;
-      const maxEscalations = escalation?.max_escalations ?? 2;
-      
-      if (autoEscalate && managed.escalationCount < maxEscalations) {
-        const escResult = detectEscalation(finalText);
-        if (escResult.escalate) {
-          // Determine next model in escalation chain
-          const nextIndex = Math.min(managed.currentModelIndex, escalation!.models!.length - 1);
-          const targetModel = escalation!.models![nextIndex];
-          // Get endpoint from tier if defined
-          const tierEndpoint = escalation!.tiers?.[nextIndex]?.endpoint;
-          
-          console.error(`[bot:discord] ${managed.userId} auto-escalation requested: ${escResult.reason}${tierEndpoint ? ` @ ${tierEndpoint}` : ''}`);
-          
-          // Update placeholder with escalation notice
-          if (placeholder) {
-            await placeholder.edit(`⚡ Escalating to \`${targetModel}\` (${escResult.reason})...`).catch(() => {});
+      let askComplete = false;
+      while (!askComplete) {
+        // Create a fresh AbortController for each attempt (watchdog compaction aborts the previous one)
+        const attemptController = new AbortController();
+        managed.activeAbortController = attemptController;
+        turn.controller = attemptController;
+        streamed = '';
+
+        try {
+          const result = await managed.session.ask(msg.content, { ...hooks, signal: attemptController.signal });
+          askComplete = true;
+          if (!isTurnActive(managed, turnId)) return;
+          markProgress(managed, turnId);
+          const finalText = safeContent(streamed || result.text);
+
+          // Check for auto-escalation request in response
+          const escalation = managed.agentPersona?.escalation;
+          const autoEscalate = escalation?.auto !== false && escalation?.models?.length;
+          const maxEscalations = escalation?.max_escalations ?? 2;
+
+          if (autoEscalate && managed.escalationCount < maxEscalations) {
+            const escResult = detectEscalation(finalText);
+            if (escResult.escalate) {
+              // Determine next model in escalation chain
+              const nextIndex = Math.min(managed.currentModelIndex, escalation!.models!.length - 1);
+              const targetModel = escalation!.models![nextIndex];
+              // Get endpoint from tier if defined
+              const tierEndpoint = escalation!.tiers?.[nextIndex]?.endpoint;
+
+              console.error(`[bot:discord] ${managed.userId} auto-escalation requested: ${escResult.reason}${tierEndpoint ? ` @ ${tierEndpoint}` : ''}`);
+
+              // Update placeholder with escalation notice
+              if (placeholder) {
+                await placeholder.edit(`⚡ Escalating to \`${targetModel}\` (${escResult.reason})...`).catch(() => {});
+              }
+
+              // Set up escalation for re-run
+              managed.pendingEscalation = targetModel;
+              managed.currentModelIndex = nextIndex + 1;
+              managed.escalationCount += 1;
+
+              // Recreate session with escalated model and optional endpoint override
+              const cfg: IdlehandsConfig = {
+                ...managed.config,
+                model: targetModel,
+                ...(tierEndpoint && { endpoint: tierEndpoint }),
+              };
+              await recreateSession(managed, cfg);
+
+              // Finish this turn and re-run with escalated model
+              clearInterval(watchdog);
+              finishTurn(managed, turnId);
+
+              // Re-process the original message with the escalated model
+              await processMessage(managed, msg);
+              return;
+            }
           }
-          
-          // Set up escalation for re-run
-          managed.pendingEscalation = targetModel;
-          managed.currentModelIndex = nextIndex + 1;
-          managed.escalationCount += 1;
-          
-          // Recreate session with escalated model and optional endpoint override
-          const cfg: IdlehandsConfig = {
-            ...managed.config,
-            model: targetModel,
-            ...(tierEndpoint && { endpoint: tierEndpoint }),
-          };
-          await recreateSession(managed, cfg);
-          
-          // Finish this turn and re-run with escalated model
-          clearInterval(watchdog);
-          finishTurn(managed, turnId);
-          
-          // Re-process the original message with the escalated model
-          await processMessage(managed, msg);
-          return;
-        }
-      }
-      
-      const chunks = splitDiscord(finalText);
 
-      if (placeholder) {
-        await placeholder.edit(chunks[0]).catch(() => {});
-      } else {
-        await sendUserVisible(msg, chunks[0]).catch(() => {});
-      }
+          const chunks = splitDiscord(finalText);
 
-      for (let i = 1; i < chunks.length && i < 10; i++) {
-        if (!isTurnActive(managed, turnId)) break;
-        await (msg.channel as any).send(chunks[i]).catch(() => {});
-      }
-      if (chunks.length > 10 && isTurnActive(managed, turnId)) {
-        await (msg.channel as any).send('[truncated — response too long]').catch(() => {});
-      }
-    } catch (e: any) {
-      const raw = String(e?.message ?? e ?? 'unknown error');
-      if (!isTurnActive(managed, turnId)) return;
-      if (raw.includes('AbortError') || raw.toLowerCase().includes('aborted')) {
-        if (placeholder) await placeholder.edit('⏹ Cancelled.').catch(() => {});
-        else await sendUserVisible(msg, '⏹ Cancelled.').catch(() => {});
-      } else {
-        const errMsg = raw.slice(0, 400);
-        if (placeholder) {
-          await placeholder.edit(`❌ ${errMsg}`).catch(() => {});
-        } else {
-          await sendUserVisible(msg, `❌ ${errMsg}`).catch(() => {});
+          if (placeholder) {
+            await placeholder.edit(chunks[0]).catch(() => {});
+          } else {
+            await sendUserVisible(msg, chunks[0]).catch(() => {});
+          }
+
+          for (let i = 1; i < chunks.length && i < 10; i++) {
+            if (!isTurnActive(managed, turnId)) break;
+            await (msg.channel as any).send(chunks[i]).catch(() => {});
+          }
+          if (chunks.length > 10 && isTurnActive(managed, turnId)) {
+            await (msg.channel as any).send('[truncated — response too long]').catch(() => {});
+          }
+        } catch (e: any) {
+          const raw = String(e?.message ?? e ?? 'unknown error');
+          const isAbort = raw.includes('AbortError') || raw.toLowerCase().includes('aborted');
+
+          // If aborted by watchdog compaction, wait for compaction to finish then retry
+          if (isAbort && watchdogCompactPending) {
+            if (placeholder) {
+              await placeholder.edit(`🔄 Context too large — compacting and retrying (attempt ${managed.watchdogCompactAttempts}/${maxWatchdogCompacts})...`).catch(() => {});
+            }
+            // Wait for the async compaction to complete
+            while (watchdogCompactPending) {
+              await new Promise((r) => setTimeout(r, 500));
+            }
+            // Loop back to retry the ask
+            continue;
+          }
+
+          // If aborted by watchdog after max compaction attempts, it's a real cancel
+          if (!isTurnActive(managed, turnId)) return;
+          if (isAbort) {
+            if (placeholder) await placeholder.edit('⏹ Cancelled.').catch(() => {});
+            else await sendUserVisible(msg, '⏹ Cancelled.').catch(() => {});
+          } else {
+            const errMsg = raw.slice(0, 400);
+            if (placeholder) {
+              await placeholder.edit(`❌ ${errMsg}`).catch(() => {});
+            } else {
+              await sendUserVisible(msg, `❌ ${errMsg}`).catch(() => {});
+            }
+          }
+          askComplete = true;
         }
       }
     } finally {
