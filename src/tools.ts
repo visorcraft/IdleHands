@@ -441,8 +441,14 @@ export async function write_file(ctx: ToolContext, args: any) {
   // Content may arrive as a string (normal) or as a parsed JSON object
   // (when llama-server's XML parser auto-parses JSON content values).
   const raw = args?.content;
+  const contentWasObject = raw != null && typeof raw === 'object';
   const content = typeof raw === 'string' ? raw
-    : (raw != null && typeof raw === 'object' ? JSON.stringify(raw, null, 2) : undefined);
+    : (contentWasObject ? JSON.stringify(raw, null, 2) : undefined);
+  // Warn when content arrives as an object (model passed JSON object instead of string)
+  // to help diagnose serialization-induced loops where the model retries thinking it failed.
+  if (contentWasObject) {
+    console.warn(`[write_file] Warning: content for "${args?.path}" arrived as ${typeof raw} — auto-serialized to JSON string. If this was intentional (e.g. package.json), the write succeeded.`);
+  }
   if (!p) throw new Error('write_file: missing path');
   if (content == null) throw new Error('write_file: missing content (got ' + typeof raw + ')');
 
@@ -882,7 +888,9 @@ export async function exec(ctx: ToolContext, args: any) {
         throw new Error(
           `exec: blocked (${verdict.reason}) without --no-confirm/--yolo: ${command}\n` +
           `STOP: this is a session-level approval restriction. Adding --yolo/--no-confirm inside the shell command does NOT override it. ` +
-          `Re-run the parent session with --no-confirm/--yolo (or ask the user), and do NOT use spawn_task to bypass this restriction.`
+          `Re-run the parent session with --no-confirm or --yolo to allow package operations. ` +
+          `Alternatively, the user can install packages manually and re-run this task. ` +
+          `Do NOT use spawn_task to bypass this restriction.`
         );
       }
       throw new Error(`exec: blocked (${verdict.reason}) without --no-confirm/--yolo: ${command}`);

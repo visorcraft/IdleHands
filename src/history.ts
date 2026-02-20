@@ -67,7 +67,7 @@ export function enforceContextBudget(opts: {
   toolSchemaTokens?: number;
 }): ChatMessage[] {
   const { contextWindow, maxTokens } = opts;
-  const minTail = opts.minTailMessages ?? 10;
+  const minTail = opts.minTailMessages ?? 20;
 
   // Reserve overhead: 2048 safety margin (thinking tokens, tool-call framing)
   // + actual tool schema tokens (caller-supplied) or 800 as a conservative fallback.

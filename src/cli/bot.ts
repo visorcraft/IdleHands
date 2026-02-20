@@ -210,8 +210,8 @@ export async function runBotSubcommand(opts: BotSubcommandOpts): Promise<void> {
       promises.push(startDiscordBot(config, { ...dcCfg, token: dcToken }));
     }
     if (promises.length === 0) {
-      console.error('[bot] No bots configured. Run: idlehands setup');
-      process.exit(2);
+      console.log('[bot] No bots configured. Run: idlehands setup');
+      process.exit(0);
     }
     console.log(`[bot] Starting ${promises.length} bot(s)...`);
     await Promise.all(promises);
@@ -232,7 +232,7 @@ export async function runBotSubcommand(opts: BotSubcommandOpts): Promise<void> {
     if (!hasConfig) {
       if (!isTTY) {
         console.error('[bot] Telegram bot not configured. Run: idlehands setup');
-        process.exit(2);
+        process.exit(0);
       }
 
       const rlSetup = readline.createInterface({ input, output });
@@ -246,7 +246,7 @@ export async function runBotSubcommand(opts: BotSubcommandOpts): Promise<void> {
         const ids = parseUserIds(usersIn);
         if (!tokenIn || ids.length === 0) {
           console.error('[bot] Setup cancelled: token and at least one allowed user ID are required.');
-          process.exit(2);
+          process.exit(0);
         }
 
         await writeConfigPatch(configPath, {
@@ -297,5 +297,5 @@ export async function runBotSubcommand(opts: BotSubcommandOpts): Promise<void> {
   }
 
   console.error(`Unknown bot target: ${botTarget}. Supported: telegram, discord, --all`);
-  process.exit(2);
+  process.exit(0);
 }
