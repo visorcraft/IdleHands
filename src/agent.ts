@@ -698,6 +698,15 @@ export function parseToolCallsFromContent(content: string): ToolCall[] | null {
   const xmlCalls = parseXmlToolCalls(trimmed);
   if (xmlCalls?.length) return xmlCalls;
 
+
+  // Case 5: Lightweight function-tag calls (seen in some Qwen content-mode outputs):
+  // <function=tool_name>
+  // {...json args...}
+  // </function>
+  // or single-line <function=tool_name>{...}</function>
+  const fnTagCalls = parseFunctionTagToolCalls(trimmed);
+  if (fnTagCalls?.length) return fnTagCalls;
+
   return null;
 }
 
@@ -1325,7 +1334,7 @@ export async function createSession(opts: {
           sessionMeta += `- ${fn.name}(${params}): ${fn.description ?? ''}\n`;
         }
       }
-      sessionMeta += '\nIMPORTANT: Output tool calls as JSON blocks in your message. Do NOT use the tool_calls API mechanism.';
+      sessionMeta += '\nIMPORTANT: Output tool calls as JSON blocks in your message. Do NOT use the tool_calls API mechanism.\nIf you use XML/function tags (e.g. <function=name>), include a full JSON object of arguments between braces.';
     } else {
       sessionMeta += '\n\nIMPORTANT: Use the tool_calls mechanism to invoke tools. Do NOT write JSON tool invocations in your message text.';
     }
@@ -3406,4 +3415,34 @@ async function autoPickModel(client: OpenAIClient, cached?: { data: Array<{ id: 
   } finally {
     clearTimeout(timer);
   }
+}
+
+
+
+function parseFunctionTagToolCalls(content: string): ToolCall[] | null {
+  const m = content.match(/<function=([\w.-]+)>([\s\S]*?)(?:<\/function>|$)/i);
+  if (!m) return null;
+
+  const name = m[1];
+  const body = (m[2] ?? '').trim();
+
+  // If body contains JSON object, use it as arguments; else empty object.
+  let args = '{}';
+  const jsonStart = body.indexOf('{');
+  const jsonEnd = body.lastIndexOf('}');
+  if (jsonStart !== -1 && jsonEnd > jsonStart) {
+    const sub = body.slice(jsonStart, jsonEnd + 1);
+    try {
+      JSON.parse(sub);
+      args = sub;
+    } catch {
+      // keep {}
+    }
+  }
+
+  return [{
+    id: 'call_0',
+    type: 'function',
+    function: { name, arguments: args }
+  }];
 }
