@@ -614,10 +614,23 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
   bot.on('message:text', async (ctx) => {
     const chatId = ctx.chat.id;
     const userId = ctx.from.id;
-    const text = ctx.message.text;
+    let text = ctx.message.text;
 
     // Skip commands (already handled above)
     if (text.startsWith('/')) return;
+
+    // Check if this chat requires @mention to respond
+    const requireMentionChats = botConfig.routing?.require_mention_chats ?? [];
+    if (requireMentionChats.includes(String(chatId))) {
+      const botUsername = ctx.me.username;
+      const mentionPattern = botUsername ? new RegExp(`@${botUsername}\\b`, 'i') : null;
+      const isMentioned = mentionPattern && mentionPattern.test(text);
+      if (!isMentioned) return; // Silently ignore messages without mention
+
+      // Strip the bot mention from text so the agent sees clean input
+      if (mentionPattern) text = text.replace(mentionPattern, '').trim();
+      if (!text) return; // Nothing left after stripping mention
+    }
 
     const msgPreview = text.length > 50 ? text.slice(0, 47) + '...' : text;
     console.error(`[bot] ${chatId} ${ctx.from.username ?? userId}: "${msgPreview}"`);
@@ -945,89 +958,129 @@ async function processMessage(
   };
 
   const watchdogMs = 120_000;
+  const maxWatchdogCompacts = 3;
+  let watchdogCompactPending = false;
   const watchdog = setInterval(() => {
     const current = sessions.get(managed.chatId);
     if (!current || current.activeTurnId !== turnId || !current.inFlight) return;
+    if (watchdogCompactPending) return;
     if (Date.now() - current.lastProgressAt > watchdogMs) {
-      console.error(`[bot] ${managed.chatId} watchdog timeout on turn ${turnId}`);
-      sessions.cancelActive(managed.chatId);
+      if (current.watchdogCompactAttempts < maxWatchdogCompacts) {
+        current.watchdogCompactAttempts++;
+        watchdogCompactPending = true;
+        console.error(`[bot:telegram] ${managed.chatId} watchdog timeout on turn ${turnId} — compacting and retrying (attempt ${current.watchdogCompactAttempts}/${maxWatchdogCompacts})`);
+        try { current.activeAbortController?.abort(); } catch {}
+        current.session.compactHistory({ hard: true }).then((result) => {
+          console.error(`[bot:telegram] ${managed.chatId} watchdog compaction: freed ${result.freedTokens} tokens, dropped ${result.droppedMessages} messages`);
+          current.lastProgressAt = Date.now();
+          watchdogCompactPending = false;
+        }).catch((e: any) => {
+          console.error(`[bot:telegram] ${managed.chatId} watchdog compaction failed: ${e?.message ?? e}`);
+          watchdogCompactPending = false;
+        });
+      } else {
+        console.error(`[bot:telegram] ${managed.chatId} watchdog timeout on turn ${turnId} — max compaction attempts reached, cancelling`);
+        sessions.cancelActive(managed.chatId);
+      }
     }
   }, 5_000);
 
   const startTime = Date.now();
 
   try {
-    const result = await managed.session.ask(text, { ...hooks, signal: turn.controller.signal });
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.error(`[bot] ${managed.chatId} ask() completed: ${result.turns} turns, ${result.toolCalls} tool calls, ${elapsed}s`);
+    let askComplete = false;
+    while (!askComplete) {
+      const attemptController = new AbortController();
+      managed.activeAbortController = attemptController;
+      turn.controller = attemptController;
 
-    // Check for auto-escalation request in response
-    const escalation = managed.agentPersona?.escalation;
-    const autoEscalate = escalation?.auto !== false && escalation?.models?.length;
-    const maxEscalations = escalation?.max_escalations ?? 2;
-    
-    if (autoEscalate && managed.escalationCount < maxEscalations) {
-      const escResult = detectEscalation(result.text);
-      if (escResult.escalate) {
-        // Determine next model in escalation chain
-        const nextIndex = Math.min(managed.currentModelIndex, escalation!.models!.length - 1);
-        const targetModel = escalation!.models![nextIndex];
-        const tierEndpoint = escalation!.tiers?.[nextIndex]?.endpoint;
-        
-        console.error(`[bot:telegram] ${managed.userId} auto-escalation requested: ${escResult.reason}${tierEndpoint ? ` @ ${tierEndpoint}` : ''}`);
-        
-        // Notify user about escalation
-        await streaming.finalizeError(`⚡ Escalating to \`${targetModel}\` (${escResult.reason})...`);
-        
-        // Set up escalation for re-run
-        managed.pendingEscalation = targetModel;
-        managed.pendingEscalationEndpoint = tierEndpoint || null;
-        managed.currentModelIndex = nextIndex + 1;
-        managed.escalationCount += 1;
-        
-        // Recreate session with escalated model
-        await sessions.recreateSession(managed.chatId, {
-          model: targetModel,
-          ...(tierEndpoint && { endpoint: tierEndpoint }),
-        });
-        
-        // Finish this turn and re-run with escalated model
-        clearInterval(watchdog);
-        sessions.finishTurn(managed.chatId, turnId);
-        
-        // Re-process the original message with the escalated model
-        const refreshed = sessions.get(managed.chatId);
-        if (refreshed) {
-          await processMessage(bot, sessions, refreshed, text, editIntervalMs, fileThresholdChars, undefined, baseConfig);
+      try {
+        const result = await managed.session.ask(text, { ...hooks, signal: attemptController.signal });
+        askComplete = true;
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.error(`[bot] ${managed.chatId} ask() completed: ${result.turns} turns, ${result.toolCalls} tool calls, ${elapsed}s`);
+
+        // Check for auto-escalation request in response
+        const escalation = managed.agentPersona?.escalation;
+        const autoEscalate = escalation?.auto !== false && escalation?.models?.length;
+        const maxEscalations = escalation?.max_escalations ?? 2;
+
+        if (autoEscalate && managed.escalationCount < maxEscalations) {
+          const escResult = detectEscalation(result.text);
+          if (escResult.escalate) {
+            // Determine next model in escalation chain
+            const nextIndex = Math.min(managed.currentModelIndex, escalation!.models!.length - 1);
+            const targetModel = escalation!.models![nextIndex];
+            const tierEndpoint = escalation!.tiers?.[nextIndex]?.endpoint;
+
+            console.error(`[bot:telegram] ${managed.userId} auto-escalation requested: ${escResult.reason}${tierEndpoint ? ` @ ${tierEndpoint}` : ''}`);
+
+            // Notify user about escalation
+            await streaming.finalizeError(`⚡ Escalating to \`${targetModel}\` (${escResult.reason})...`);
+
+            // Set up escalation for re-run
+            managed.pendingEscalation = targetModel;
+            managed.pendingEscalationEndpoint = tierEndpoint || null;
+            managed.currentModelIndex = nextIndex + 1;
+            managed.escalationCount += 1;
+
+            // Recreate session with escalated model
+            await sessions.recreateSession(managed.chatId, {
+              model: targetModel,
+              ...(tierEndpoint && { endpoint: tierEndpoint }),
+            });
+
+            // Finish this turn and re-run with escalated model
+            clearInterval(watchdog);
+            sessions.finishTurn(managed.chatId, turnId);
+
+            // Re-process the original message with the escalated model
+            const refreshed = sessions.get(managed.chatId);
+            if (refreshed) {
+              await processMessage(bot, sessions, refreshed, text, editIntervalMs, fileThresholdChars, undefined, baseConfig);
+            }
+            return;
+          }
         }
-        return;
-      }
-    }
 
-    if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalize(result.text);
-  } catch (e: any) {
-    const msg = e?.message ?? String(e);
-    console.error(`[bot] ${managed.chatId} ask() error: ${msg}`);
+        if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalize(result.text);
+      } catch (e: any) {
+        const msg = e?.message ?? String(e);
+        const isAbort = msg.includes('AbortError') || msg.toLowerCase().includes('aborted');
 
-    if (msg.includes('aborted') || msg.includes('AbortError')) {
-      if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalizeError('Aborted.');
-    } else if (msg.includes('ECONNREFUSED') || msg.includes('Connection timeout') || msg.includes('503') || msg.includes('model loading')) {
-      const endpoint = (managed.session as any)?.endpoint || '';
-      const recovered = endpoint ? await waitForModelEndpoint(endpoint, 60_000, 2_500) : false;
-      if (recovered) {
-        try {
-          const retry = await managed.session.ask(text, { ...hooks, signal: turn.controller.signal });
-          if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalize(retry.text);
-          return;
-        } catch (retryErr: any) {
-          const retryMsg = retryErr?.message ?? String(retryErr);
-          if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalizeError(`Model server came back but retry failed: ${retryMsg.length > 140 ? retryMsg.slice(0, 137) + '...' : retryMsg}`);
-          return;
+        // If aborted by watchdog compaction, wait for compaction to finish then retry
+        if (isAbort && watchdogCompactPending) {
+          console.error(`[bot:telegram] ${managed.chatId} ask() aborted by watchdog compaction — waiting for compaction to finish`);
+          while (watchdogCompactPending) {
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          continue; // retry the ask
+        }
+
+        askComplete = true;
+        console.error(`[bot] ${managed.chatId} ask() error: ${msg}`);
+
+        if (isAbort) {
+          if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalizeError('Aborted.');
+        } else if (msg.includes('ECONNREFUSED') || msg.includes('Connection timeout') || msg.includes('503') || msg.includes('model loading')) {
+          const endpoint = (managed.session as any)?.endpoint || '';
+          const recovered = endpoint ? await waitForModelEndpoint(endpoint, 60_000, 2_500) : false;
+          if (recovered) {
+            try {
+              const retry = await managed.session.ask(text, { ...hooks, signal: turn.controller.signal });
+              if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalize(retry.text);
+              return;
+            } catch (retryErr: any) {
+              const retryMsg = retryErr?.message ?? String(retryErr);
+              if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalizeError(`Model server came back but retry failed: ${retryMsg.length > 140 ? retryMsg.slice(0, 137) + '...' : retryMsg}`);
+              return;
+            }
+          }
+          if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalizeError('Model server is starting up or restarting. I waited up to 60s but it is still unavailable — please retry shortly.');
+        } else {
+          if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalizeError(msg.length > 200 ? msg.slice(0, 197) + '...' : msg);
         }
       }
-      if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalizeError('Model server is starting up or restarting. I waited up to 60s but it is still unavailable — please retry shortly.');
-    } else {
-      if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalizeError(msg.length > 200 ? msg.slice(0, 197) + '...' : msg);
     }
   } finally {
     clearInterval(watchdog);

@@ -23,6 +23,8 @@ export class TuiController {
   private ctrlCAt = 0;
   private cleanupFn: (() => Promise<void>) | null = null;
   private confirmProvider: TuiConfirmProvider;
+  private lastProgressAt = 0;
+  private watchdogCompactAttempts = 0;
   /** Tab completion state: candidates and current cycle index. */
   private tabCandidates: string[] = [];
   private tabIndex = -1;
@@ -207,20 +209,73 @@ export class TuiController {
     const id = `a_${Date.now()}`;
     this.inFlight = true;
     this.aborter = new AbortController();
+    this.lastProgressAt = Date.now();
+    this.watchdogCompactAttempts = 0;
     this.dispatch({ type: "AGENT_STREAM_START", id });
 
+    const watchdogMs = 120_000;
+    const maxWatchdogCompacts = 3;
+    let watchdogCompactPending = false;
+    const watchdog = setInterval(() => {
+      if (!this.inFlight) return;
+      if (watchdogCompactPending) return;
+      if (Date.now() - this.lastProgressAt > watchdogMs) {
+        if (this.watchdogCompactAttempts < maxWatchdogCompacts) {
+          this.watchdogCompactAttempts++;
+          watchdogCompactPending = true;
+          console.error(`[tui] watchdog timeout — compacting and retrying (attempt ${this.watchdogCompactAttempts}/${maxWatchdogCompacts})`);
+          try { this.aborter?.abort(); } catch {}
+          this.session!.compactHistory({ hard: true }).then((result) => {
+            console.error(`[tui] watchdog compaction: freed ${result.freedTokens} tokens, dropped ${result.droppedMessages} messages`);
+            this.lastProgressAt = Date.now();
+            watchdogCompactPending = false;
+          }).catch((e: any) => {
+            console.error(`[tui] watchdog compaction failed: ${e?.message ?? e}`);
+            watchdogCompactPending = false;
+          });
+        } else {
+          console.error(`[tui] watchdog timeout — max compaction attempts reached, cancelling`);
+          try { this.aborter?.abort(); } catch {}
+          try { this.session?.cancel(); } catch {}
+        }
+      }
+    }, 5_000);
+
     try {
-      await this.session.ask(trimmed, {
-        signal: this.aborter.signal,
-        onToken: (t) => this.dispatch({ type: "AGENT_STREAM_TOKEN", id, token: t }),
-        onToolCall: (c) => this.dispatch({ type: "TOOL_START", id: `${c.name}-${Date.now()}`, name: c.name, detail: JSON.stringify(c.args).slice(0, 120) }),
-        onToolResult: async (r) => {
-          this.dispatch({ type: r.success ? "TOOL_END" : "TOOL_ERROR", id: `${r.name}-${Date.now()}`, name: r.name, detail: r.summary });
-        },
-      });
-    } catch (e: any) {
-      this.dispatch({ type: "ALERT_PUSH", id: `err_${Date.now()}`, level: "error", text: e?.message ?? String(e) });
+      let askComplete = false;
+      while (!askComplete) {
+        const attemptController = new AbortController();
+        this.aborter = attemptController;
+
+        try {
+          await this.session.ask(trimmed, {
+            signal: attemptController.signal,
+            onToken: (t) => { this.lastProgressAt = Date.now(); this.dispatch({ type: "AGENT_STREAM_TOKEN", id, token: t }); },
+            onToolCall: (c) => { this.lastProgressAt = Date.now(); this.dispatch({ type: "TOOL_START", id: `${c.name}-${Date.now()}`, name: c.name, detail: JSON.stringify(c.args).slice(0, 120) }); },
+            onToolResult: async (r) => {
+              this.lastProgressAt = Date.now();
+              this.dispatch({ type: r.success ? "TOOL_END" : "TOOL_ERROR", id: `${r.name}-${Date.now()}`, name: r.name, detail: r.summary });
+            },
+          });
+          askComplete = true;
+        } catch (e: any) {
+          const msg = e?.message ?? String(e);
+          const isAbort = msg.includes('AbortError') || msg.toLowerCase().includes('aborted');
+
+          if (isAbort && watchdogCompactPending) {
+            this.dispatch({ type: "ALERT_PUSH", id: `compact_${Date.now()}`, level: "info", text: `Context too large — compacting and retrying (attempt ${this.watchdogCompactAttempts}/${maxWatchdogCompacts})...` });
+            while (watchdogCompactPending) {
+              await new Promise((r) => setTimeout(r, 500));
+            }
+            continue;
+          }
+
+          askComplete = true;
+          this.dispatch({ type: "ALERT_PUSH", id: `err_${Date.now()}`, level: "error", text: msg });
+        }
+      }
     } finally {
+      clearInterval(watchdog);
       this.dispatch({ type: "AGENT_STREAM_DONE", id });
       this.inFlight = false;
       this.aborter = null;

@@ -37,6 +37,8 @@ export type ManagedSession = {
   escalationCount: number;    // how many times escalated this turn
   pendingEscalation: string | null;  // model to escalate to on next message
   pendingEscalationEndpoint: string | null;  // endpoint override for pending escalation
+  // Watchdog compaction recovery
+  watchdogCompactAttempts: number;  // how many times watchdog has compacted this turn
 };
 
 export class SessionManager {
@@ -217,10 +219,11 @@ When you escalate, your request will be re-run on a more capable model.`;
       escalationCount: 0,
       pendingEscalation: null,
       pendingEscalationEndpoint: null,
+      watchdogCompactAttempts: 0,
     };
 
     this.sessions.set(chatId, managed);
-    
+
     // Log agent assignment for debugging
     if (persona) {
       console.error(`[bot:telegram] ${userId} → agent:${agentId} (${persona.display_name || agentId})`);
@@ -241,6 +244,7 @@ When you escalate, your request will be re-run on a more capable model.`;
     managed.activeAbortController = controller;
     managed.lastProgressAt = Date.now();
     managed.lastActivity = Date.now();
+    managed.watchdogCompactAttempts = 0;
 
     return { managed, turnId: managed.activeTurnId, controller };
   }
@@ -412,6 +416,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       escalationCount: managed.escalationCount,
       pendingEscalation: managed.pendingEscalation,
       pendingEscalationEndpoint: managed.pendingEscalationEndpoint,
+      watchdogCompactAttempts: 0,
     });
     return true;
   }
