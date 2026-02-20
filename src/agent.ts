@@ -1786,9 +1786,12 @@ export async function createSession(opts: {
     );
     if (!lines.length) return;
     lastVaultInjectionQuery = query;
+    const vaultContextHeader = vaultMode === 'passive'
+      ? '[Trifecta Vault (passive)]'
+      : '[Vault context after compaction]';
     messages.push({
       role: 'user',
-      content: `[Vault context after compaction] Relevant entries for "${query}":\n${lines.join('\n')}`
+      content: `${vaultContextHeader} Relevant entries for "${query}":\n${lines.join('\n')}`
     });
   };
 
