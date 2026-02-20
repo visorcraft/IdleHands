@@ -15,7 +15,8 @@ import { MCPManager, type McpServerStatus, type McpToolStatus } from './mcp.js';
 import { LspManager, detectInstalledLspServers } from './lsp.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { stateDir } from './utils.js';
+import { spawnSync } from 'node:child_process';
+import { stateDir, BASH_PATH as BASH } from './utils.js';
 
 function makeAbortController() {
   // Node 24: AbortController is global.
@@ -888,6 +889,101 @@ function userDisallowsDelegation(content: UserContent): boolean {
     /\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b[^\n.]{0,50}\b(?:do not|don't|dont|not allowed|forbidden|no)\b/.test(text);
 
   return negationNearDelegation;
+}
+
+type ReviewArtifact = {
+  id: string;
+  kind: 'code_review';
+  createdAt: string;
+  model: string;
+  projectId: string;
+  projectDir: string;
+  prompt: string;
+  content: string;
+  gitHead?: string;
+  gitDirty?: boolean;
+};
+
+function reviewArtifactKeys(projectDir: string): { latestKey: string; byIdPrefix: string; projectId: string } {
+  const { projectId } = projectIndexKeys(projectDir);
+  return {
+    projectId,
+    latestKey: `artifact:review:latest:${projectId}`,
+    byIdPrefix: `artifact:review:item:${projectId}:`,
+  };
+}
+
+function looksLikeCodeReviewRequest(text: string): boolean {
+  const t = text.toLowerCase();
+  if (!t.trim()) return false;
+  if (/^\s*\/review\b/.test(t)) return true;
+  if (/\b(?:code\s+review|security\s+review|review\s+the\s+(?:code|diff|changes|repo|repository|pr)|audit\s+the\s+code)\b/.test(t)) return true;
+  return /\breview\b/.test(t) && /\b(?:code|repo|repository|diff|changes|pull\s*request|pr)\b/.test(t);
+}
+
+function looksLikeReviewRetrievalRequest(text: string): boolean {
+  const t = text.toLowerCase();
+  if (!t.trim()) return false;
+  if (!/\breview\b/.test(t)) return false;
+
+  if (/\b(?:print|show|display|repeat|paste|send|output|give)\b[^\n.]{0,80}\b(?:full|entire|complete|whole)\b[^\n.]{0,80}\breview\b/.test(t)) return true;
+  if (/\b(?:full|entire|complete|whole)\b[^\n.]{0,30}\bcode\s+review\b/.test(t) && /\b(?:print|show|display|repeat|paste|send|output|give)\b/.test(t)) return true;
+  if (/\b(?:print|show|display|repeat|paste|send|output|give)\b[^\n.]{0,80}\b(?:last|latest|previous)\b[^\n.]{0,40}\breview\b/.test(t)) return true;
+  return false;
+}
+
+function parseReviewArtifact(raw: string): ReviewArtifact | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (parsed.kind !== 'code_review') return null;
+    if (typeof parsed.id !== 'string' || !parsed.id) return null;
+    if (typeof parsed.createdAt !== 'string' || !parsed.createdAt) return null;
+    if (typeof parsed.model !== 'string') return null;
+    if (typeof parsed.projectId !== 'string' || !parsed.projectId) return null;
+    if (typeof parsed.projectDir !== 'string' || !parsed.projectDir) return null;
+    if (typeof parsed.prompt !== 'string') return null;
+    if (typeof parsed.content !== 'string') return null;
+    return parsed as ReviewArtifact;
+  } catch {
+    return null;
+  }
+}
+
+function gitHead(cwd: string): string | undefined {
+  const inside = spawnSync(BASH, ['-lc', 'git rev-parse --is-inside-work-tree'], {
+    cwd,
+    encoding: 'utf8',
+    timeout: 1000,
+  });
+  if (inside.status !== 0 || !String(inside.stdout || '').trim().startsWith('true')) return undefined;
+
+  const head = spawnSync(BASH, ['-lc', 'git rev-parse HEAD'], {
+    cwd,
+    encoding: 'utf8',
+    timeout: 1000,
+  });
+  if (head.status !== 0) return undefined;
+  const sha = String(head.stdout || '').trim();
+  return sha || undefined;
+}
+
+function shortSha(sha?: string): string {
+  if (!sha) return 'unknown';
+  return sha.slice(0, 8);
+}
+
+function reviewArtifactStaleReason(artifact: ReviewArtifact, cwd: string): string {
+  const currentHead = gitHead(cwd);
+  const currentDirty = isGitDirty(cwd);
+
+  if (artifact.gitHead && currentHead && artifact.gitHead !== currentHead) {
+    return `Stored review was generated at commit ${shortSha(artifact.gitHead)}; repository is now at ${shortSha(currentHead)}.`;
+  }
+  if (artifact.gitDirty === false && currentDirty) {
+    return 'Stored review was generated on a clean tree; working tree now has uncommitted changes.';
+  }
+  return '';
 }
 
 function supportsVisionModel(model: string, modelMeta: any, harness: Harness): boolean {
@@ -2252,6 +2348,76 @@ export async function createSession(opts: {
     let turns = 0;
     let toolCalls = 0;
 
+    const rawInstructionText = userContentToText(instruction).trim();
+    const projectDir = cfg.dir ?? process.cwd();
+    const reviewKeys = reviewArtifactKeys(projectDir);
+    const retrievalRequested = looksLikeReviewRetrievalRequest(rawInstructionText);
+    const shouldPersistReviewArtifact = looksLikeCodeReviewRequest(rawInstructionText) && !retrievalRequested;
+
+    if (retrievalRequested) {
+      const latest = vault
+        ? await vault.getLatestByKey(reviewKeys.latestKey, 'system').catch(() => null)
+        : null;
+      const artifact = latest?.value ? parseReviewArtifact(latest.value) : null;
+
+      if (artifact?.content?.trim()) {
+        const stale = reviewArtifactStaleReason(artifact, projectDir);
+        const text = stale
+          ? `${artifact.content}\n\n[artifact note] ${stale}`
+          : artifact.content;
+
+        messages.push({ role: 'assistant', content: text });
+        hookObj.onToken?.(text);
+        await hookObj.onTurnEnd?.({
+          turn: turns,
+          toolCalls,
+          promptTokens: cumulativeUsage.prompt,
+          completionTokens: cumulativeUsage.completion,
+        });
+        return { text, turns, toolCalls };
+      }
+
+      const miss = 'No stored full code review found yet. Ask me to run a code review first, then I can replay it verbatim.';
+      messages.push({ role: 'assistant', content: miss });
+      hookObj.onToken?.(miss);
+      await hookObj.onTurnEnd?.({
+        turn: turns,
+        toolCalls,
+        promptTokens: cumulativeUsage.prompt,
+        completionTokens: cumulativeUsage.completion,
+      });
+      return { text: miss, turns, toolCalls };
+    }
+
+    const persistReviewArtifact = async (finalText: string): Promise<void> => {
+      if (!vault || !shouldPersistReviewArtifact) return;
+      const clean = finalText.trim();
+      if (!clean) return;
+
+      const createdAt = new Date().toISOString();
+      const id = `review-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const artifact: ReviewArtifact = {
+        id,
+        kind: 'code_review',
+        createdAt,
+        model,
+        projectId: reviewKeys.projectId,
+        projectDir,
+        prompt: rawInstructionText.slice(0, 2000),
+        content: clean,
+        gitHead: gitHead(projectDir),
+        gitDirty: isGitDirty(projectDir),
+      };
+
+      try {
+        const raw = JSON.stringify(artifact);
+        await vault.upsertNote(reviewKeys.latestKey, raw, 'system');
+        await vault.upsertNote(`${reviewKeys.byIdPrefix}${artifact.id}`, raw, 'system');
+      } catch {
+        // best effort only
+      }
+    };
+
     // Read-only tool call budgets (§ anti-scan guardrails)
     const READ_ONLY_PER_TURN_CAP = 6;
     const READ_BUDGET_WARN = 15;
@@ -3279,6 +3445,7 @@ export async function createSession(opts: {
 
         // final assistant message
         messages.push({ role: 'assistant', content: assistantText });
+        await persistReviewArtifact(assistantText).catch(() => {});
         await hookObj.onTurnEnd?.({
           turn: turns,
           toolCalls,

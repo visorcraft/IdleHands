@@ -622,6 +622,64 @@ describe('trifecta vault passive injection', () => {
   });
 });
 
+describe('review artifact durability', () => {
+  it('replays stored full code review without another model/tool pass', async () => {
+    const rows = new Map<string, string>();
+
+    const fakeVault: any = {
+      setProjectDir() {},
+      async getLatestByKey(key: string) {
+        const value = rows.get(key);
+        if (!value) return null;
+        return {
+          id: 'row-1',
+          kind: 'system',
+          key,
+          value,
+          updatedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        };
+      },
+      async upsertNote(key: string, value: string) {
+        rows.set(key, value);
+        return 'row-1';
+      },
+      async archiveToolMessages() {
+        return 0;
+      }
+    };
+
+    let llmCalls = 0;
+    const fakeClient: any = {
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
+      async warmup() {},
+      async chatStream() {
+        llmCalls += 1;
+        return {
+          id: `fake-${llmCalls}`,
+          choices: [{ index: 0, message: { role: 'assistant', content: '## Full Code Review\n\n- Finding A\n- Finding B' } }],
+          usage: { prompt_tokens: 20, completion_tokens: 15 }
+        };
+      }
+    };
+
+    const session = await createSession({
+      config: baseConfig(tmpDir, { max_iterations: 3 }),
+      runtime: { client: fakeClient, vault: fakeVault }
+    });
+
+    const first = await session.ask('Please run a full code review of this repository.');
+    assert.match(first.text, /Full Code Review/);
+    assert.equal(llmCalls, 1);
+
+    const second = await session.ask('print the full code review');
+    assert.equal(second.text, first.text);
+    assert.equal(llmCalls, 1, 'expected retrieval from stored artifact, not another LLM turn');
+  });
+});
+
 describe('agent loop dispatch + hooks', () => {
   it('dispatches tool calls and emits hook lifecycle events', async () => {
     const calls: ToolCallEvent[] = [];
