@@ -1767,6 +1767,31 @@ export async function createSession(opts: {
     planSteps = [];
   };
 
+  // Session-level vault context injection: search vault for entries relevant to
+  // the last user message and inject them into the conversation. Used after any
+  // compaction to restore context the model lost when messages were dropped.
+  let lastVaultInjectionQuery = '';
+  const injectVaultContext = async () => {
+    if (!vault) return;
+    let lastUser: any = null;
+    for (let j = messages.length - 1; j >= 0; j--) { if (messages[j].role === 'user') { lastUser = messages[j]; break; } }
+    const userText = userContentToText((lastUser?.content ?? '') as UserContent).trim();
+    if (!userText) return;
+    const query = userText.slice(0, 200);
+    if (query === lastVaultInjectionQuery) return;
+    const hits = await vault.search(query, 4);
+    if (!hits.length) return;
+    const lines = hits.map(
+      (r) => `${r.updatedAt} ${r.kind} ${r.key ?? r.tool ?? r.id} ${String(r.value ?? r.snippet ?? '').replace(/\s+/g, ' ').slice(0, 180)}`
+    );
+    if (!lines.length) return;
+    lastVaultInjectionQuery = query;
+    messages.push({
+      role: 'user',
+      content: `[Vault context after compaction] Relevant entries for "${query}":\n${lines.join('\n')}`
+    });
+  };
+
   const compactHistory = async (opts?: { topic?: string; hard?: boolean; dry?: boolean }) => {
     const beforeMessages = messages.length;
     const beforeTokens = estimateTokensFromMessages(messages);
@@ -1814,6 +1839,7 @@ export async function createSession(opts: {
       messages = compacted;
       if (dropped.length) {
         messages.push({ role: 'system', content: `[compacted: ${dropped.length} messages archived to Vault - vault_search to recall]` });
+        await injectVaultContext().catch(() => {});
       }
     }
 
@@ -2251,7 +2277,6 @@ export async function createSession(opts: {
     let lastTurnSigs = new Set<string>();
     const consecutiveCounts = new Map<string, number>();
 
-    let lastPassiveVaultQuery = '';
     let malformedCount = 0;
     let noProgressTurns = 0;
     const NO_PROGRESS_TURN_CAP = 3;
@@ -2264,27 +2289,6 @@ export async function createSession(opts: {
     let lastSuccessfulTestRun: any = null;
     // One-time nudge to prevent post-success churn after green test runs.
     let finalizeAfterTestsNudgeUsed = false;
-
-    const maybeInjectVaultContext = async () => {
-      if (!vault || vaultMode !== 'passive') return;
-      let lastUser: any = null;
-      for (let j = messages.length - 1; j >= 0; j--) { if (messages[j].role === 'user') { lastUser = messages[j]; break; } }
-      const userText = userContentToText((lastUser?.content ?? '') as UserContent).trim();
-      if (!userText) return;
-      const query = userText.slice(0, 200);
-      if (query === lastPassiveVaultQuery) return;
-      const hits = await vault.search(query, 4);
-      if (!hits.length) return;
-      const lines = hits.map(
-        (r) => `${r.updatedAt} ${r.kind} ${r.key ?? r.tool ?? r.id} ${String(r.value ?? r.snippet ?? '').replace(/\s+/g, ' ').slice(0, 180)}`
-      );
-      if (!lines.length) return;
-      lastPassiveVaultQuery = query;
-      messages.push({
-        role: 'user',
-        content: `[Trifecta Vault (passive)] Relevant entries for "${query}":\n${lines.join('\n')}`
-      });
-    };
 
     const archiveToolOutputForVault = async (msg: ChatMessage) => {
       if (!lens || !vault || msg.role !== 'tool' || typeof msg.content !== 'string') return msg;
@@ -2392,8 +2396,9 @@ export async function createSession(opts: {
 
         messages = compacted;
 
-        if (vaultMode === 'passive' && compactedDropped) {
-          await maybeInjectVaultContext().catch(() => {});
+        if (dropped.length) {
+          messages.push({ role: 'system', content: `[auto-compacted: ${dropped.length} old messages dropped to stay within context budget. Do NOT re-read files or re-run commands you have already seen — use vault_search to recall prior results if needed.]` } as ChatMessage);
+          await injectVaultContext().catch(() => {});
         }
 
         const ac = makeAbortController();
@@ -2714,9 +2719,13 @@ export async function createSession(opts: {
               mutationVersionBySig.set(sig, mutationVersion);
 
               if (!hasMutatedSince) {
-                // Allow a few more repeats for exec since "run tests" loops are common.
+                const count = sigCounts.get(sig) ?? 0;
                 const loopThreshold = harness.quirks.loopsOnToolError ? 3 : 6;
-                if ((sigCounts.get(sig) ?? 0) >= loopThreshold) {
+                // At 3x, inject vault context so the model gets the data it needs
+                if (count >= 3 && count < loopThreshold) {
+                  await injectVaultContext().catch(() => {});
+                }
+                if (count >= loopThreshold) {
                   const args = sig.slice(toolName.length + 1);
                   const argsPreview = args.length > 220 ? args.slice(0, 220) + '…' : args;
                   throw new Error(
@@ -2741,12 +2750,7 @@ export async function createSession(opts: {
               }
               const consec = consecutiveCounts.get(sig) ?? 1;
               if (consec >= 3) {
-                const args = sig.slice(toolName.length + 1);
-                const argsPreview = args.length > 220 ? args.slice(0, 220) + '…' : args;
-                messages.push({
-                  role: 'user' as const,
-                  content: `[System] STOP READING: You have read the same resource ${consec} consecutive times (${toolName} ${argsPreview}). The content has NOT changed. You already have this data. Proceed immediately with your next action (write_file, edit_file, exec, etc.) — do NOT read this resource again.`,
-                });
+                await injectVaultContext().catch(() => {});
               }
               // Hard-break: after 6 consecutive identical reads, stop the session
               if (consec >= 6) {
