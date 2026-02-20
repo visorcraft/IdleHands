@@ -3423,7 +3423,7 @@ async function autoPickModel(client: OpenAIClient, cached?: { data: Array<{ id: 
 
 
 function parseFunctionTagToolCalls(content: string): ToolCall[] | null {
-  const m = content.match(/<function=([\w.-]+)>([\s\S]*?)(?:<\/function>|$)/i);
+  const m = content.match(/<function=([\w.-]+)>([\s\S]*?)<\/function>/i);
   if (!m) return null;
 
   const name = m[1];
