@@ -578,7 +578,7 @@ When you escalate, your request will be re-run on a more capable model.`;
           console.error(`[bot:discord] ${managed.userId} watchdog timeout on turn ${turnId} — compacting and retrying (attempt ${managed.watchdogCompactAttempts}/${maxWatchdogCompacts})`);
           // Cancel current request, compact, and re-send
           try { managed.activeAbortController?.abort(); } catch {}
-          managed.session.compactHistory({ hard: true }).then((result) => {
+          managed.session.compactHistory().then((result) => {
             console.error(`[bot:discord] ${managed.userId} watchdog compaction: freed ${result.freedTokens} tokens, dropped ${result.droppedMessages} messages`);
             managed.lastProgressAt = Date.now();
             watchdogCompactPending = false;
@@ -595,6 +595,7 @@ When you escalate, your request will be re-run on a more capable model.`;
 
     try {
       let askComplete = false;
+      let isRetryAfterCompaction = false;
       while (!askComplete) {
         // Create a fresh AbortController for each attempt (watchdog compaction aborts the previous one)
         const attemptController = new AbortController();
@@ -602,8 +603,12 @@ When you escalate, your request will be re-run on a more capable model.`;
         turn.controller = attemptController;
         streamed = '';
 
+        const askText = isRetryAfterCompaction
+          ? 'Continue working on the task from where you left off. Context was compacted to free memory — do NOT restart from the beginning.'
+          : msg.content;
+
         try {
-          const result = await managed.session.ask(msg.content, { ...hooks, signal: attemptController.signal });
+          const result = await managed.session.ask(askText, { ...hooks, signal: attemptController.signal });
           askComplete = true;
           if (!isTurnActive(managed, turnId)) return;
           markProgress(managed, turnId);
@@ -681,7 +686,8 @@ When you escalate, your request will be re-run on a more capable model.`;
             while (watchdogCompactPending) {
               await new Promise((r) => setTimeout(r, 500));
             }
-            // Loop back to retry the ask
+            // Loop back to retry the ask with continuation prompt
+            isRetryAfterCompaction = true;
             continue;
           }
 
