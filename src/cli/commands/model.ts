@@ -11,7 +11,108 @@ import { estimateTokensFromMessages } from '../../history.js';
 import { err as errFmt, warn as warnFmt } from '../../term.js';
 import { projectDir } from '../../utils.js';
 
+// Track current escalation tier for the terminal session
+let currentEscalationTier = 0;
+
 export const modelCommands: SlashCommand[] = [
+  {
+    name: '/escalate',
+    description: 'Escalate to a larger model',
+    async execute(ctx, args) {
+      const escalation = ctx.config.escalation;
+      if (!escalation?.models?.length) {
+        console.log('No escalation models configured.');
+        console.log('Add "escalation": { "models": ["model1", "model2"] } to your config.');
+        return true;
+      }
+
+      const models = escalation.models as string[];
+      const tiers = escalation.tiers as Array<{ endpoint?: string }> | undefined;
+      const arg = args.trim().toLowerCase();
+
+      let targetTier: number;
+      let targetModel: string;
+      let targetEndpoint: string | undefined;
+
+      if (arg === 'next' || arg === '') {
+        // Escalate to next tier
+        if (currentEscalationTier >= models.length) {
+          console.log(`Already at maximum escalation tier (${currentEscalationTier}/${models.length}).`);
+          console.log(`Current model: ${ctx.session.model}`);
+          return true;
+        }
+        targetTier = currentEscalationTier;
+        targetModel = models[targetTier];
+        targetEndpoint = tiers?.[targetTier]?.endpoint;
+      } else if (/^\d+$/.test(arg)) {
+        // Escalate to specific tier
+        const tier = parseInt(arg, 10);
+        if (tier < 0 || tier >= models.length) {
+          console.log(`Invalid tier ${tier}. Available tiers: 0-${models.length - 1}`);
+          return true;
+        }
+        targetTier = tier;
+        targetModel = models[tier];
+        targetEndpoint = tiers?.[tier]?.endpoint;
+      } else {
+        // Escalate to specific model by name
+        const idx = models.findIndex(m => m.toLowerCase() === arg || m.toLowerCase().includes(arg));
+        if (idx === -1) {
+          console.log(`Model "${arg}" not found in escalation chain.`);
+          console.log(`Available: ${models.join(', ')}`);
+          return true;
+        }
+        targetTier = idx;
+        targetModel = models[idx];
+        targetEndpoint = tiers?.[idx]?.endpoint;
+      }
+
+      try {
+        if (targetEndpoint) {
+          await ctx.session.setEndpoint(targetEndpoint, targetModel);
+          ctx.config.endpoint = targetEndpoint.replace(/\/+$/, '');
+        } else {
+          ctx.session.setModel(targetModel);
+        }
+        currentEscalationTier = targetTier + 1;
+        console.log(ctx.S.green(`✓ Escalated to tier ${targetTier}: ${targetModel}`));
+        console.log(ctx.S.dim(`  Endpoint: ${targetEndpoint || ctx.config.endpoint}`));
+        console.log(ctx.S.dim(`  Harness: ${ctx.session.harness}`));
+      } catch (e: any) {
+        console.error(errFmt(`ESCALATE: ${e?.message ?? String(e)}`, ctx.S));
+      }
+      return true;
+    },
+  },
+  {
+    name: '/deescalate',
+    description: 'Return to base model',
+    async execute(ctx) {
+      if (currentEscalationTier === 0) {
+        console.log('Already at base model.');
+        console.log(`Current model: ${ctx.session.model}`);
+        return true;
+      }
+
+      const baseModel = ctx.config.model || '';
+      const baseEndpoint = ctx.config.endpoint || '';
+
+      try {
+        if (baseModel) {
+          ctx.session.setModel(baseModel);
+        }
+        // Note: endpoint doesn't change back automatically in terminal mode
+        // since we don't store the original endpoint separately
+        currentEscalationTier = 0;
+        console.log(ctx.S.green(`✓ De-escalated to base model: ${ctx.session.model}`));
+        console.log(ctx.S.dim(`  Endpoint: ${baseEndpoint}`));
+        console.log(ctx.S.dim(`  Harness: ${ctx.session.harness}`));
+      } catch (e: any) {
+        console.error(errFmt(`DEESCALATE: ${e?.message ?? String(e)}`, ctx.S));
+      }
+      return true;
+    },
+  },
   {
     name: '/stats',
     description: 'Session statistics',
