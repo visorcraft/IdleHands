@@ -411,6 +411,8 @@ export type AgentRouting = {
   channels?: Record<string, string>;
   /** Map of Discord guild id → agent id */
   guilds?: Record<string, string>;
+  /** Channel IDs that require @mention to trigger a response */
+  require_mention_channels?: string[];
 };
 
 export type BotTelegramConfig = {

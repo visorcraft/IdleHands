@@ -953,8 +953,21 @@ When you escalate, your request will be re-run on a more capable model.`;
     if (!allowGuilds && msg.guildId) return;
     if (allowGuilds && guildId && msg.guildId && msg.guildId !== guildId) return;
 
-    const content = msg.content?.trim();
+    let content = msg.content?.trim();
     if (!content) return;
+
+    // Check if this channel requires @mention to respond
+    const requireMentionChannels = botConfig.routing?.require_mention_channels ?? [];
+    if (requireMentionChannels.includes(msg.channelId)) {
+      const botMention = client.user ? `<@${client.user.id}>` : null;
+      const botMentionNick = client.user ? `<@!${client.user.id}>` : null;
+      const isMentioned = botMention && (content.includes(botMention) || (botMentionNick && content.includes(botMentionNick)));
+      if (!isMentioned) return; // Silently ignore messages without mention
+
+      // Strip the bot mention from content so the agent sees clean text
+      if (botMention) content = content.replace(new RegExp(`<@!?${client.user!.id}>`, 'g'), '').trim();
+      if (!content) return; // Nothing left after stripping mention
+    }
 
     // Resolve agent for this message to get the correct session key
     const { agentId, persona } = resolveAgentForMessage(msg, botConfig.agents, botConfig.routing);
