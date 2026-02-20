@@ -99,13 +99,23 @@ async function main() {
         // Kill any existing idlehands processes under the CURRENT user
         // (we're switching away from current user to effectiveRunAs)
         try {
-          execSync(`pgrep -u ${currentUser} -f 'node.*idlehands' | grep -vE '^(${process.pid}|${process.ppid})$' | xargs -r kill 2>/dev/null || true`, { stdio: 'ignore' });
+          const staleOwn = execSync(`pgrep -u ${currentUser} -f 'node.*idlehands' | grep -vE '^(${process.pid}|${process.ppid})$' || true`, { encoding: 'utf8' }).trim();
+          if (staleOwn) {
+            const pids = staleOwn.split('\n').filter(Boolean);
+            console.log(`\x1b[2m  Killing ${pids.length} stale idlehands process(es) under ${currentUser}: ${pids.join(', ')}\x1b[0m`);
+            execSync(`echo "${staleOwn}" | xargs -r kill 2>/dev/null || true`, { stdio: 'ignore' });
+          }
         } catch {}
 
         // Also kill any stale idlehands processes under the TARGET user
         // (clean slate for the new run)
         try {
-          execSync(`sudo -n -u ${effectiveRunAs} bash -c "pgrep -f 'node.*idlehands' | xargs -r kill" 2>/dev/null || true`, { stdio: 'ignore' });
+          const staleTarget = execSync(`sudo -n -u ${effectiveRunAs} bash -c "pgrep -f 'node.*idlehands' || true" 2>/dev/null`, { encoding: 'utf8' }).trim();
+          if (staleTarget) {
+            const pids = staleTarget.split('\n').filter(Boolean);
+            console.log(`\x1b[2m  Killing ${pids.length} stale idlehands process(es) under ${effectiveRunAs}: ${pids.join(', ')}\x1b[0m`);
+            execSync(`sudo -n -u ${effectiveRunAs} bash -c "pgrep -f 'node.*idlehands' | xargs -r kill" 2>/dev/null || true`, { stdio: 'ignore' });
+          }
         } catch {}
 
         // Small delay to let processes die
@@ -122,6 +132,20 @@ async function main() {
         const execPath = process.execPath;
         const scriptPath = process.argv[1];
         const cmdArgs = [scriptPath, ...filteredArgs];
+
+        // Preflight: check if the global install is a symlink to a private directory
+        // that the target user can't access (common with npm install -g creating symlinks)
+        try {
+          const scriptDir = path.dirname(fsSync.realpathSync(scriptPath));
+          const testResult = spawnSync('sudo', ['-n', '-u', effectiveRunAs, 'test', '-r', scriptPath], { stdio: 'ignore' });
+          if (testResult.status !== 0) {
+            console.error(`\x1b[31m[run-as] Error: user '${effectiveRunAs}' cannot read ${scriptPath}\x1b[0m`);
+            console.error(`\x1b[31m  The global install may be a symlink to a private directory.\x1b[0m`);
+            console.error(`\x1b[33m  Fix: sudo cp -aL $(dirname ${scriptDir}) /usr/local/lib/node_modules/@visorcraft/idlehands\x1b[0m`);
+            console.error(`\x1b[33m       sudo chmod -R a+rX /usr/local/lib/node_modules/@visorcraft/idlehands\x1b[0m`);
+            process.exit(1);
+          }
+        } catch {}
 
         console.log(`\x1b[2m  Switching to user: ${effectiveRunAs}\x1b[0m`);
         const result = spawnSync('sudo', ['-u', effectiveRunAs, execPath, ...cmdArgs], {

@@ -270,6 +270,22 @@ export class OpenAIClient {
       }
     }
 
+    // Ensure tool_call arguments in assistant messages are JSON strings (not objects).
+    // Some servers (llama.cpp) apply Jinja filters like |items which fail on raw strings
+    // when the template expects a dict, or fail on objects when it expects a string.
+    // Normalizing to JSON string is the safe universal format for OpenAI-compatible APIs.
+    if (Array.isArray(body.messages)) {
+      for (const m of body.messages) {
+        if (m?.role === 'assistant' && Array.isArray(m.tool_calls)) {
+          for (const tc of m.tool_calls) {
+            if (tc?.function?.arguments && typeof tc.function.arguments !== 'string') {
+              tc.function.arguments = JSON.stringify(tc.function.arguments);
+            }
+          }
+        }
+      }
+    }
+
     return body;
   }
 
@@ -360,6 +376,7 @@ export class OpenAIClient {
 
     let lastErr: unknown = makeClientError(`POST /chat/completions failed without response`, 503, true);
     const reqStart = Date.now();
+    const seen5xxMessages: string[] = [];
 
     for (let attempt = 0; attempt < 3; attempt++) {
       // Build a combined signal that fires on caller abort OR response timeout.
@@ -504,6 +521,7 @@ export class OpenAIClient {
 
     let lastErr: unknown = makeClientError('POST /chat/completions (stream) failed without response', 503, true);
     const reqStart = Date.now();
+    const seen5xxMessages: string[] = [];  // Track 5xx error messages to detect deterministic failures
 
     for (let attempt = 0; attempt < 3; attempt++) {
       let res: Response;
@@ -564,11 +582,23 @@ export class OpenAIClient {
       // HTTP 5xx on stream → retry (and optionally fall back to non-stream after repeated failures)
       if (res.status >= 500 && res.status <= 599) {
         const text = await res.text().catch(() => '');
+        const errSig = `${res.status}:${text.slice(0, 500)}`;
         lastErr = makeClientError(
           `POST /chat/completions (stream) failed: ${res.status} ${res.statusText}${text ? `\n${text.slice(0, 2000)}` : ''}`,
           res.status,
           true
         );
+
+        // Detect deterministic server errors (same error body repeated) — bail immediately
+        if (seen5xxMessages.includes(errSig)) {
+          this.log(`Deterministic server error detected (same ${res.status} repeated) — not retrying`);
+          throw makeClientError(
+            `Server returns the same error repeatedly (${res.status}). This is likely a template or model compatibility issue, not a transient failure.\n${text.slice(0, 2000)}`,
+            res.status,
+            false  // not retryable
+          );
+        }
+        seen5xxMessages.push(errSig);
 
         // If we keep getting server errors, try a non-streaming request as a last resort.
         const allowFallback = (process.env.IDLEHANDS_STREAM_FALLBACK ?? '1') !== '0';
@@ -794,6 +824,40 @@ export class OpenAIClient {
     }
 
     throw lastErr;
+  }
+
+  /**
+   * Quick smoke test: send a minimal tool-call round-trip to detect template errors.
+   * Returns null on success, error message string on failure.
+   */
+  async smokeTestToolCalls(model: string): Promise<string | null> {
+    const testMessages: ChatMessage[] = [
+      { role: 'system', content: 'You are a test.' },
+      { role: 'user', content: 'test' },
+      { role: 'assistant', content: '', tool_calls: [{ id: 'test_1', type: 'function', function: { name: 'test_tool', arguments: '{"key":"value"}' } }] },
+      { role: 'tool', tool_call_id: 'test_1', content: 'ok' },
+    ];
+    try {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 15_000);
+      await this.chat({
+        model,
+        messages: testMessages,
+        max_tokens: 1,
+        temperature: 0,
+        signal: ac.signal,
+      });
+      clearTimeout(timer);
+      return null;
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      // Only flag template/format errors (5xx with template keywords), not connection issues
+      if (/500|template|filter|items|jinja/i.test(msg)) {
+        return `Tool-call template error: ${msg.slice(0, 500)}`;
+      }
+      // Other errors (timeout, connection) — don't block startup
+      return null;
+    }
   }
 
   private finalizeStreamAggregate(

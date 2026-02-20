@@ -1302,6 +1302,19 @@ export async function createSession(opts: {
   // Harness-driven suffix: append to first user message (NOT system prompt — §9b KV cache rule)
   if (harness.quirks.needsExplicitToolCallFormatReminder) {
     sessionMeta += '\n\nIMPORTANT: Use the tool_calls mechanism to invoke tools. Do NOT write JSON tool invocations in your message text.';
+
+    // One-time tool-call template smoke test (first ask() call only)
+    if (!(client as any).__toolCallSmokeTested) {
+      (client as any).__toolCallSmokeTested = true;
+      try {
+        const smokeErr = await client.smokeTestToolCalls(cfg.model ?? 'default');
+        if (smokeErr) {
+          console.error(`\x1b[33m[warn] Tool-call smoke test failed: ${smokeErr}\x1b[0m`);
+          console.error(`\x1b[33m  This model/server may not support tool-call replay correctly.\x1b[0m`);
+          console.error(`\x1b[33m  Consider using a different model or updating llama.cpp.\x1b[0m`);
+        }
+      } catch {}
+    }
   }
   if (harness.systemPromptSuffix) {
     sessionMeta += '\n\n' + harness.systemPromptSuffix;

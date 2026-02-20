@@ -35,6 +35,11 @@ export class CliSpinner {
     this.frame = 0;
     this.firstDelta = false;
     this.currentTool = null;
+    // In dumb terminals, print a single status line instead of animated frames
+    if (process.env.TERM === 'dumb' || !process.stderr.isTTY) {
+      process.stderr.write(this.S.dim("  Waiting for response...\n"));
+      return;
+    }
     this.timer = setInterval(() => this.render(), INTERVAL);
   }
 
@@ -64,7 +69,9 @@ export class CliSpinner {
     // Restart spinner for tool execution
     this.currentTool = event.name;
     this.startTime = Date.now();
-    this.timer = setInterval(() => this.render(), INTERVAL);
+    if (process.env.TERM !== 'dumb' && process.stderr.isTTY) {
+      this.timer = setInterval(() => this.render(), INTERVAL);
+    }
   }
 
   /** Called after a tool completes. */
