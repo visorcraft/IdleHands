@@ -90,16 +90,30 @@ export function enforceContextBudget(opts: {
   const sysStart = msgs[0]?.role === 'system' ? 1 : 0;
   let currentTokens = beforeTokens;
 
+  // Find the last assistant message with substantive text (not just tool_calls).
+  // This is the model's most recent "real" response and must be protected from compaction
+  // to prevent the model from re-doing all its work when the user follows up.
+  let protectedIdx = -1;
+  for (let i = msgs.length - 1; i >= sysStart; i--) {
+    const m = msgs[i];
+    if (m.role === 'assistant' && !(m as any).tool_calls?.length && messageContentChars((m as any).content) > 50) {
+      protectedIdx = i;
+      break;
+    }
+  }
+
   // Phase 1: drop oldest tool-call exchange groups first (§10 — they're bulky and stale).
   // A "group" = assistant message with tool_calls + all its tool-result messages.
   // Dropping tool results without their paired assistant message breaks the OpenAI
   // protocol contract (orphaned tool_call IDs cause server errors / model confusion).
   while (msgs.length > 2 && currentTokens > threshold) {
     if (msgs.length - sysStart <= minTail) break;
-    const groupIdx = findOldestToolCallGroup(msgs, sysStart, msgs.length - minTail);
+    const groupIdx = findOldestToolCallGroup(msgs, sysStart, msgs.length - minTail, protectedIdx);
     if (groupIdx === -1) break;
     // Remove the group (assistant + following tool results) in one splice.
     const groupEnd = findGroupEnd(msgs, groupIdx);
+    // Adjust protectedIdx if dropping before it
+    if (protectedIdx > groupIdx) protectedIdx -= (groupEnd - groupIdx);
     const dropped = msgs.splice(groupIdx, groupEnd - groupIdx);
     for (const d of dropped) currentTokens -= Math.ceil((messageContentChars((d as any).content) + 20) / 4);
   }
@@ -107,7 +121,13 @@ export function enforceContextBudget(opts: {
   // Phase 2: drop any oldest messages if still over budget.
   while (msgs.length > 2 && currentTokens > threshold) {
     if (msgs.length - sysStart <= minTail) break;
+    // Skip the protected assistant response
+    if (sysStart === protectedIdx) {
+      // Can't drop — the next droppable message is the protected one, stop
+      break;
+    }
     const [removed] = msgs.splice(sysStart, 1);
+    if (protectedIdx > sysStart) protectedIdx--;
     currentTokens -= Math.ceil((messageContentChars((removed as any).content) + 20) / 4);
   }
 
@@ -126,14 +146,16 @@ export function enforceContextBudget(opts: {
  * We drop the entire group (assistant + tool results) to keep the protocol valid.
  * Falls back to finding the oldest tool-result message (orphaned) if no group is found.
  */
-function findOldestToolCallGroup(msgs: ChatMessage[], fromIdx: number, toIdx: number): number {
+function findOldestToolCallGroup(msgs: ChatMessage[], fromIdx: number, toIdx: number, protectedIdx = -1): number {
   // First: look for an assistant message with tool_calls (a complete group to drop)
   for (let i = fromIdx; i < toIdx; i++) {
+    if (i === protectedIdx) continue;
     const m = msgs[i];
     if (m.role === 'assistant' && (m as any).tool_calls?.length) return i;
   }
   // Fallback: look for orphaned tool-result messages (shouldn't happen, but safe)
   for (let i = fromIdx; i < toIdx; i++) {
+    if (i === protectedIdx) continue;
     if (msgs[i].role === 'tool') return i;
   }
   return -1;
