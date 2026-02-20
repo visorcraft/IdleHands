@@ -1059,7 +1059,7 @@ export type AgentSession = {
   /** Clear accumulated plan steps */
   clearPlan: () => void;
   /** Manual context compaction. */
-  compactHistory: (opts?: { topic?: string; hard?: boolean; dry?: boolean }) => Promise<{
+  compactHistory: (opts?: { topic?: string; hard?: boolean; force?: boolean; dry?: boolean }) => Promise<{
     beforeMessages: number;
     afterMessages: number;
     freedTokens: number;
@@ -1795,7 +1795,7 @@ export async function createSession(opts: {
     });
   };
 
-  const compactHistory = async (opts?: { topic?: string; hard?: boolean; dry?: boolean }) => {
+  const compactHistory = async (opts?: { topic?: string; hard?: boolean; force?: boolean; dry?: boolean }) => {
     const beforeMessages = messages.length;
     const beforeTokens = estimateTokensFromMessages(messages);
 
@@ -1809,9 +1809,10 @@ export async function createSession(opts: {
         messages,
         contextWindow,
         maxTokens,
-        minTailMessages: 12,
-        compactAt: cfg.compact_at ?? 0.8,
+        minTailMessages: opts?.force ? 2 : 12,
+        compactAt: opts?.force ? 0.5 : (cfg.compact_at ?? 0.8),
         toolSchemaTokens: estimateToolSchemaTokens(getToolsSchema()),
+        force: opts?.force,
       });
     }
 
@@ -2412,10 +2413,11 @@ export async function createSession(opts: {
         const onCallerAbort = () => ac.abort();
         callerSignal?.addEventListener('abort', onCallerAbort, { once: true });
 
-        // Per-request timeout: the lesser of 120s or the remaining session wall time.
+        // Per-request timeout: the lesser of response_timeout (default 300s) or the remaining session wall time.
         // This prevents a single slow request from consuming the entire session budget.
+        const perReqCap = cfg.response_timeout && cfg.response_timeout > 0 ? cfg.response_timeout : 300;
         const wallRemaining = Math.max(0, cfg.timeout - (Date.now() - wallStart) / 1000);
-        const reqTimeout = Math.min(120, Math.max(10, wallRemaining));
+        const reqTimeout = Math.min(perReqCap, Math.max(10, wallRemaining));
         const timer = setTimeout(() => ac.abort(), reqTimeout * 1000);
         reqCounter++;
 

@@ -225,7 +225,7 @@ export class TuiController {
           watchdogCompactPending = true;
           console.error(`[tui] watchdog timeout — compacting and retrying (attempt ${this.watchdogCompactAttempts}/${maxWatchdogCompacts})`);
           try { this.aborter?.abort(); } catch {}
-          this.session!.compactHistory({ hard: true }).then((result) => {
+          this.session!.compactHistory({ force: true }).then((result) => {
             console.error(`[tui] watchdog compaction: freed ${result.freedTokens} tokens, dropped ${result.droppedMessages} messages`);
             this.lastProgressAt = Date.now();
             watchdogCompactPending = false;
@@ -243,12 +243,17 @@ export class TuiController {
 
     try {
       let askComplete = false;
+      let isRetryAfterCompaction = false;
       while (!askComplete) {
         const attemptController = new AbortController();
         this.aborter = attemptController;
 
+        const askText = isRetryAfterCompaction
+          ? 'Continue working on the task from where you left off. Context was compacted to free memory — do NOT restart from the beginning.'
+          : trimmed;
+
         try {
-          await this.session.ask(trimmed, {
+          await this.session.ask(askText, {
             signal: attemptController.signal,
             onToken: (t) => { this.lastProgressAt = Date.now(); this.dispatch({ type: "AGENT_STREAM_TOKEN", id, token: t }); },
             onToolCall: (c) => { this.lastProgressAt = Date.now(); this.dispatch({ type: "TOOL_START", id: `${c.name}-${Date.now()}`, name: c.name, detail: JSON.stringify(c.args).slice(0, 120) }); },
@@ -267,6 +272,7 @@ export class TuiController {
             while (watchdogCompactPending) {
               await new Promise((r) => setTimeout(r, 500));
             }
+            isRetryAfterCompaction = true;
             continue;
           }
 

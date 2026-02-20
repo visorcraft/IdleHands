@@ -970,7 +970,7 @@ async function processMessage(
         watchdogCompactPending = true;
         console.error(`[bot:telegram] ${managed.chatId} watchdog timeout on turn ${turnId} — compacting and retrying (attempt ${current.watchdogCompactAttempts}/${maxWatchdogCompacts})`);
         try { current.activeAbortController?.abort(); } catch {}
-        current.session.compactHistory({ hard: true }).then((result) => {
+        current.session.compactHistory({ force: true }).then((result) => {
           console.error(`[bot:telegram] ${managed.chatId} watchdog compaction: freed ${result.freedTokens} tokens, dropped ${result.droppedMessages} messages`);
           current.lastProgressAt = Date.now();
           watchdogCompactPending = false;
@@ -989,13 +989,18 @@ async function processMessage(
 
   try {
     let askComplete = false;
+    let isRetryAfterCompaction = false;
     while (!askComplete) {
       const attemptController = new AbortController();
       managed.activeAbortController = attemptController;
       turn.controller = attemptController;
 
+      const askText = isRetryAfterCompaction
+        ? 'Continue working on the task from where you left off. Context was compacted to free memory — do NOT restart from the beginning.'
+        : text;
+
       try {
-        const result = await managed.session.ask(text, { ...hooks, signal: attemptController.signal });
+        const result = await managed.session.ask(askText, { ...hooks, signal: attemptController.signal });
         askComplete = true;
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         console.error(`[bot] ${managed.chatId} ask() completed: ${result.turns} turns, ${result.toolCalls} tool calls, ${elapsed}s`);
@@ -1054,7 +1059,8 @@ async function processMessage(
           while (watchdogCompactPending) {
             await new Promise((r) => setTimeout(r, 500));
           }
-          continue; // retry the ask
+          isRetryAfterCompaction = true;
+          continue; // retry the ask with continuation prompt
         }
 
         askComplete = true;

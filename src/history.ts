@@ -65,9 +65,10 @@ export function enforceContextBudget(opts: {
   minTailMessages?: number;
   compactAt?: number;
   toolSchemaTokens?: number;
+  force?: boolean;
 }): ChatMessage[] {
   const { contextWindow, maxTokens } = opts;
-  const minTail = opts.minTailMessages ?? 20;
+  const minTail = opts.force ? 2 : (opts.minTailMessages ?? 20);
 
   // Reserve overhead: 2048 safety margin (thinking tokens, tool-call framing)
   // + actual tool schema tokens (caller-supplied) or 800 as a conservative fallback.
@@ -75,14 +76,16 @@ export function enforceContextBudget(opts: {
   const safetyMargin = 2048 + toolOverhead;
   const budget = Math.max(1024, contextWindow - maxTokens - safetyMargin);
   // Trigger compaction at configurable threshold (default 80%).
-  const compactAt = Number.isFinite(opts.compactAt) ? Math.min(0.95, Math.max(0.5, Number(opts.compactAt))) : 0.8;
+  // Force mode targets 50% to guarantee freeing space.
+  const compactAt = opts.force ? 0.5
+    : Number.isFinite(opts.compactAt) ? Math.min(0.95, Math.max(0.5, Number(opts.compactAt))) : 0.8;
   const threshold = Math.floor(budget * compactAt);
 
   let msgs = [...opts.messages];
   const beforeCount = msgs.length;
   const beforeTokens = estimateTokensFromMessages(msgs);
 
-  if (beforeTokens <= threshold) return msgs;
+  if (!opts.force && beforeTokens <= threshold) return msgs;
 
   const sysStart = msgs[0]?.role === 'system' ? 1 : 0;
   let currentTokens = beforeTokens;
