@@ -152,6 +152,31 @@ export class OpenAIClient {
   /** Default response timeout in ms (overridable per-call). */
   private defaultResponseTimeoutMs = 600_000;
 
+  /**
+   * When true, tools/tool_choice are stripped from API requests.
+   * Tool descriptions are injected into the system prompt instead,
+   * and tool calls are parsed from model content output.
+   * Auto-enabled when server template errors are detected.
+   */
+  contentModeToolCalls = false;
+
+  /**
+   * Model name patterns known to need content-mode tool calls.
+   * These models use Jinja templates that apply |items on string arguments,
+   * which is incompatible with OpenAI's tool_calls JSON format.
+   * Patterns are matched case-insensitively against the model filename.
+   */
+  static readonly CONTENT_MODE_PATTERNS: RegExp[] = [
+    /qwen3\.5.*397b/i,         // Qwen3.5-397B variants (Hermes 2 Pro fallback)
+    /qwen3\.5.*moe/i,          // Other Qwen3.5 MoE variants
+    // Add new patterns here as they are discovered
+  ];
+
+  /** Check if a model name matches known content-mode patterns. */
+  static needsContentMode(modelName: string): boolean {
+    return OpenAIClient.CONTENT_MODE_PATTERNS.some(p => p.test(modelName));
+  }
+
   constructor(
     private endpoint: string,
     private readonly apiKey?: string,
@@ -270,20 +295,12 @@ export class OpenAIClient {
       }
     }
 
-    // Ensure tool_call arguments are always JSON strings (OpenAI spec).
-    // llama.cpp Hermes 2 Pro fallback template has a bug where it applies |items
-    // on string arguments — the fix is server-side (--jinja or --chat-template).
-    // Client-side: just ensure strings, which is the correct OpenAI format.
-    if (Array.isArray(body.messages)) {
-      for (const m of body.messages) {
-        if (m?.role === 'assistant' && Array.isArray(m.tool_calls)) {
-          for (const tc of m.tool_calls) {
-            if (tc?.function?.arguments != null && typeof tc.function.arguments !== 'string') {
-              tc.function.arguments = JSON.stringify(tc.function.arguments);
-            }
-          }
-        }
-      }
+    // Content-mode tool calls: strip tools/tool_choice from the request body.
+    // Tool descriptions are injected into the system prompt by the agent layer,
+    // and tool calls are parsed from model content output.
+    if (this.contentModeToolCalls) {
+      delete body.tools;
+      delete body.tool_choice;
     }
 
     return body;
@@ -588,6 +605,16 @@ export class OpenAIClient {
           res.status,
           true
         );
+
+        // Detect template incompatibility (|items filter on string arguments)
+        // and auto-switch to content-mode tool calls
+        if (/filter.*items.*String|items.*type.*String/i.test(text)) {
+          this.log('Detected tool-call template incompatibility (|items on String) — switching to content-mode tool calls');
+          console.warn('[warn] Server template cannot handle tool_calls format. Switching to content-mode (tools in system prompt).');
+          this.contentModeToolCalls = true;
+          // Retry immediately with content mode (tools stripped from body)
+          return this.chatStream(opts);
+        }
 
         // Detect deterministic server errors (same error body repeated) — bail immediately
         if (seen5xxMessages.includes(errSig)) {

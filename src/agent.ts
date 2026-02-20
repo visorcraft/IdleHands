@@ -1301,10 +1301,36 @@ export async function createSession(opts: {
 
   // Harness-driven suffix: append to first user message (NOT system prompt — §9b KV cache rule)
   if (harness.quirks.needsExplicitToolCallFormatReminder) {
-    sessionMeta += '\n\nIMPORTANT: Use the tool_calls mechanism to invoke tools. Do NOT write JSON tool invocations in your message text.';
+    // Check if model needs content-mode tool calls (known incompatible templates)
+    const modelName = cfg.model ?? '';
+    const { OpenAIClient: OAIClient } = await import('./client.js');
+    if (!client.contentModeToolCalls && OAIClient.needsContentMode(modelName)) {
+      client.contentModeToolCalls = true;
+      if (cfg.verbose) {
+        console.warn(`[info] Model "${modelName}" matched known content-mode pattern — using content-based tool calls`);
+      }
+    }
 
-    // One-time tool-call template smoke test (first ask() call only)
-    if (!(client as any).__toolCallSmokeTested) {
+    if (client.contentModeToolCalls) {
+      // In content mode, tell the model to use JSON tool calls in its output
+      sessionMeta += '\n\nYou have access to the following tools. To call a tool, output a JSON block in your response like this:\n```json\n{"name": "tool_name", "arguments": {"param": "value"}}\n```\nAvailable tools:\n';
+      const toolSchemas = getToolsSchema();
+      for (const t of toolSchemas) {
+        const fn = (t as any).function;
+        if (fn) {
+          const params = fn.parameters?.properties
+            ? Object.entries(fn.parameters.properties).map(([k, v]: [string, any]) => `${k}: ${v.type ?? 'any'}`).join(', ')
+            : '';
+          sessionMeta += `- ${fn.name}(${params}): ${fn.description ?? ''}\n`;
+        }
+      }
+      sessionMeta += '\nIMPORTANT: Output tool calls as JSON blocks in your message. Do NOT use the tool_calls API mechanism.';
+    } else {
+      sessionMeta += '\n\nIMPORTANT: Use the tool_calls mechanism to invoke tools. Do NOT write JSON tool invocations in your message text.';
+    }
+
+    // One-time tool-call template smoke test (first ask() call only, skip in content mode)
+    if (!client.contentModeToolCalls && !(client as any).__toolCallSmokeTested) {
       (client as any).__toolCallSmokeTested = true;
       try {
         const smokeErr = await client.smokeTestToolCalls(cfg.model ?? 'default');
