@@ -270,16 +270,20 @@ export class OpenAIClient {
       }
     }
 
-    // Ensure tool_call arguments in assistant messages are JSON strings (not objects).
-    // Some servers (llama.cpp) apply Jinja filters like |items which fail on raw strings
-    // when the template expects a dict, or fail on objects when it expects a string.
-    // Normalizing to JSON string is the safe universal format for OpenAI-compatible APIs.
+    // Normalize tool_call arguments in assistant messages.
+    // llama.cpp Jinja templates (e.g. Hermes 2 Pro) apply |items filter expecting a dict,
+    // but OpenAI spec sends arguments as a JSON string. Parse strings to objects so the
+    // template can iterate over them. Falls back gracefully if parsing fails.
     if (Array.isArray(body.messages)) {
       for (const m of body.messages) {
         if (m?.role === 'assistant' && Array.isArray(m.tool_calls)) {
           for (const tc of m.tool_calls) {
-            if (tc?.function?.arguments && typeof tc.function.arguments !== 'string') {
-              tc.function.arguments = JSON.stringify(tc.function.arguments);
+            if (tc?.function?.arguments && typeof tc.function.arguments === 'string') {
+              try {
+                tc.function.arguments = JSON.parse(tc.function.arguments);
+              } catch {
+                // Keep as string if not valid JSON
+              }
             }
           }
         }
