@@ -970,7 +970,7 @@ async function processMessage(
         watchdogCompactPending = true;
         console.error(`[bot:telegram] ${managed.chatId} watchdog timeout on turn ${turnId} — compacting and retrying (attempt ${current.watchdogCompactAttempts}/${maxWatchdogCompacts})`);
         try { current.activeAbortController?.abort(); } catch {}
-        current.session.compactHistory().then((result) => {
+        current.session.compactHistory({ force: true }).then((result) => {
           console.error(`[bot:telegram] ${managed.chatId} watchdog compaction: freed ${result.freedTokens} tokens, dropped ${result.droppedMessages} messages`);
           current.lastProgressAt = Date.now();
           watchdogCompactPending = false;

@@ -578,7 +578,7 @@ When you escalate, your request will be re-run on a more capable model.`;
           console.error(`[bot:discord] ${managed.userId} watchdog timeout on turn ${turnId} — compacting and retrying (attempt ${managed.watchdogCompactAttempts}/${maxWatchdogCompacts})`);
           // Cancel current request, compact, and re-send
           try { managed.activeAbortController?.abort(); } catch {}
-          managed.session.compactHistory().then((result) => {
+          managed.session.compactHistory({ force: true }).then((result) => {
             console.error(`[bot:discord] ${managed.userId} watchdog compaction: freed ${result.freedTokens} tokens, dropped ${result.droppedMessages} messages`);
             managed.lastProgressAt = Date.now();
             watchdogCompactPending = false;

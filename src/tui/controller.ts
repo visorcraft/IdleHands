@@ -225,7 +225,7 @@ export class TuiController {
           watchdogCompactPending = true;
           console.error(`[tui] watchdog timeout — compacting and retrying (attempt ${this.watchdogCompactAttempts}/${maxWatchdogCompacts})`);
           try { this.aborter?.abort(); } catch {}
-          this.session!.compactHistory().then((result) => {
+          this.session!.compactHistory({ force: true }).then((result) => {
             console.error(`[tui] watchdog compaction: freed ${result.freedTokens} tokens, dropped ${result.droppedMessages} messages`);
             this.lastProgressAt = Date.now();
             watchdogCompactPending = false;

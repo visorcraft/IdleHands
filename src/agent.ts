@@ -1059,7 +1059,7 @@ export type AgentSession = {
   /** Clear accumulated plan steps */
   clearPlan: () => void;
   /** Manual context compaction. */
-  compactHistory: (opts?: { topic?: string; hard?: boolean; dry?: boolean }) => Promise<{
+  compactHistory: (opts?: { topic?: string; hard?: boolean; force?: boolean; dry?: boolean }) => Promise<{
     beforeMessages: number;
     afterMessages: number;
     freedTokens: number;
@@ -1795,7 +1795,7 @@ export async function createSession(opts: {
     });
   };
 
-  const compactHistory = async (opts?: { topic?: string; hard?: boolean; dry?: boolean }) => {
+  const compactHistory = async (opts?: { topic?: string; hard?: boolean; force?: boolean; dry?: boolean }) => {
     const beforeMessages = messages.length;
     const beforeTokens = estimateTokensFromMessages(messages);
 
@@ -1809,9 +1809,10 @@ export async function createSession(opts: {
         messages,
         contextWindow,
         maxTokens,
-        minTailMessages: 12,
-        compactAt: cfg.compact_at ?? 0.8,
+        minTailMessages: opts?.force ? 2 : 12,
+        compactAt: opts?.force ? 0.5 : (cfg.compact_at ?? 0.8),
         toolSchemaTokens: estimateToolSchemaTokens(getToolsSchema()),
+        force: opts?.force,
       });
     }
 
