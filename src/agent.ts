@@ -1309,8 +1309,9 @@ export async function createSession(opts: {
   }
 
   // Harness-driven suffix: append to first user message (NOT system prompt — §9b KV cache rule)
-  if (harness.quirks.needsExplicitToolCallFormatReminder) {
-    // Check if model needs content-mode tool calls (known incompatible templates)
+  // Check if model needs content-mode tool calls (known incompatible templates)
+  // This runs before harness checks so it works regardless of quirk flags.
+  {
     const modelName = cfg.model ?? '';
     const { OpenAIClient: OAIClient } = await import('./client.js');
     if (!client.contentModeToolCalls && OAIClient.needsContentMode(modelName)) {
@@ -1320,7 +1321,9 @@ export async function createSession(opts: {
         console.warn(`[info] Model "${modelName}" matched known content-mode pattern — using content-based tool calls`);
       }
     }
+  }
 
+  if (harness.quirks.needsExplicitToolCallFormatReminder) {
     if (client.contentModeToolCalls) {
       // In content mode, tell the model to use JSON tool calls in its output
       sessionMeta += '\n\nYou have access to the following tools. To call a tool, output a JSON block in your response like this:\n```json\n{"name": "tool_name", "arguments": {"param": "value"}}\n```\nAvailable tools:\n';
