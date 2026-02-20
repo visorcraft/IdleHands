@@ -349,12 +349,25 @@ export class OpenAIClient {
       }
     }
 
-    // Content-mode tool calls: strip tools/tool_choice from the request body.
-    // Tool descriptions are injected into the system prompt by the agent layer,
-    // and tool calls are parsed from model content output.
+    // Content-mode tool calls: strip tools/tool_choice from the request body,
+    // and sanitize historical tool_call structures that trigger template bugs.
     if (this.contentModeToolCalls) {
       delete body.tools;
       delete body.tool_choice;
+      if (Array.isArray(body.messages)) {
+        for (const m of body.messages) {
+          if (m?.role === 'assistant' && Array.isArray((m as any).tool_calls)) {
+            delete (m as any).tool_calls;
+          }
+          if (m?.role === 'tool' && 'tool_call_id' in (m as any)) {
+            delete (m as any).tool_call_id;
+            m.role = 'user';
+            if (typeof m.content === 'string') {
+              m.content = `[tool_result] ${m.content}`;
+            }
+          }
+        }
+      }
     }
 
     return body;
@@ -593,6 +606,7 @@ export class OpenAIClient {
     let lastErr: unknown = makeClientError('POST /chat/completions (stream) failed without response', 503, true);
     const reqStart = Date.now();
     const seen5xxMessages: string[] = [];  // Track 5xx error messages to detect deterministic failures
+    let switchedToContentModeThisCall = false;
 
     for (let attempt = 0; attempt < 3; attempt++) {
       let res: Response;
@@ -663,10 +677,19 @@ export class OpenAIClient {
         // Detect template incompatibility (|items filter on string arguments)
         // and auto-switch to content-mode tool calls
         if (/filter.*items.*String|items.*type.*String/i.test(text)) {
+          if (switchedToContentModeThisCall) {
+            throw makeClientError(
+              `Template incompatibility persisted after content-mode switch. Aborting to avoid retry loop.
+${text.slice(0, 2000)}`,
+              res.status,
+              false
+            );
+          }
           this.log('Detected tool-call template incompatibility (|items on String) — switching to content-mode tool calls');
           console.warn('[warn] Server template cannot handle tool_calls format. Switching to content-mode (tools in system prompt).');
           this.contentModeToolCalls = true;
           this.compatTelemetry.autoSwitches += 1;
+          switchedToContentModeThisCall = true;
           // Retry immediately with content mode (tools stripped from body)
           return this.chatStream(opts);
         }
