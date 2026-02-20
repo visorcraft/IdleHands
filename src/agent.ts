@@ -2688,13 +2688,20 @@ export async function createSession(opts: {
                 consecutiveCounts.set(sig, 1);
               }
               const consec = consecutiveCounts.get(sig) ?? 1;
-              if (consec >= 4) {
+              if (consec >= 3) {
                 const args = sig.slice(toolName.length + 1);
                 const argsPreview = args.length > 220 ? args.slice(0, 220) + '…' : args;
                 messages.push({
                   role: 'user' as const,
-                  content: `[System] You have read the same resource ${consec} consecutive times (${toolName} ${argsPreview}). The content has not changed. Please proceed with your task using the information you already have.`,
+                  content: `[System] STOP READING: You have read the same resource ${consec} consecutive times (${toolName} ${argsPreview}). The content has NOT changed. You already have this data. Proceed immediately with your next action (write_file, edit_file, exec, etc.) — do NOT read this resource again.`,
                 });
+              }
+              // Hard-break: after 6 consecutive identical reads, stop the session
+              if (consec >= 6) {
+                throw new Error(
+                  `tool ${toolName}: identical read repeated ${consec}x consecutively; breaking loop. ` +
+                  `The resource content has not changed between reads.`
+                );
               }
               continue;
             }
