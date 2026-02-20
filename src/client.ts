@@ -352,9 +352,32 @@ export class OpenAIClient {
     // Content-mode tool calls: strip tools/tool_choice from the request body,
     // and sanitize historical tool_call structures that trigger template bugs.
     if (this.contentModeToolCalls) {
+      // Capture tool schemas before deleting, for injection into system prompt
+      const toolSchemas = body.tools as any[] | undefined;
       delete body.tools;
       delete body.tool_choice;
       if (Array.isArray(body.messages)) {
+        // Check if system message already has content-mode tool instructions
+        const sysMsg = body.messages.find((m: any) => m?.role === 'system');
+        const hasToolInstructions = sysMsg?.content && /Available tools:/i.test(String(sysMsg.content));
+
+        if (!hasToolInstructions && toolSchemas?.length && sysMsg) {
+          // Mid-session auto-switch: inject tool descriptions into system prompt
+          let toolBlock = '\n\nYou have access to the following tools. To call a tool, output a JSON block like:\n{"name": "tool_name", "arguments": {"param": "value"}}\nAvailable tools:\n';
+          for (const t of toolSchemas) {
+            const fn = (t as any)?.function;
+            if (fn?.name) {
+              const params = fn.parameters?.properties
+                ? Object.entries(fn.parameters.properties).map(([k, v]: [string, any]) => `${k}: ${(v as any).type ?? 'any'}`).join(', ')
+                : '';
+              toolBlock += `- ${fn.name}(${params}): ${fn.description ?? ''}\n`;
+            }
+          }
+          toolBlock += '\nOutput tool calls as JSON in your message content.';
+          sysMsg.content = String(sysMsg.content) + toolBlock;
+          this.log('Injected tool descriptions into system prompt for content-mode');
+        }
+
         for (const m of body.messages) {
           if (m?.role === 'assistant' && Array.isArray((m as any).tool_calls)) {
             delete (m as any).tool_calls;
