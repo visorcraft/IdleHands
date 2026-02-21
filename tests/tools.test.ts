@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { read_file, write_file, edit_file, edit_range, apply_patch, insert_file, list_dir, search_files, exec, undo_path } from '../dist/tools.js';
+import { read_file, read_files, write_file, edit_file, edit_range, apply_patch, insert_file, list_dir, search_files, exec, undo_path } from '../dist/tools.js';
 
 let tmpDir: string;
 let ctx: any;
@@ -63,6 +63,23 @@ describe('read_file', () => {
     assert.ok(r.includes('line-200'));
     assert.ok(!r.includes('line-650'));
     assert.ok(r.includes('more lines)'), 'should be truncated by default line caps');
+  });
+});
+
+describe('read_files', () => {
+  test('returns partial results when one file read fails', async () => {
+    await fs.writeFile(path.join(tmpRoot, 'ok.txt'), 'hello\nworld\n', 'utf8');
+
+    const out = await read_files(ctx, {
+      requests: [
+        { path: 'ok.txt', limit: 10 },
+        { path: 'missing.txt', limit: 10 },
+      ],
+    });
+
+    assert.match(out, /ok\.txt/);
+    assert.match(out, /missing\.txt/);
+    assert.match(out, /partial failures/i);
   });
 });
 
@@ -302,6 +319,10 @@ describe('search_files', () => {
 
   it('throws on missing pattern (guardrail)', async () => {
     await assert.rejects(() => search_files(ctx, { path: '.' }), /missing pattern/i);
+  });
+
+  it('throws on malformed regex with invalid_args hint', async () => {
+    await assert.rejects(() => search_files(ctx, { pattern: '([a-z', path: '.' }), /invalid regex pattern/i);
   });
 });
 
