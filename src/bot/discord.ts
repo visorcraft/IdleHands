@@ -15,7 +15,7 @@ import type { ApprovalMode, BotDiscordConfig, IdlehandsConfig, AgentPersona, Age
 import { DiscordConfirmProvider } from './confirm-discord.js';
 import { sanitizeBotOutputText } from './format.js';
 import { projectDir } from '../utils.js';
-import { WATCHDOG_RECOMMENDED_TUNING_TEXT, resolveWatchdogSettings, shouldRecommendWatchdogTuning } from '../watchdog.js';
+import { WATCHDOG_RECOMMENDED_TUNING_TEXT, formatWatchdogCancelMessage, resolveWatchdogSettings, shouldRecommendWatchdogTuning } from '../watchdog.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { runAnton } from '../anton/controller.js';
@@ -756,17 +756,15 @@ When you escalate, your request will be re-run on a more capable model.`;
           // If aborted by watchdog after max compaction attempts, it's a real cancel
           if (!isTurnActive(managed, turnId)) return;
           if (isAbort) {
-            const abortReason = raw.slice(0, 400);
-            if (watchdogForcedCancel) {
-              const timeoutMsg = `⏹ Cancelled by watchdog timeout after ${maxWatchdogCompacts} compaction attempts. Try a smaller scope, a faster model, or increase watchdog timeout/compaction settings.`;
-              const fullMsg = debugAbortReason ? `${timeoutMsg}\n\n[debug] ${abortReason}` : timeoutMsg;
-              if (placeholder) await placeholder.edit(fullMsg).catch(() => {});
-              else await sendUserVisible(msg, fullMsg).catch(() => {});
-            } else {
-              const plain = debugAbortReason ? `⏹ Cancelled.\n\n[debug] ${abortReason}` : '⏹ Cancelled.';
-              if (placeholder) await placeholder.edit(plain).catch(() => {});
-              else await sendUserVisible(msg, plain).catch(() => {});
-            }
+            const cancelMsg = formatWatchdogCancelMessage({
+              watchdogForcedCancel,
+              maxCompactions: maxWatchdogCompacts,
+              debugAbortReason,
+              abortReason: raw,
+              prefix: '⏹ ',
+            });
+            if (placeholder) await placeholder.edit(cancelMsg).catch(() => {});
+            else await sendUserVisible(msg, cancelMsg).catch(() => {});
           } else {
             const errMsg = raw.slice(0, 400);
             if (placeholder) {

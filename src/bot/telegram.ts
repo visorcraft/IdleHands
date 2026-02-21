@@ -15,7 +15,7 @@ import {
   handleAnton, handleAgent, handleAgents, handleEscalate, handleDeescalate,
 } from './commands.js';
 import { TelegramConfirmProvider } from './confirm-telegram.js';
-import { resolveWatchdogSettings } from '../watchdog.js';
+import { formatWatchdogCancelMessage, resolveWatchdogSettings } from '../watchdog.js';
 
 // ---------------------------------------------------------------------------
 // Escalation helpers (mirrored from discord.ts)
@@ -1139,15 +1139,13 @@ async function processMessage(
 
         if (isAbort) {
           if (sessions.isTurnActive(managed.chatId, turnId)) {
-            const reason = String(msg).slice(0, 400);
-            if (watchdogForcedCancel) {
-              const base = `Cancelled by watchdog timeout after ${maxWatchdogCompacts} compaction attempts. Try a smaller scope, a faster model, or increase watchdog timeout/compaction settings.`;
-              const detail = debugAbortReason ? `${base}\n\n[debug] ${reason}` : base;
-              await streaming.finalizeError(detail);
-            } else {
-              const detail = debugAbortReason ? `Cancelled.\n\n[debug] ${reason}` : 'Cancelled.';
-              await streaming.finalizeError(detail);
-            }
+            const detail = formatWatchdogCancelMessage({
+              watchdogForcedCancel,
+              maxCompactions: maxWatchdogCompacts,
+              debugAbortReason,
+              abortReason: msg,
+            });
+            await streaming.finalizeError(detail);
           }
         } else if (msg.includes('ECONNREFUSED') || msg.includes('Connection timeout') || msg.includes('503') || msg.includes('model loading')) {
           const endpoint = (managed.session as any)?.endpoint || '';

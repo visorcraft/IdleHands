@@ -47,3 +47,24 @@ export function shouldRecommendWatchdogTuning(settings: WatchdogSettings): boole
     settings.maxCompactions === 0
   );
 }
+
+export type WatchdogCancelMessageInput = {
+  watchdogForcedCancel: boolean;
+  maxCompactions: number;
+  debugAbortReason: boolean;
+  abortReason?: string;
+  prefix?: string;
+};
+
+export function formatWatchdogCancelMessage(input: WatchdogCancelMessageInput): string {
+  const prefix = input.prefix ?? '';
+  const reason = String(input.abortReason ?? '').slice(0, 400);
+
+  const base = input.watchdogForcedCancel
+    ? `Cancelled by watchdog timeout after ${input.maxCompactions} compaction attempts. Try a smaller scope, a faster model, or increase watchdog timeout/compaction settings.`
+    : 'Cancelled.';
+
+  const withPrefix = `${prefix}${base}`;
+  if (!input.debugAbortReason || !reason) return withPrefix;
+  return `${withPrefix}\n\n[debug] ${reason}`;
+}

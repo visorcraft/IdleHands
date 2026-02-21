@@ -13,7 +13,7 @@ import { parseTaskFile } from '../anton/parser.js';
 import { formatRunSummary, formatProgressBar, formatTaskStart, formatTaskEnd, formatTaskSkip } from '../anton/reporter.js';
 import type { AntonRunConfig, AntonProgressCallback } from '../anton/types.js';
 import { projectDir } from '../utils.js';
-import { WATCHDOG_RECOMMENDED_TUNING_TEXT, shouldRecommendWatchdogTuning, type WatchdogSettings } from '../watchdog.js';
+import { WATCHDOG_RECOMMENDED_TUNING_TEXT, resolveWatchdogSettings, shouldRecommendWatchdogTuning, type WatchdogSettings } from '../watchdog.js';
 
 import type { BotTelegramConfig } from '../types.js';
 
@@ -128,12 +128,7 @@ export async function handleWatchdog({ ctx, sessions, botConfig }: CommandContex
   }
 
   const managed = sessions.get(chatId);
-  const cfg = botConfig.watchdog ?? {
-    timeoutMs: 120_000,
-    maxCompactions: 3,
-    idleGraceTimeouts: 1,
-    debugAbortReason: false,
-  };
+  const cfg = botConfig.watchdog ?? resolveWatchdogSettings();
 
   const lines = [
     '<b>Watchdog Status</b>',

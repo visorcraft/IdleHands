@@ -3,6 +3,7 @@ import { OpenAIClient } from './client.js';
 import { enforceContextBudget, stripThinking, estimateTokensFromMessages, estimateToolSchemaTokens } from './history.js';
 import * as tools from './tools.js';
 import { selectHarness, type Harness } from './harnesses.js';
+import { BASE_MAX_TOKENS, deriveContextWindow, deriveGenerationParams, supportsVisionModel } from './model-customization.js';
 import { checkExecSafety, checkPathSafety } from './safety.js';
 import { loadProjectContext } from './context.js';
 import { loadGitContext, isGitDirty, stashWorkingTree } from './git.js';
@@ -174,6 +175,16 @@ function withCachedExecObservationHint(content: string): string {
   } catch {
     if (content.includes(CACHED_EXEC_OBSERVATION_HINT)) return content;
     return `${content}\n${CACHED_EXEC_OBSERVATION_HINT}`;
+  }
+}
+
+function readOnlyExecCacheable(content: string): boolean {
+  try {
+    const parsed = JSON.parse(content);
+    const rc = Number(parsed?.rc ?? NaN);
+    return Number.isFinite(rc) && rc === 0;
+  } catch {
+    return false;
   }
 }
 
@@ -1065,28 +1076,6 @@ function reviewArtifactStaleReason(artifact: ReviewArtifact, cwd: string): strin
   return '';
 }
 
-function supportsVisionModel(model: string, modelMeta: any, harness: Harness): boolean {
-  if (typeof harness.supportsVision === 'boolean') return harness.supportsVision;
-  if (typeof modelMeta?.vision === 'boolean') return modelMeta.vision;
-
-  const inputModalities = modelMeta?.input_modalities;
-  if (Array.isArray(inputModalities) && inputModalities.some((m) => String(m).toLowerCase().includes('image'))) {
-    return true;
-  }
-
-  const modalities = modelMeta?.modalities;
-  if (Array.isArray(modalities) && modalities.some((m) => String(m).toLowerCase().includes('image'))) {
-    return true;
-  }
-
-  const id = model.toLowerCase();
-  if (/(vision|multimodal|\bvl\b|llava|qwen2\.5-vl|gpt-4o|gemini|claude-3)/i.test(id)) return true;
-
-  if (harness.id.includes('vision') || harness.id.includes('vl')) return true;
-
-  return false;
-}
-
 function normalizeModelsResponse(raw: any): { data: Array<{ id: string; [k: string]: any }> } {
   if (Array.isArray(raw)) {
     return {
@@ -1273,9 +1262,11 @@ export async function createSession(opts: {
   // Try to derive context window from /v1/models (if provided by server).
   const explicitContextWindow = cfg.context_window != null;
   const modelMeta = modelsList?.data?.find((m: any) => m.id === model);
-  const derivedCtx =
-    (modelMeta?.context_window ?? modelMeta?.context_length ?? modelMeta?.max_context_length) as number | undefined;
-  let contextWindow = cfg.context_window ?? derivedCtx ?? 131072;
+  let contextWindow = deriveContextWindow({
+    explicitContextWindow,
+    configuredContextWindow: cfg.context_window,
+    modelMeta,
+  });
   let supportsVision = supportsVisionModel(model, modelMeta, harness);
 
   if (!cfg.i_know_what_im_doing && contextWindow > 131072) {
@@ -1287,13 +1278,13 @@ export async function createSession(opts: {
   // whether the harness wants a higher value — harness.defaults.max_tokens wins
   // when it's larger than the base default (16384), unless the user explicitly
   // configured a value in their config file or CLI.
-  const BASE_MAX_TOKENS = 16384;
-  let maxTokens = cfg.max_tokens ?? BASE_MAX_TOKENS;
-  if (maxTokens === BASE_MAX_TOKENS && harness.defaults?.max_tokens && harness.defaults.max_tokens > BASE_MAX_TOKENS) {
-    maxTokens = harness.defaults.max_tokens;
-  }
-  let temperature = cfg.temperature ?? harness.defaults?.temperature ?? 0.2;
-  let topP = cfg.top_p ?? harness.defaults?.top_p ?? 0.95;
+  let { maxTokens, temperature, topP } = deriveGenerationParams({
+    harness,
+    configuredMaxTokens: cfg.max_tokens,
+    configuredTemperature: cfg.temperature,
+    configuredTopP: cfg.top_p,
+    baseMaxTokens: BASE_MAX_TOKENS,
+  });
 
   const harnessVaultMode: TrifectaMode = harness.defaults?.trifecta?.vaultMode || 'off';
   const vaultMode = (cfg.trifecta?.vault?.mode || harnessVaultMode) as TrifectaMode;
@@ -2206,21 +2197,22 @@ export async function createSession(opts: {
     model = name;
     harness = selectHarness(model, cfg.harness && cfg.harness.trim() ? cfg.harness.trim() : undefined);
     const nextMeta = modelsList?.data?.find((m: any) => m.id === model);
+
     supportsVision = supportsVisionModel(model, nextMeta, harness);
+    contextWindow = deriveContextWindow({
+      explicitContextWindow,
+      configuredContextWindow: cfg.context_window,
+      previousContextWindow: contextWindow,
+      modelMeta: nextMeta,
+    });
 
-    if (!explicitContextWindow) {
-      const derived = asNumber(nextMeta?.context_window, nextMeta?.context_length, nextMeta?.max_context_length);
-      if (derived && derived > 0) {
-        contextWindow = derived;
-      }
-    }
-
-    maxTokens = cfg.max_tokens ?? BASE_MAX_TOKENS;
-    if (maxTokens === BASE_MAX_TOKENS && harness.defaults?.max_tokens && harness.defaults.max_tokens > BASE_MAX_TOKENS) {
-      maxTokens = harness.defaults.max_tokens;
-    }
-    temperature = cfg.temperature ?? harness.defaults?.temperature ?? 0.2;
-    topP = cfg.top_p ?? harness.defaults?.top_p ?? 0.95;
+    ({ maxTokens, temperature, topP } = deriveGenerationParams({
+      harness,
+      configuredMaxTokens: cfg.max_tokens,
+      configuredTemperature: cfg.temperature,
+      configuredTopP: cfg.top_p,
+      baseMaxTokens: BASE_MAX_TOKENS,
+    }));
   };
 
   const setEndpoint = async (endpoint: string, modelName?: string): Promise<void> => {
@@ -3236,7 +3228,7 @@ export async function createSession(opts: {
                   blockedExecAttemptsBySig.clear();
 
                   const cmd = String(args?.command ?? '');
-                  if (looksLikeReadOnlyExecCommand(cmd)) {
+                  if (looksLikeReadOnlyExecCommand(cmd) && readOnlyExecCacheable(content)) {
                     execObservationCacheBySig.set(sig, content);
                   }
 

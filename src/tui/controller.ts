@@ -9,7 +9,7 @@ import { saveSessionFile, lastSessionPath, projectSessionPath } from "../cli/ses
 import { loadBranches, executeBranchSelect } from "./branch-picker.js";
 import { ensureCommandsRegistered, allCommandNames, runShellCommand, runSlashCommand } from "./command-handler.js";
 import { projectDir } from "../utils.js";
-import { resolveWatchdogSettings } from "../watchdog.js";
+import { formatWatchdogCancelMessage, resolveWatchdogSettings } from "../watchdog.js";
 import type { TuiState } from "./types.js";
 import { TuiConfirmProvider } from "./confirm.js";
 
@@ -311,15 +311,13 @@ export class TuiController {
 
           askComplete = true;
           if (isAbort) {
-            const reason = String(msg).slice(0, 400);
-            if (watchdogForcedCancel) {
-              const base = `Cancelled by watchdog timeout after ${maxWatchdogCompacts} compaction attempts. Try a smaller scope, a faster model, or increase watchdog timeout/compaction settings.`;
-              const text = debugAbortReason ? `${base}\n\n[debug] ${reason}` : base;
-              this.dispatch({ type: "ALERT_PUSH", id: `err_${Date.now()}`, level: "error", text });
-            } else {
-              const text = debugAbortReason ? `Cancelled.\n\n[debug] ${reason}` : 'Cancelled.';
-              this.dispatch({ type: "ALERT_PUSH", id: `err_${Date.now()}`, level: "error", text });
-            }
+            const text = formatWatchdogCancelMessage({
+              watchdogForcedCancel,
+              maxCompactions: maxWatchdogCompacts,
+              debugAbortReason,
+              abortReason: msg,
+            });
+            this.dispatch({ type: "ALERT_PUSH", id: `err_${Date.now()}`, level: "error", text });
           } else {
             this.dispatch({ type: "ALERT_PUSH", id: `err_${Date.now()}`, level: "error", text: msg });
           }
