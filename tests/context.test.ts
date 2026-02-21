@@ -41,11 +41,34 @@ describe('loadProjectContext', () => {
     assert.equal(r, '');
   });
 
-  it('refuses files exceeding max tokens', async () => {
-    const huge = 'x'.repeat(100_000); // ~25K tokens
+  it('summarizes files exceeding context budget by default', async () => {
+    const huge = [
+      '# Project Mission',
+      ...Array.from({ length: 3000 }, (_, i) => `- important line ${i} ${'x'.repeat(30)}`),
+    ].join('\n');
     await fs.writeFile(path.join(tmpDir, 'huge.md'), huge);
+
+    const r = await loadProjectContext({
+      endpoint: '', max_tokens: 16384, temperature: 0.2, top_p: 0.95, timeout: 60, max_iterations: 20,
+      no_confirm: false, verbose: false, dry_run: false, dir: tmpDir,
+      context_file: path.join(tmpDir, 'huge.md'), context_max_tokens: 8192,
+    });
+
+    assert.ok(r.includes('[Project context summary from'));
+    assert.ok(r.includes('full context omitted'));
+    assert.ok(r.includes('read_file('));
+  });
+
+  it('can refuse oversized context when summarization is disabled', async () => {
+    const huge = 'x'.repeat(100_000); // ~25K tokens
+    await fs.writeFile(path.join(tmpDir, 'huge-no-summary.md'), huge);
     await assert.rejects(
-      () => loadProjectContext({ endpoint: '', max_tokens: 16384, temperature: 0.2, top_p: 0.95, timeout: 60, max_iterations: 20, no_confirm: false, verbose: false, dry_run: false, dir: tmpDir, context_file: path.join(tmpDir, 'huge.md'), context_max_tokens: 8192 }),
+      () => loadProjectContext({
+        endpoint: '', max_tokens: 16384, temperature: 0.2, top_p: 0.95, timeout: 60, max_iterations: 20,
+        no_confirm: false, verbose: false, dry_run: false, dir: tmpDir,
+        context_file: path.join(tmpDir, 'huge-no-summary.md'), context_max_tokens: 8192,
+        context_summarize: false,
+      } as any),
       /tokens.*Max is 8192|Trim it/
     );
   });

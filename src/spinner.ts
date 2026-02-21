@@ -221,6 +221,14 @@ export class CliSpinner {
       }
       case 'write_file':
         return `${a.path ?? a.file_path ?? ''}`;
+      case 'apply_patch': {
+        const n = Array.isArray(a.files) ? a.files.length : '?';
+        return `${n} file(s)`;
+      }
+      case 'edit_range': {
+        const p = a.path ?? a.file_path ?? '';
+        return `${p} lines ${a.start_line ?? '?'}-${a.end_line ?? '?'}`;
+      }
       case 'edit_file': {
         const p = a.path ?? a.file_path ?? '';
         const old = typeof a.old_string === 'string' ? a.old_string : '';

@@ -195,6 +195,8 @@ export type IdlehandsConfig = {
   no_context?: boolean;
   context_file_names?: string[];
   context_max_tokens?: number;
+  context_summarize?: boolean;
+  context_summary_max_tokens?: number;
   compact_at?: number;
   show_change_summary?: boolean;
   step_mode?: boolean;

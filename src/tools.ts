@@ -342,16 +342,42 @@ export async function undo_path(ctx: ToolContext, args: any) {
 
 export async function read_file(ctx: ToolContext, args: any) {
   const p = resolvePath(ctx, args?.path);
-  const offset = args?.offset ? Number(args.offset) : undefined;
+  if (!p) throw new Error('read_file: missing path');
+
+  const DEFAULT_LIMIT = 200;
+  const MAX_LIMIT = 240;
+  const DEFAULT_CONTEXT = 10;
+  const MAX_CONTEXT = 80;
+  const DEFAULT_MAX_BYTES = 20_000;
+  const MIN_MAX_BYTES = 256;
+  const MAX_MAX_BYTES = 20_000;
+
+  const rawOffset = args?.offset != null ? Number(args.offset) : undefined;
+  const offset = Number.isFinite(rawOffset as number) && (rawOffset as number) >= 1
+    ? Math.floor(rawOffset as number)
+    : 1;
+
   const rawLimit = args?.limit != null ? Number(args.limit) : undefined;
   const limit = Number.isFinite(rawLimit as number) && (rawLimit as number) > 0
-    ? Math.max(1, Math.floor(rawLimit as number))
-    : undefined;
-  const search = typeof args?.search === 'string' ? args.search : undefined;
-  const context = args?.context ? Number(args.context) : 10;
-  const maxBytes = 100 * 1024;
+    ? Math.min(MAX_LIMIT, Math.max(1, Math.floor(rawLimit as number)))
+    : DEFAULT_LIMIT;
 
-  if (!p) throw new Error('read_file: missing path');
+  const search = typeof args?.search === 'string' ? args.search : undefined;
+
+  const rawContext = args?.context != null ? Number(args.context) : undefined;
+  const context = Number.isFinite(rawContext as number)
+    ? Math.min(MAX_CONTEXT, Math.max(0, Math.floor(rawContext as number)))
+    : DEFAULT_CONTEXT;
+
+  const rawFormat = typeof args?.format === 'string' ? args.format.toLowerCase().trim() : 'numbered';
+  const format: 'plain' | 'numbered' | 'sparse' = rawFormat === 'plain' || rawFormat === 'sparse' || rawFormat === 'numbered'
+    ? rawFormat
+    : 'numbered';
+
+  const rawMaxBytes = args?.max_bytes != null ? Number(args.max_bytes) : undefined;
+  const maxBytes = Number.isFinite(rawMaxBytes as number) && (rawMaxBytes as number) > 0
+    ? Math.min(MAX_MAX_BYTES, Math.max(MIN_MAX_BYTES, Math.floor(rawMaxBytes as number)))
+    : DEFAULT_MAX_BYTES;
 
   // Detect directories early with a helpful message instead of cryptic EISDIR
   try {
@@ -359,7 +385,7 @@ export async function read_file(ctx: ToolContext, args: any) {
     if (stat.isDirectory()) {
       return `read_file: "${p}" is a directory, not a file. Use list_dir to see its contents, or search_files to find specific code.`;
     }
-  } catch (e: any) {
+  } catch {
     // stat failure (ENOENT etc.) — let readFile handle it for the standard error path
   }
 
@@ -367,15 +393,7 @@ export async function read_file(ctx: ToolContext, args: any) {
     throw new Error(`read_file: cannot read ${p}: ${e?.message ?? String(e)}`);
   });
 
-  if (buf.length > maxBytes) {
-    // Truncate gracefully instead of throwing
-    const truncText = buf.subarray(0, maxBytes).toString('utf8');
-    const truncLines = truncText.split(/\r?\n/);
-    const numbered = truncLines.map((l, i) => `${String(i + 1).padStart(4)}| ${l}`).join('\n');
-    return `# ${p} [TRUNCATED: ${buf.length} bytes, showing first ${maxBytes}]\n${numbered}`;
-  }
-
-  // Binary detection: NUL byte in first 512 bytes (§8)
+  // Binary detection: NUL byte in first 512 bytes
   for (let i = 0; i < Math.min(buf.length, 512); i++) {
     if (buf[i] === 0) {
       const mimeGuess = guessMimeType(p, buf);
@@ -383,43 +401,63 @@ export async function read_file(ctx: ToolContext, args: any) {
     }
   }
 
-  const text = buf.toString('utf8');
+  const effective = buf.length > maxBytes ? buf.subarray(0, maxBytes) : buf;
+  const text = effective.toString('utf8');
   const lines = text.split(/\r?\n/);
 
-  let start = 1;
-  let end = limit ? Math.min(lines.length, limit) : lines.length;
+  const renderLine = (ln: number, value: string): string => {
+    if (format === 'plain') return value;
+    return `${String(ln).padStart(6, ' ')}| ${value}`;
+  };
+
+  const out: string[] = [];
 
   if (search) {
     const matchLines: number[] = [];
     for (let i = 0; i < lines.length; i++) {
       if (lines[i].includes(search)) matchLines.push(i + 1);
     }
+
     if (!matchLines.length) {
-      return `# ${p}\n# search not found: ${JSON.stringify(search)}\n# file has ${lines.length} lines`;
+      const truncatedSuffix = buf.length > maxBytes ? ` (truncated to ${maxBytes} bytes)` : '';
+      return `# ${p}\n# search not found: ${JSON.stringify(search)}\n# scanned ${lines.length} lines${truncatedSuffix}`;
     }
-    const firstIdx = matchLines[0];
-    start = Math.max(1, firstIdx - context);
-    end = Math.min(lines.length, firstIdx + context);
 
-    const out: string[] = [];
     out.push(`# ${p}`);
-    out.push(`# matches at lines: ${matchLines.join(', ')}${matchLines.length > 20 ? ' [truncated]' : ''}`);
-    for (let ln = start; ln <= end; ln++) {
-      out.push(`${String(ln).padStart(6, ' ')}| ${lines[ln - 1] ?? ''}`);
+    out.push(`# matches at lines: ${matchLines.slice(0, 20).join(', ')}${matchLines.length > 20 ? ' [truncated]' : ''}`);
+
+    if (format === 'sparse') {
+      const shown = matchLines.slice(0, limit);
+      for (const ln of shown) out.push(renderLine(ln, lines[ln - 1] ?? ''));
+      if (matchLines.length > shown.length) out.push(`# ... (${matchLines.length - shown.length} more matches)`);
+    } else {
+      const firstIdx = matchLines[0];
+      let start = Math.max(1, firstIdx - context);
+      let end = Math.min(lines.length, firstIdx + context);
+
+      if (end - start + 1 > limit) {
+        const half = Math.max(0, Math.floor((limit - 1) / 2));
+        start = Math.max(1, firstIdx - half);
+        end = Math.min(lines.length, start + limit - 1);
+        if (end - start + 1 < limit) start = Math.max(1, end - limit + 1);
+      }
+
+      for (let ln = start; ln <= end; ln++) out.push(renderLine(ln, lines[ln - 1] ?? ''));
+      if (end < lines.length) out.push(`# ... (${lines.length - end} more lines)`);
     }
-    if (end < lines.length) out.push(`# ... (${lines.length - end} more lines)`);
+
+    if (buf.length > maxBytes) out.push(`# truncated_bytes: ${buf.length - maxBytes} (set max_bytes to inspect more)`);
     return out.join('\n');
-  } else if (offset && offset >= 1) {
-    start = offset;
-    end = limit ? Math.min(lines.length, offset + limit - 1) : lines.length;
   }
 
-  const out: string[] = [];
+  const start = offset;
+  const end = Math.min(lines.length, start + limit - 1);
+
   out.push(`# ${p}`);
-  for (let ln = start; ln <= end; ln++) {
-    out.push(`${String(ln).padStart(6, ' ')}| ${lines[ln - 1] ?? ''}`);
-  }
+  out.push(`# range ${start}-${end} of ${lines.length} lines (limit=${limit}, format=${format})`);
+  for (let ln = start; ln <= end; ln++) out.push(renderLine(ln, lines[ln - 1] ?? ''));
   if (end < lines.length) out.push(`# ... (${lines.length - end} more lines)`);
+  if (buf.length > maxBytes) out.push(`# truncated_bytes: ${buf.length - maxBytes} (set max_bytes to inspect more)`);
 
   return out.join('\n');
 }
@@ -688,6 +726,181 @@ export async function edit_file(ctx: ToolContext, args: any) {
 
   const cwdWarning = checkCwdWarning('edit_file', p, ctx);
   return `edited ${p} (replace_all=${replaceAll})${replayNote}${cwdWarning}`;
+}
+
+/**
+ * edit_range: Token-efficient line range replacement.
+ * Replaces lines [start_line, end_line] (inclusive, 1-indexed) with replacement text.
+ */
+export async function edit_range(ctx: ToolContext, args: any) {
+  const p = resolvePath(ctx, args?.path);
+  const startLine = Number(args?.start_line);
+  const endLine = Number(args?.end_line);
+  const replacement = typeof args?.replacement === 'string' ? args.replacement : '';
+
+  if (!p) throw new Error('edit_range: missing path');
+  if (!Number.isFinite(startLine) || startLine < 1) throw new Error('edit_range: invalid start_line');
+  if (!Number.isFinite(endLine) || endLine < startLine) throw new Error('edit_range: invalid end_line');
+
+  // Path safety check
+  const pathVerdict = checkPathSafety(p);
+  if (pathVerdict.tier === 'forbidden') {
+    throw new Error(`edit_range: ${pathVerdict.reason}`);
+  }
+  if (pathVerdict.tier === 'cautious' && !ctx.noConfirm) {
+    if (ctx.confirm) {
+      const ok = await ctx.confirm(
+        pathVerdict.prompt || `Edit ${p} (lines ${startLine}-${endLine})?`,
+        { tool: 'edit_range', args: { path: p, start_line: startLine, end_line: endLine } }
+      );
+      if (!ok) throw new Error(`edit_range: cancelled by user (${pathVerdict.reason})`);
+    } else {
+      throw new Error(`edit_range: blocked (${pathVerdict.reason}) without --no-confirm/--yolo`);
+    }
+  }
+
+  if (ctx.mode === 'sys' && ctx.vault) {
+    await snapshotBeforeEdit(ctx.vault, p).catch(() => {});
+  }
+
+  const cur = await fs.readFile(p, 'utf8').catch((e: any) => {
+    throw new Error(`edit_range: cannot read ${p}: ${e?.message ?? String(e)}`);
+  });
+
+  const lines = cur.split(/\r?\n/);
+
+  if (startLine > lines.length) {
+    throw new Error(`edit_range: start_line ${startLine} exceeds file length (${lines.length} lines)`);
+  }
+
+  const clampedEnd = Math.min(endLine, lines.length);
+
+  // Build new content: lines before startLine + replacement + lines after endLine
+  const before = lines.slice(0, startLine - 1);
+  const after = lines.slice(clampedEnd);
+  const replacementLines = replacement.split(/\r?\n/);
+
+  const next = [...before, ...replacementLines, ...after].join('\n');
+
+  if (ctx.dryRun) {
+    return `dry-run: would edit ${p} lines ${startLine}-${clampedEnd} (${clampedEnd - startLine + 1} lines → ${replacementLines.length} lines)`;
+  }
+
+  await backupFile(p, ctx);
+  await atomicWrite(p, next);
+  ctx.onMutation?.(p);
+
+  const replayNote = await checkpointReplay(ctx, {
+    op: 'edit_file',
+    filePath: p,
+    before: Buffer.from(cur, 'utf8'),
+    after: Buffer.from(next, 'utf8')
+  });
+
+  const cwdWarning = checkCwdWarning('edit_range', p, ctx);
+  const delta = replacementLines.length - (clampedEnd - startLine + 1);
+  return `edited ${p} lines ${startLine}-${clampedEnd} → ${replacementLines.length} lines (Δ ${delta >= 0 ? '+' : ''}${delta})${replayNote}${cwdWarning}`;
+}
+
+/**
+ * apply_patch: Apply a unified diff patch.
+ * Uses the system `patch` command for robust handling.
+ */
+export async function apply_patch(ctx: ToolContext, args: any) {
+  const patchText = typeof args?.patch === 'string' ? args.patch : '';
+  const files = Array.isArray(args?.files) ? args.files.map((f: any) => String(f)) : [];
+  const strip = Number(args?.strip) || 0;
+
+  if (!patchText) throw new Error('apply_patch: missing patch');
+  if (!files.length) throw new Error('apply_patch: missing files array');
+
+  // Validate all target paths before applying
+  for (const relPath of files) {
+    const absPath = resolvePath(ctx, relPath);
+    const verdict = checkPathSafety(absPath);
+    if (verdict.tier === 'forbidden') {
+      throw new Error(`apply_patch: ${relPath}: ${verdict.reason}`);
+    }
+    if (verdict.tier === 'cautious' && !ctx.noConfirm) {
+      if (ctx.confirm) {
+        const ok = await ctx.confirm(
+          verdict.prompt || `Apply patch to ${relPath}?`,
+          { tool: 'apply_patch', args: { files } }
+        );
+        if (!ok) throw new Error(`apply_patch: cancelled by user (${verdict.reason})`);
+      } else {
+        throw new Error(`apply_patch: ${relPath}: blocked (${verdict.reason}) without --no-confirm/--yolo`);
+      }
+    }
+  }
+
+  if (ctx.dryRun) {
+    return `dry-run: would apply patch to ${files.length} file(s): ${files.join(', ')}`;
+  }
+
+  // Capture pre-image + backup all target files first
+  const beforeByFile = new Map<string, Buffer>();
+  for (const relPath of files) {
+    const absPath = resolvePath(ctx, relPath);
+    const before = await fs.readFile(absPath).catch(() => Buffer.from(''));
+    beforeByFile.set(absPath, before);
+    await backupFile(absPath, ctx).catch(() => {});
+    if (ctx.mode === 'sys' && ctx.vault) {
+      await snapshotBeforeEdit(ctx.vault, absPath).catch(() => {});
+    }
+  }
+
+  // Write patch to temp file and apply via `patch` command
+  const tmpPatch = path.join(ctx.cwd, `.idlehands-patch-${Date.now()}.patch`);
+  await fs.writeFile(tmpPatch, patchText, 'utf8');
+
+  try {
+    const patchArgs = ['patch'];
+    if (strip > 0) patchArgs.push(`-p${strip}`);
+    patchArgs.push('--batch', '--forward', '-i', tmpPatch);
+
+    const result = spawnSync(BASH_PATH, ['-lc', patchArgs.map(shellEscape).join(' ')], {
+      cwd: ctx.cwd,
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+
+    const rc = result.status ?? 1;
+    const out = (result.stdout || '') + (result.stderr || '');
+
+    if (rc !== 0) {
+      // Check if patch was already applied
+      if (out.includes('Reversed (or previously applied) patch detected')) {
+        return `patch already applied to ${files.join(', ')}`;
+      }
+      throw new Error(`apply_patch failed (rc=${rc}):\n${out.slice(0, 1000)}`);
+    }
+
+    // Notify mutations + capture replay checkpoints for changed files
+    let replayNotes = '';
+    const cwdWarnings: string[] = [];
+    for (const relPath of files) {
+      const absPath = resolvePath(ctx, relPath);
+      ctx.onMutation?.(absPath);
+      const before = beforeByFile.get(absPath) ?? Buffer.from('');
+      const after = await fs.readFile(absPath).catch(() => Buffer.from(''));
+      if (!before.equals(after)) {
+        replayNotes += await checkpointReplay(ctx, {
+          op: 'other',
+          filePath: absPath,
+          before,
+          after,
+        });
+      }
+      const warn = checkCwdWarning('apply_patch', absPath, ctx);
+      if (warn) cwdWarnings.push(warn);
+    }
+
+    const cwdWarning = cwdWarnings.length ? cwdWarnings[0] : '';
+    return `applied patch to ${files.join(', ')}${replayNotes}${cwdWarning}`;
+  } finally {
+    await fs.unlink(tmpPatch).catch(() => {});
+  }
 }
 
 export async function list_dir(ctx: ToolContext, args: any) {

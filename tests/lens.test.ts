@@ -93,7 +93,7 @@ describe('lens', () => {
     assert.ok(summary?.includes('signature'));
   });
 
-  it('read_file returns full content for large files (no lens projection cap)', async () => {
+  it('read_file uses bounded default output for large files (still no lens projection)', async () => {
     const lens = new LensStore();
     const file = path.join(tmpDir, 'large.ts');
     const lines = Array.from({ length: 210 }, (_, i) => `function fn${i}() { return ${i}; }`);
@@ -109,7 +109,8 @@ describe('lens', () => {
     const out = await read_file(ctx, { path: 'large.ts' });
     assert.ok(!out.includes('# lens:'), 'lens should NOT be used by read_file');
     assert.ok(out.includes('function fn0()'));
-    assert.ok(out.includes('function fn209()'));
+    assert.ok(!out.includes('function fn209()'), 'default read should be bounded');
+    assert.ok(out.includes('more lines)'));
   });
 
   it('read_file returns full content (no lens) for small files (<200 lines)', async () => {

@@ -24,6 +24,7 @@ import {
   capTextByApproxTokens,
   isLikelyBinaryBuffer,
   sanitizePathsInMessage,
+  digestToolResult,
 } from './agent/formatting.js';
 import { parseToolCallsFromContent, getMissingRequiredParams, stripMarkdownFences } from './agent/tool-calls.js';
 export { parseToolCallsFromContent };
@@ -126,7 +127,7 @@ Rules:
 - Never use spawn_task to bypass confirmation/safety restrictions (for example blocked package installs). If a command is blocked, adapt the plan or ask the user for approval mode changes.
 - Read the target file before editing. You need the exact text for search/replace.
 - Use read_file with search=... to jump to relevant code; avoid reading whole files.
-- Use edit_file for surgical changes. Never rewrite entire files when a targeted edit works.
+- Prefer apply_patch or edit_range for code edits (token-efficient). Use edit_file only when exact old_text replacement is necessary.
 - Use insert_file for insertions (prepend/append/line).
 - Use exec to run commands, tests, builds; check results before reporting success.
 - When running commands in a subdirectory, use exec's cwd parameter — NOT "cd /path && cmd". Each exec call is a fresh shell; cd does not persist.
@@ -156,7 +157,7 @@ const DEFAULT_SUB_AGENT_RESULT_TOKEN_CAP = 4000;
 const APPROVAL_MODE_SET = new Set<ApprovalMode>(['plan', 'reject', 'default', 'auto-edit', 'yolo']);
 const LSP_TOOL_NAMES = ['lsp_diagnostics', 'lsp_symbols', 'lsp_hover', 'lsp_definition', 'lsp_references'] as const;
 const LSP_TOOL_NAME_SET = new Set<string>(LSP_TOOL_NAMES);
-const FILE_MUTATION_TOOL_SET = new Set(['edit_file', 'write_file', 'insert_file']);
+const FILE_MUTATION_TOOL_SET = new Set(['edit_file', 'edit_range', 'apply_patch', 'write_file', 'insert_file']);
 
 function normalizeApprovalMode(value: unknown): ApprovalMode | undefined {
   if (typeof value !== 'string') return undefined;
@@ -271,135 +272,160 @@ function buildToolsSchema(opts?: {
     properties,
     required
   });
+  const str = () => ({ type: 'string' });
+  const bool = () => ({ type: 'boolean' });
+  const int = (min?: number, max?: number) => ({ type: 'integer', ...(min !== undefined && { minimum: min }), ...(max !== undefined && { maximum: max }) });
 
   const schemas: ToolSchema[] = [
+    // ────────────────────────────────────────────────────────────────────────────
+    // Token-safe reads (require limit; allow plain output without per-line numbers)
+    // ────────────────────────────────────────────────────────────────────────────
     {
       type: 'function',
       function: {
         name: 'read_file',
-        description: 'Read file contents with line numbers. Use search/context to jump to relevant code.',
+        description: 'Read a bounded slice of a file.',
         parameters: obj(
           {
-            path: { type: 'string' },
-            offset: { type: 'integer' },
-            limit: { type: 'integer' },
-            search: { type: 'string' },
-            context: { type: 'integer' },
+            path: str(),
+            offset: int(1, 1_000_000),
+            limit: int(1, 240),
+            search: str(),
+            context: int(0, 80),
+            format: { type: 'string', enum: ['plain', 'numbered', 'sparse'] },
+            max_bytes: int(256, 20_000),
           },
-          ['path']
-        )
-      }
+          ['path', 'limit']
+        ),
+      },
     },
     {
       type: 'function',
       function: {
         name: 'read_files',
-        description: 'Batch read multiple files.',
+        description: 'Batch read bounded file slices.',
         parameters: obj(
           {
             requests: {
               type: 'array',
               items: obj(
                 {
-                  path: { type: 'string' },
-                  offset: { type: 'integer' },
-                  limit: { type: 'integer' },
-                  search: { type: 'string' },
-                  context: { type: 'integer' },
+                  path: str(),
+                  offset: int(1, 1_000_000),
+                  limit: int(1, 240),
+                  search: str(),
+                  context: int(0, 80),
+                  format: { type: 'string', enum: ['plain', 'numbered', 'sparse'] },
+                  max_bytes: int(256, 20_000),
                 },
-                ['path']
-              )
-            }
+                ['path', 'limit']
+              ),
+            },
           },
           ['requests']
-        )
-      }
+        ),
+      },
     },
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // Writes/edits
+    // ────────────────────────────────────────────────────────────────────────────
     {
       type: 'function',
       function: {
         name: 'write_file',
-        description: 'Write a file (atomic). Creates parents. Makes a backup first.',
-        parameters: obj({ path: { type: 'string' }, content: { type: 'string' } }, ['path', 'content'])
-      }
+        description: 'Write file (atomic, backup).',
+        parameters: obj({ path: str(), content: str() }, ['path', 'content']),
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'apply_patch',
+        description: 'Apply unified diff patch (multi-file).',
+        parameters: obj(
+          {
+            patch: str(),
+            files: { type: 'array', items: str() },
+            strip: int(0, 5),
+          },
+          ['patch', 'files']
+        ),
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'edit_range',
+        description: 'Replace a line range in a file.',
+        parameters: obj(
+          {
+            path: str(),
+            start_line: int(1),
+            end_line: int(1),
+            replacement: str(),
+          },
+          ['path', 'start_line', 'end_line', 'replacement']
+        ),
+      },
     },
     {
       type: 'function',
       function: {
         name: 'edit_file',
-        description: 'Search/replace exact text in a file. Fails if old_text not found.',
+        description: 'Legacy exact replace (requires old_text). Prefer apply_patch/edit_range.',
         parameters: obj(
-          {
-            path: { type: 'string' },
-            old_text: { type: 'string' },
-            new_text: { type: 'string' },
-            replace_all: { type: 'boolean' }
-          },
+          { path: str(), old_text: str(), new_text: str(), replace_all: bool() },
           ['path', 'old_text', 'new_text']
-        )
-      }
+        ),
+      },
     },
     {
       type: 'function',
       function: {
         name: 'insert_file',
-        description: 'Insert text at a specific line (0=prepend, -1=append).',
-        parameters: obj(
-          {
-            path: { type: 'string' },
-            line: { type: 'integer' },
-            text: { type: 'string' }
-          },
-          ['path', 'line', 'text']
-        )
-      }
+        description: 'Insert text at line (0=prepend, -1=append).',
+        parameters: obj({ path: str(), line: int(), text: str() }, ['path', 'line', 'text']),
+      },
     },
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // Bounded listings/search (expose existing caps)
+    // ────────────────────────────────────────────────────────────────────────────
     {
       type: 'function',
       function: {
         name: 'list_dir',
-        description: 'List directory contents (optional recursive, max depth 3).',
+        description: 'List directory entries.',
         parameters: obj(
-          {
-            path: { type: 'string' },
-            recursive: { type: 'boolean' },
-
-          },
+          { path: str(), recursive: bool(), max_entries: int(1, 500) },
           ['path']
-        )
-      }
+        ),
+      },
     },
     {
       type: 'function',
       function: {
         name: 'search_files',
-        description: 'Search for a regex pattern in files under a directory.',
+        description: 'Search regex in files.',
         parameters: obj(
-          {
-            pattern: { type: 'string' },
-            path: { type: 'string' },
-            include: { type: 'string' },
-
-          },
+          { pattern: str(), path: str(), include: str(), max_results: int(1, 100) },
           ['pattern', 'path']
-        )
-      }
+        ),
+      },
     },
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // Exec (minified schema)
+    // ────────────────────────────────────────────────────────────────────────────
     {
       type: 'function',
       function: {
         name: 'exec',
-        description: 'Run a shell command (bash -c) with timeout; returns JSON rc/out/err. Each call is a new shell — cwd does not persist between calls.',
-        parameters: obj(
-          {
-            command: { type: 'string', description: 'Shell command to run' },
-            cwd: { type: 'string', description: 'Working directory (default: project root). Use this instead of cd.' },
-            timeout: { type: 'integer', description: 'Timeout in seconds (default: 30, max: 120). Use 60-120 for npm install, builds, or test suites.' }
-          },
-          ['command']
-        )
-      }
-    }
+        description: 'Run bash -c; returns JSON rc/out/err.',
+        parameters: obj({ command: str(), cwd: str(), timeout: int(1, 120) }, ['command']),
+      },
+    },
   ];
 
   if (opts?.allowSpawnTask !== false) {
@@ -407,59 +433,29 @@ function buildToolsSchema(opts?: {
       type: 'function',
       function: {
         name: 'spawn_task',
-        description: 'Delegate a focused task to an isolated sub-agent session (no parent chat history).',
+        description: 'Run a sub-agent task (no parent history).',
         parameters: obj(
           {
-            task: { type: 'string', description: 'Instruction for the sub-agent' },
-            context_files: {
-              type: 'array',
-              description: 'Optional extra files to inject into sub-agent context',
-              items: { type: 'string' },
-            },
-            model: { type: 'string', description: 'Optional model override for this task' },
-            endpoint: { type: 'string', description: 'Optional endpoint override for this task' },
-            max_iterations: { type: 'integer', description: 'Optional max turn cap for the sub-agent' },
-            max_tokens: { type: 'integer', description: 'Optional max completion tokens for the sub-agent' },
-            timeout_sec: { type: 'integer', description: 'Optional timeout for this sub-agent run (seconds)' },
-            system_prompt: { type: 'string', description: 'Optional sub-agent system prompt override for this task' },
+            task: str(),
+            context_files: { type: 'array', items: str() },
+            model: str(),
+            endpoint: str(),
+            max_iterations: int(),
+            max_tokens: int(),
+            timeout_sec: int(),
+            system_prompt: str(),
             approval_mode: { type: 'string', enum: ['plan', 'reject', 'default', 'auto-edit', 'yolo'] },
           },
           ['task']
-        )
-      }
+        ),
+      },
     });
   }
 
   if (opts?.activeVaultTools) {
     schemas.push(
-      {
-        type: 'function',
-        function: {
-          name: 'vault_search',
-          description: 'Search vault entries (notes and previous tool outputs) to reuse prior high-signal findings.',
-          parameters: obj(
-            {
-              query: { type: 'string' },
-              limit: { type: 'integer' }
-            },
-            ['query']
-          )
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'vault_note',
-          description: 'Persist a concise, high-signal note into the Trifecta vault.',
-          parameters: obj(
-            {
-              key: { type: 'string' },
-              value: { type: 'string' }
-            },
-            ['key', 'value']
-          )
-        }
-      }
+      { type: 'function', function: { name: 'vault_search', description: 'Search vault.', parameters: obj({ query: str(), limit: int() }, ['query']) } },
+      { type: 'function', function: { name: 'vault_note', description: 'Write vault note.', parameters: obj({ key: str(), value: str() }, ['key', 'value']) } }
     );
   }
 
@@ -474,73 +470,40 @@ function buildToolsSchema(opts?: {
         type: 'function',
         function: {
           name: 'lsp_diagnostics',
-          description: 'Get current LSP diagnostics (errors/warnings) for a file or the whole project. Structured — replaces running build commands to check for errors.',
-          parameters: obj(
-            {
-              path: { type: 'string', description: 'File path (omit for project-wide diagnostics)' },
-              severity: { type: 'integer', description: '1=Error, 2=Warning, 3=Info, 4=Hint (default: config threshold)' },
-            },
-            []
-          )
+          description: 'Get LSP diagnostics (errors/warnings) for file or project.',
+          parameters: obj({ path: str(), severity: int() }, [])
         }
       },
       {
         type: 'function',
         function: {
           name: 'lsp_symbols',
-          description: 'List all symbols (functions, classes, variables) in a file via LSP.',
-          parameters: obj(
-            {
-              path: { type: 'string' },
-            },
-            ['path']
-          )
+          description: 'List symbols (functions, classes, vars) in a file.',
+          parameters: obj({ path: str() }, ['path'])
         }
       },
       {
         type: 'function',
         function: {
           name: 'lsp_hover',
-          description: 'Get type info and documentation for a symbol at a position.',
-          parameters: obj(
-            {
-              path: { type: 'string' },
-              line: { type: 'integer' },
-              character: { type: 'integer' },
-            },
-            ['path', 'line', 'character']
-          )
+          description: 'Get type/docs for symbol at position.',
+          parameters: obj({ path: str(), line: int(), character: int() }, ['path', 'line', 'character'])
         }
       },
       {
         type: 'function',
         function: {
           name: 'lsp_definition',
-          description: 'Go to definition of a symbol at a given position.',
-          parameters: obj(
-            {
-              path: { type: 'string' },
-              line: { type: 'integer' },
-              character: { type: 'integer' },
-            },
-            ['path', 'line', 'character']
-          )
+          description: 'Go to definition of symbol at position.',
+          parameters: obj({ path: str(), line: int(), character: int() }, ['path', 'line', 'character'])
         }
       },
       {
         type: 'function',
         function: {
           name: 'lsp_references',
-          description: 'Find all references to a symbol at a given position.',
-          parameters: obj(
-            {
-              path: { type: 'string' },
-              line: { type: 'integer' },
-              character: { type: 'integer' },
-              max_results: { type: 'integer', description: 'Cap results (default 50)' },
-            },
-            ['path', 'line', 'character']
-          )
+          description: 'Find all references to symbol at position.',
+          parameters: obj({ path: str(), line: int(), character: int(), max_results: int() }, ['path', 'line', 'character'])
         }
       },
     );
@@ -562,6 +525,10 @@ function planModeSummary(name: string, args: Record<string, unknown>): string {
   switch (name) {
     case 'write_file':
       return `write ${args.path ?? 'unknown'} (${typeof args.content === 'string' ? args.content.split('\n').length : '?'} lines)`;
+    case 'apply_patch':
+      return `apply patch to ${Array.isArray(args.files) ? args.files.length : '?'} file(s)`;
+    case 'edit_range':
+      return `edit ${args.path ?? 'unknown'} lines ${args.start_line ?? '?'}-${args.end_line ?? '?'}`;
     case 'edit_file':
       return `edit ${args.path ?? 'unknown'} (replace ${typeof args.old_text === 'string' ? args.old_text.split('\n').length : '?'} lines)`;
     case 'insert_file':
@@ -857,7 +824,7 @@ export async function createSession(opts: {
     : (Number.isFinite(cfg.mcp?.call_timeout_sec) ? Number(cfg.mcp?.call_timeout_sec) : 30);
 
   const builtInToolNames = [
-    'read_file', 'read_files', 'write_file', 'edit_file', 'insert_file',
+    'read_file', 'read_files', 'write_file', 'apply_patch', 'edit_range', 'edit_file', 'insert_file',
     'list_dir', 'search_files', 'exec', 'vault_search', 'vault_note', 'sys_context',
     ...(spawnTaskEnabled ? ['spawn_task'] : []),
   ];
@@ -2123,6 +2090,7 @@ export async function createSession(opts: {
     // identical tool call signature counts across this ask() run
     const sigCounts = new Map<string, number>();
     const toolNameByCallId = new Map<string, string>();
+    const toolArgsByCallId = new Map<string, Record<string, unknown>>();
 
     // Loop-break helper state: bump mutationVersion whenever a tool mutates files.
     // We also record the mutationVersion at which a given signature was last seen.
@@ -2164,6 +2132,46 @@ export async function createSession(opts: {
         // ignore and store raw tool output
       }
       return msg;
+    };
+
+    const compactToolMessageForHistory = async (toolCallId: string, rawContent: string): Promise<ChatMessage> => {
+      const toolName = toolNameByCallId.get(toolCallId) ?? 'tool';
+      const toolArgs = toolArgsByCallId.get(toolCallId) ?? {};
+      const rawMsg: ChatMessage = { role: 'tool', tool_call_id: toolCallId, content: rawContent } as any;
+
+      // Persist full-fidelity output immediately so live context can stay small.
+      if (vault && typeof (vault as any).archiveToolResult === 'function') {
+        try {
+          await (vault as any).archiveToolResult(rawMsg, toolName);
+        } catch (e) {
+          console.warn(`[warn] vault archive failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+
+      let compact = rawContent;
+      if (lens) {
+        try {
+          const lensCompact = await lens.summarizeToolOutput(rawContent, toolName, typeof (toolArgs as any).path === 'string' ? String((toolArgs as any).path) : undefined);
+          if (typeof lensCompact === 'string' && lensCompact.length && lensCompact.length < compact.length) {
+            compact = lensCompact;
+          }
+        } catch {
+          // ignore lens failures; fallback to raw
+        }
+      }
+
+      const success = !String(rawContent).startsWith('ERROR:');
+      const digested = digestToolResult(toolName, toolArgs, compact, success);
+
+      if (digested !== rawContent) {
+        return {
+          role: 'tool',
+          tool_call_id: toolCallId,
+          content: `${digested}\n[full output archived in vault: tool=${toolName}, call_id=${toolCallId}]`,
+        } as any;
+      }
+
+      return rawMsg;
     };
 
     const persistFailure = async (error: unknown, contextLine?: string) => {
@@ -2503,7 +2511,11 @@ export async function createSession(opts: {
           if (visible && hookObj.onToken) hookObj.onToken('\n');
 
           toolCalls += toolCallsArr.length;
-          messages.push({ role: 'assistant', content: visible || '', tool_calls: toolCallsArr });
+          const assistantToolCallText = visible || '';
+          const compactAssistantToolCallText = assistantToolCallText.length > 900
+            ? `${assistantToolCallText.slice(0, 900)}\n[history-compacted: assistant narration truncated before tool execution]`
+            : assistantToolCallText;
+          messages.push({ role: 'assistant', content: compactAssistantToolCallText, tool_calls: toolCallsArr });
 
           // sigCounts is scoped to the entire ask() run (see above)
 
@@ -2652,7 +2664,7 @@ export async function createSession(opts: {
                   `Hint: you repeated the same tool call ${loopThreshold} times with identical arguments. ` +
                   `If the call succeeded, move on to the next step. ` +
                   `If it failed, check that all required parameters are present and correct. ` +
-                  `For write_file/edit_file, ensure 'content'/'old_text'/'new_text' are included as strings.`
+                  `For write_file/edit_file/apply_patch/edit_range, ensure required args are present (content/old_text/new_text/patch/files/start_line/end_line/replacement).`
               );
             }
           }
@@ -2684,6 +2696,9 @@ export async function createSession(opts: {
             const isSpawnTask = name === 'spawn_task';
             const hasMcpTool = mcpManager?.hasTool(name) === true;
             if (!builtInFn && !isLspTool && !hasMcpTool && !isSpawnTask) throw new Error(`unknown tool: ${name}`);
+
+            // Keep parsed args by call-id so we can digest/archive tool outputs with context.
+            toolArgsByCallId.set(callId, args && typeof args === 'object' && !Array.isArray(args) ? args : {});
 
             // Pre-dispatch check for missing required params.
             // Universal: catches omitted params early with a clear, instructive error
@@ -3053,7 +3068,8 @@ export async function createSession(opts: {
           if (ac.signal.aborted) break;
 
           for (const r of results) {
-            messages.push({ role: 'tool', tool_call_id: r.id, content: r.content });
+            const compactToolMsg = await compactToolMessageForHistory(r.id, r.content);
+            messages.push(compactToolMsg as any);
           }
 
           if (readOnlyExecTurnHints.length) {

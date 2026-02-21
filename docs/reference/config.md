@@ -23,12 +23,31 @@ idlehands setup
 - `approval_mode`: `plan/reject/default/auto-edit/yolo`
 - `mode`: `code` or `sys`
 - `context_window`, `context_max_tokens`
+- `context_summarize`, `context_summary_max_tokens`
 - `theme`, `vim_mode`, `harness`
 - `offline`, `auto_update_check`
 - `mcp_tool_budget`, `mcp_call_timeout_sec`
 - `watchdog_timeout_ms`, `watchdog_max_compactions`, `watchdog_idle_grace_timeouts`
 - `debug_abort_reason`
 - `hooks.enabled`, `hooks.strict`, `hooks.warn_ms`, `hooks.allow_capabilities`, `hooks.plugin_paths`
+
+## Project context behavior
+
+Idle Hands can load project bootstrap context from `.idlehands.md`, `AGENTS.md`, or a configured context file.
+
+```json
+{
+  "context_max_tokens": 8192,
+  "context_summarize": true,
+  "context_summary_max_tokens": 1024
+}
+```
+
+- `context_max_tokens`: hard cap for context injection payload.
+- `context_summarize` (default `true`): summarize oversized context files instead of hard-failing.
+- `context_summary_max_tokens`: target budget for the summary payload.
+
+When summarization is used, Idle Hands injects a compact summary plus a retrieval hint so the model can fetch exact sections with `read_file(path, limit, search)`.
 
 ## Structured sections
 

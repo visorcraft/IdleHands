@@ -4,7 +4,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { read_file, write_file, edit_file, insert_file, list_dir, search_files, exec, undo_path } from '../dist/tools.js';
+import { spawnSync } from 'node:child_process';
+import { read_file, write_file, edit_file, edit_range, apply_patch, insert_file, list_dir, search_files, exec, undo_path } from '../dist/tools.js';
 
 let tmpDir: string;
 let ctx: any;
@@ -52,15 +53,16 @@ describe('read_file', () => {
     assert.ok(r.includes('list_dir'), 'should suggest list_dir');
   });
 
-  it('does not enforce a line cap when limit is omitted', async () => {
+  it('enforces a safe default line cap when limit is omitted', async () => {
     const p = path.join(tmpDir, 'many-lines.txt');
     const content = Array.from({ length: 650 }, (_, i) => `line-${i + 1}`).join('\n') + '\n';
     await fs.writeFile(p, content, 'utf8');
 
     const r = await read_file(ctx, { path: 'many-lines.txt' });
     assert.ok(r.includes('line-1'));
-    assert.ok(r.includes('line-650'));
-    assert.ok(!r.includes('more lines)'), 'should not be truncated by default line caps');
+    assert.ok(r.includes('line-200'));
+    assert.ok(!r.includes('line-650'));
+    assert.ok(r.includes('more lines)'), 'should be truncated by default line caps');
   });
 });
 
@@ -134,6 +136,56 @@ describe('edit_file', () => {
 
     const after = await fs.readFile(p);
     assert.equal(Buffer.compare(after, original), 0, 'binary file should not be modified on failure');
+  });
+});
+
+describe('edit_range', () => {
+  it('replaces an inclusive line range', async () => {
+    await fs.writeFile(path.join(tmpDir, 'range.txt'), 'a\nb\nc\nd\n');
+    await edit_range(ctx, {
+      path: 'range.txt',
+      start_line: 2,
+      end_line: 3,
+      replacement: 'X\nY'
+    });
+    const content = await fs.readFile(path.join(tmpDir, 'range.txt'), 'utf8');
+    assert.equal(content, 'a\nX\nY\nd\n');
+  });
+
+  it('rejects invalid ranges', async () => {
+    await fs.writeFile(path.join(tmpDir, 'range-bad.txt'), 'one\ntwo\n');
+    await assert.rejects(
+      () => edit_range(ctx, { path: 'range-bad.txt', start_line: 3, end_line: 2, replacement: 'x' }),
+      /invalid end_line/i
+    );
+  });
+});
+
+describe('apply_patch', () => {
+  it('applies a unified diff patch when patch binary exists', async () => {
+    const hasPatch = spawnSync('bash', ['-lc', 'command -v patch >/dev/null 2>&1']).status === 0;
+    if (!hasPatch) return;
+
+    await fs.writeFile(path.join(tmpDir, 'patch.txt'), 'hello\nworld\n', 'utf8');
+    const patch = [
+      '--- patch.txt',
+      '+++ patch.txt',
+      '@@ -1,2 +1,2 @@',
+      '-hello',
+      '+hola',
+      ' world',
+      ''
+    ].join('\n');
+
+    const out = await apply_patch(ctx, {
+      patch,
+      files: ['patch.txt'],
+      strip: 0,
+    });
+
+    const content = await fs.readFile(path.join(tmpDir, 'patch.txt'), 'utf8');
+    assert.ok(out.includes('applied patch'));
+    assert.equal(content, 'hola\nworld\n');
   });
 });
 

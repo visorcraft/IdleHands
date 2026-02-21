@@ -76,7 +76,7 @@ const HARNESS: Harness[] = [
     thinking: { format: 'xml', openTag: '<think>', closeTag: '</think>', strip: true },
     toolCalls: { reliableToolCallsArray: false, contentFallbackLikely: true, parallelCalls: true, retryOnMalformed: 3 },
     quirks: DEFAULT_QUIRKS,
-    systemPromptSuffix: 'Prefer write_file over edit_file when replacing large sections or rewriting files. edit_file is only for small, surgical changes where you can reproduce the exact old_text.\nWhen answering questions about code, search first (search_files or grep), then read only the relevant files. Never scan an entire directory by reading files one by one.'
+    systemPromptSuffix: 'Prefer apply_patch or edit_range for most edits. Use write_file for full rewrites, and use edit_file only for exact old_text replacement when necessary.\nWhen answering questions about code, search first (search_files or grep), then read only the relevant files. Never scan an entire directory by reading files one by one.'
   },
   {
     id: 'qwen3-moe',

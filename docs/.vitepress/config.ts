@@ -35,7 +35,8 @@ export default defineConfig({
             { text: 'CLI', link: '/reference/cli' },
             { text: 'Config', link: '/reference/config' },
             { text: 'Safety', link: '/reference/safety' },
-            { text: 'Features', link: '/reference/features' }
+            { text: 'Features', link: '/reference/features' },
+            { text: 'Changelog', link: '/reference/changelog' }
           ]
         }
       ]

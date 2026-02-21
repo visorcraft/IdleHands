@@ -1,5 +1,85 @@
 import path from 'node:path';
 
+/** Maximum chars for tool result digest stored in live messages. */
+const MAX_DIGEST_CHARS = 4000;
+
+/**
+ * Generate a token-efficient digest for a tool result.
+ * This is stored in live messages[] instead of full output to reduce prompt size.
+ * Full output should be archived to vault keyed by tool_call_id for retrieval.
+ */
+export function digestToolResult(
+  name: string,
+  args: Record<string, unknown>,
+  content: string,
+  success: boolean
+): string {
+  if (!success || content.length <= MAX_DIGEST_CHARS) {
+    return content;
+  }
+
+  // Tool-specific digest strategies
+  switch (name) {
+    case 'read_file':
+    case 'read_files': {
+      const lines = content.split('\n');
+      const lineCount = lines.length;
+      const trailer = lines.length > 20 ? `\n# ... (${lineCount - 20} more lines)` : '';
+      return lines.slice(0, 20).join('\n') + trailer;
+    }
+    case 'exec': {
+      try {
+        const parsed = JSON.parse(content);
+        const rc = parsed.rc ?? '?';
+        const outLines = String(parsed.out || '').split('\n');
+        const errLines = String(parsed.err || '').split('\n').filter(Boolean);
+        const outPreview = outLines.slice(-15).join('\n');
+        const errPreview = errLines.slice(0, 5).join('\n');
+        const truncated = outLines.length > 15 ? `\n# ... (${outLines.length - 15} more lines)` : '';
+        const errSection = errPreview ? `\n[stderr]\n${errPreview}` : '';
+        return JSON.stringify({ rc, out: outPreview + truncated, ...(errPreview && { err: errPreview }) }) + errSection;
+      } catch {
+        return content.slice(0, MAX_DIGEST_CHARS) + (content.length > MAX_DIGEST_CHARS ? '\n# [truncated]' : '');
+      }
+    }
+    case 'search_files': {
+      const lines = content.split('\n');
+      const count = lines.filter(l => l.includes(':') && !l.startsWith('[')).length;
+      const top = lines.slice(0, 15).join('\n');
+      const marker = lines.find((l) => l.includes('[truncated,') && l.includes('chars total'));
+      const truncated = lines.length > 15
+        ? `\n# ... (${lines.length - 15} more matches, ${count} total)`
+        : (marker ? `\n${marker}` : '');
+      return top + truncated;
+    }
+    case 'list_dir': {
+      const lines = content.split('\n');
+      const count = lines.filter(l => l.includes('\t') && !l.startsWith('[')).length;
+      const top = lines.slice(0, 20).join('\n');
+      const marker = lines.find((l) => l.includes('[truncated,') && l.includes('chars total'));
+      const truncated = lines.length > 20
+        ? `\n# ... (${lines.length - 20} more entries, ${count} total)${marker ? `\n${marker}` : ''}`
+        : (marker ? `\n${marker}` : '');
+      return top + truncated;
+    }
+    case 'spawn_task': {
+      // Keep the final status line and last 20 lines of output
+      const lines = content.split('\n');
+      const statusLine = lines.find(l => l.includes('status=')) || '';
+      const tail = lines.slice(-20).join('\n');
+      const header = statusLine ? `${statusLine}\n` : '';
+      const truncated = lines.length > 20 ? `# ... (${lines.length - 20} earlier lines omitted)\n` : '';
+      return header + truncated + tail;
+    }
+    default:
+      // Generic truncation for unknown tools
+      if (content.length > MAX_DIGEST_CHARS) {
+        return content.slice(0, MAX_DIGEST_CHARS) + '\n# [truncated]';
+      }
+      return content;
+  }
+}
+
 /** Generate a minimal unified diff for Phase 7 rich display (max 20 lines, truncated). */
 export function generateMinimalDiff(before: string, after: string, filePath: string): string {
   const bLines = before.split('\n');
@@ -67,6 +147,14 @@ export function toolResultSummary(name: string, args: Record<string, unknown>, c
     }
     case 'write_file':
       return `wrote ${(args.path as string) || 'file'}`;
+    case 'apply_patch': {
+      const n = Array.isArray(args.files) ? args.files.length : '?';
+      return content.startsWith('ERROR') ? content.slice(0, 120) : `applied patch to ${n} file(s)`;
+    }
+    case 'edit_range': {
+      const p = String(args.path ?? '?');
+      return content.startsWith('ERROR') ? content.slice(0, 120) : `edited range in ${p}`;
+    }
     case 'edit_file':
       return content.startsWith('ERROR') ? content.slice(0, 120) : `applied edit`;
     case 'insert_file':

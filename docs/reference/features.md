@@ -40,6 +40,17 @@ Commands:
 - Use `/lsp` for status
 - Supports proactive diagnostics
 
+## Token-efficient editing + reads
+
+Recent defaults focus on reducing context blowups in long coding sessions:
+
+- `read_file` now defaults to bounded output (`limit=200`, max `240`) and supports `format=plain|numbered|sparse`.
+- `read_file` supports bounded byte output via `max_bytes` (default `20000`).
+- New mutation tools:
+  - `apply_patch` for unified diff application across files
+  - `edit_range` for line-range replacement in one file
+- Live history stores compact tool-output digests while full raw output is archived in Vault (when enabled).
+
 ## Capture + replay
 
 ::: code-group

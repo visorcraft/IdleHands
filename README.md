@@ -186,3 +186,4 @@ Explicit per-model values always take precedence.
 - [CLI Reference](https://visorcraft.github.io/IdleHands/reference/cli)
 - [Config Reference](https://visorcraft.github.io/IdleHands/reference/config)
 - [Safety Model](https://visorcraft.github.io/IdleHands/reference/safety)
+- [Changelog](https://visorcraft.github.io/IdleHands/reference/changelog)
