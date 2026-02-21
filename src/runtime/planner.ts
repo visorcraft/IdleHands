@@ -142,19 +142,32 @@ export function plan(
   const targetBackendId = resolvedBackend?.id;
 
   if (
+    !request.forceRestart &&
     activeState &&
     activeState.healthy === true &&
     activeState.modelId === resolvedModel.id &&
     (activeState.backendId ?? undefined) === (targetBackendId ?? undefined) &&
     sameHostIds(activeState.hostIds, targetHostIds)
   ) {
+    const probeSteps: PlanStep[] = targetHosts.map((host) => {
+      const vars = buildVars(resolvedModel, host, resolvedBackend, backendCfg);
+      return {
+        kind: 'probe_health' as const,
+        host_id: host.id,
+        command: interpolate(resolvedModel.launch.probe_cmd, vars),
+        timeout_sec: resolvedModel.launch.probe_timeout_sec ?? 60,
+        probe_interval_ms: resolvedModel.launch.probe_interval_ms ?? 1000,
+        description: `Probe health for ${resolvedModel.id} on ${host.id}`,
+      };
+    });
+
     const reuseResult: PlanResult = {
       ok: true,
       reuse: true,
       model: resolvedModel,
       backend: resolvedBackend,
       hosts: resolvedHosts,
-      steps: [],
+      steps: probeSteps,
     };
     return reuseResult;
   }
@@ -176,8 +189,8 @@ export function plan(
   }
 
   const backendChanged = (activeState?.backendId ?? undefined) !== (targetBackendId ?? undefined);
-  if (backendChanged && backendCfg) {
-    if (backendCfg.apply_cmd) {
+  if (backendCfg) {
+    if (backendChanged && backendCfg.apply_cmd) {
       for (const host of targetHosts) {
         const vars = buildVars(resolvedModel, host, resolvedBackend, backendCfg);
         steps.push({
@@ -191,13 +204,14 @@ export function plan(
       }
     }
 
-    if (backendCfg.verify_cmd) {
+    const shouldVerifyBackend = !!backendCfg.verify_cmd;
+    if (shouldVerifyBackend) {
       for (const host of targetHosts) {
         const vars = buildVars(resolvedModel, host, resolvedBackend, backendCfg);
         steps.push({
           kind: 'verify_backend',
           host_id: host.id,
-          command: interpolate(backendCfg.verify_cmd, vars),
+          command: interpolate(String(backendCfg.verify_cmd), vars),
           timeout_sec: 15,
           description: `Verify backend ${backendCfg.id} on ${host.id}`,
         });

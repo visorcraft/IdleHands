@@ -731,9 +731,11 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
   }
 
   const force = !!args.force;
+  const restart = !!args.restart;
+  const forceRestart = force || restart;
 
   if (!modelId) {
-    console.log('Usage: idlehands select --model <id> [--backend <id>] [--host <id>] [--dry-run] [--json] [--force]');
+    console.log('Usage: idlehands select --model <id> [--backend <id>] [--host <id>] [--dry-run] [--json] [--force] [--restart]');
     console.log('       idlehands select status');
     return;
   }
@@ -745,7 +747,7 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
   const active = await loadActiveRuntime();
   const mode = dryRun ? 'dry-run' as const : 'live' as const;
 
-  const result = plan({ modelId, backendOverride, hostOverride, mode }, rtConfig, active);
+  const result = plan({ modelId, backendOverride, hostOverride, mode, forceRestart }, rtConfig, active);
 
   await applyDynamicProbeDefaults(result, rtConfig, runOnHost);
 
@@ -765,11 +767,10 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
     } else {
       console.log(`Plan for model "${result.model.display_name}":`);
       if (result.reuse) {
-        console.log('  → Current runtime matches. No changes needed.');
-      } else {
-        for (const step of result.steps) {
-          console.log(`  [${step.kind}] ${step.description} (timeout: ${step.timeout_sec}s)`);
-        }
+        console.log('  → Runtime appears to match; will run health re-check probe(s).');
+      }
+      for (const step of result.steps) {
+        console.log(`  [${step.kind}] ${step.description} (timeout: ${step.timeout_sec}s)`);
       }
     }
     return;
@@ -779,11 +780,20 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
   const rl = await import('node:readline/promises');
   const iface = rl.createInterface({ input: process.stdin, output: process.stdout });
 
-  const execResult = await execute(result, {
-    onStep: (step, status) => {
-      if (status === 'start') process.stdout.write(`  ${step.description}...`);
-      else if (status === 'done') process.stdout.write(' ✓\n');
-      else if (status === 'error') process.stdout.write(' ✗\n');
+  const executeWithRenderer = async (planResult: typeof result) => execute(planResult, {
+    onStep: (step, status, detail) => {
+      if (status === 'start') {
+        process.stdout.write(`  ${step.description}...`);
+      } else if (status === 'done') {
+        process.stdout.write(' ✓\n');
+      } else if (status === 'error') {
+        process.stdout.write(' ✗\n');
+        if (detail) {
+          for (const line of detail.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 6)) {
+            process.stdout.write(`    ${line}\n`);
+          }
+        }
+      }
     },
     confirm: async (prompt) => {
       const ans = (await iface.question(`${prompt} [y/N] `)).trim().toLowerCase();
@@ -791,6 +801,18 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
     },
     force,
   });
+
+  let execResult = await executeWithRenderer(result);
+
+  // Reuse-probe fallback: if reuse validation fails, force restart automatically.
+  if (!execResult.ok && result.reuse && !forceRestart) {
+    console.error('Reuse health check failed. Retrying with forced restart...');
+    const restartPlan = plan({ modelId, backendOverride, hostOverride, mode: 'live', forceRestart: true }, rtConfig, active);
+    if (restartPlan.ok) {
+      await applyDynamicProbeDefaults(restartPlan, rtConfig, runOnHost);
+      execResult = await executeWithRenderer(restartPlan);
+    }
+  }
 
   iface.close();
 
@@ -818,9 +840,26 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
 
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
+const YELLOW = '\x1b[33m';
 const DIM = '\x1b[2m';
 const BOLD = '\x1b[1m';
 const RESET = '\x1b[0m';
+
+function parseCurlTagged(stdout: string): { code: number | null; body: string } {
+  const m = stdout.match(/\n__HTTP__:(\d{3})\s*$/);
+  if (!m) return { code: null, body: stdout.trim() };
+  const code = Number(m[1]);
+  const body = stdout.slice(0, m.index).trim();
+  return { code: Number.isFinite(code) ? code : null, body };
+}
+
+function classifyProbe(exitCode: number, httpCode: number | null): 'ready' | 'loading' | 'down' | 'unknown' {
+  if (httpCode === 200) return 'ready';
+  if (httpCode === 503) return 'loading';
+  if (exitCode === 7 || exitCode === 28) return 'down';
+  if (exitCode !== 0) return 'down';
+  return 'unknown';
+}
 
 export async function runHealthSubcommand(_args: any, _config: any): Promise<void> {
   const { runOnHost } = await import('../runtime/executor.js');
@@ -933,6 +972,66 @@ export async function runHealthSubcommand(_args: any, _config: any): Promise<voi
           anyFailed = true;
         }
       }
+    }
+  }
+
+  // ── Discovery: what is actually loaded (configured + common ports) ──
+  console.log(`\n${BOLD}Loaded (discovered)${RESET}`);
+  const configuredPorts = new Set<number>(enabledModels.map((m) => m.runtime_defaults?.port ?? 8080));
+  for (let p = 8080; p <= 8090; p++) configuredPorts.add(p);
+  const candidatePorts = Array.from(configuredPorts).sort((a, b) => a - b);
+  const configuredModelIds = new Set(enabledModels.map((m) => m.id));
+
+  for (const host of enabledHosts) {
+    console.log(`  ${host.id}:`);
+
+    for (const port of candidatePorts) {
+      const modelsCmd = `curl -sS -m 3 -o - -w "\\n__HTTP__:%{http_code}" http://127.0.0.1:${port}/v1/models`;
+      const modelsRes = await runOnHost(modelsCmd, host, 5000);
+      const parsedModels = parseCurlTagged(modelsRes.stdout ?? '');
+      let status = classifyProbe(modelsRes.exitCode, parsedModels.code);
+      let modelIds: string[] = [];
+      let httpCode = parsedModels.code;
+
+      if (modelsRes.exitCode === 0 && parsedModels.code === 200) {
+        try {
+          const json = JSON.parse(parsedModels.body);
+          modelIds = Array.isArray(json?.data)
+            ? json.data.map((x: any) => String(x?.id ?? '')).filter(Boolean)
+            : [];
+        } catch {
+          // leave modelIds empty
+        }
+      }
+
+      // Fallback to /health when /v1/models doesn't resolve as ready.
+      if (status !== 'ready') {
+        const healthCmd = `curl -sS -m 3 -o - -w "\\n__HTTP__:%{http_code}" http://127.0.0.1:${port}/health`;
+        const healthRes = await runOnHost(healthCmd, host, 5000);
+        const parsedHealth = parseCurlTagged(healthRes.stdout ?? '');
+        const healthStatus = classifyProbe(healthRes.exitCode, parsedHealth.code);
+
+        // Prefer the more informative status.
+        if (healthStatus === 'ready' || healthStatus === 'loading') {
+          status = healthStatus;
+          httpCode = parsedHealth.code;
+        } else if (status === 'unknown') {
+          status = healthStatus;
+          httpCode = parsedHealth.code;
+        }
+      }
+
+      if (status === 'down') continue; // keep output concise
+
+      const icon = status === 'ready' ? `${GREEN}✓${RESET}` : status === 'loading' ? `${YELLOW}~${RESET}` : `${DIM}?${RESET}`;
+      const statusWord = status === 'ready' ? 'ready' : status === 'loading' ? 'loading' : 'unknown';
+
+      const extras = modelIds.filter((id) => !configuredModelIds.has(id));
+      const idsText = modelIds.length ? ` models=${modelIds.join(', ')}` : '';
+      const extrasText = extras.length ? ` ${YELLOW}(extra/unconfigured: ${extras.join(', ')})${RESET}` : '';
+      const httpText = httpCode != null ? ` http=${httpCode}` : '';
+
+      console.log(`    ${icon} :${port} ${statusWord}${httpText}${idsText}${extrasText}`);
     }
   }
 

@@ -47,6 +47,8 @@ export interface RuntimeBackend {
   host_filters: 'any' | string[]; // host IDs
   apply_cmd?: string | null;
   verify_cmd?: string | null;
+  /** Run verify step even when backend did not change. */
+  verify_always?: boolean;
   rollback_cmd?: string | null;
   env?: Record<string, string>;
   args?: string[];
@@ -93,6 +95,8 @@ export interface PlanRequest {
   hostOverride?: string;
   forceSplit?: boolean;
   mode: 'live' | 'dry-run';
+  /** Force planner to produce a restart plan even if active runtime appears healthy/matching. */
+  forceRestart?: boolean;
 }
 
 export interface ResolvedHost {

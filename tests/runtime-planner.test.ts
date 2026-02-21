@@ -85,7 +85,7 @@ describe('runtime planner', () => {
     assert.equal(out.steps.some((s) => s.kind === 'apply_backend' || s.kind === 'verify_backend'), false);
   });
 
-  it('plan() with exact active match reuses runtime', () => {
+  it('plan() with exact active match reuses runtime and includes health probe step(s)', () => {
     const cfg = makeConfig();
     const active: ActiveRuntime = {
       modelId: 'test-model',
@@ -99,7 +99,54 @@ describe('runtime planner', () => {
     assert.equal(out.ok, true);
     if (!out.ok) return;
     assert.equal(out.reuse, true);
-    assert.equal(out.steps.length, 0);
+    assert.equal(out.steps.length > 0, true);
+    assert.equal(out.steps.every((s) => s.kind === 'probe_health'), true);
+  });
+
+  it('plan() with forceRestart bypasses reuse on exact active match', () => {
+    const cfg = makeConfig();
+    const active: ActiveRuntime = {
+      modelId: 'test-model',
+      hostIds: ['test-host'],
+      healthy: true,
+      startedAt: new Date(0).toISOString(),
+    };
+
+    const out = plan({ modelId: 'test-model', mode: 'live', forceRestart: true }, cfg, active);
+
+    assert.equal(out.ok, true);
+    if (!out.ok) return;
+    assert.equal(out.reuse, false);
+    assert.equal(out.steps.some((s) => s.kind === 'start_model'), true);
+    assert.equal(out.steps.some((s) => s.kind === 'probe_health'), true);
+  });
+
+  it('plan() includes backend verify even when backend does not change', () => {
+    const cfg = makeConfig();
+    cfg.backends = [{
+      id: 'rocm',
+      display_name: 'ROCm',
+      enabled: true,
+      type: 'rocm',
+      host_filters: 'any',
+      verify_cmd: 'echo verify',
+    } as any];
+    cfg.models[0].backend_policy = ['rocm'];
+
+    const active: ActiveRuntime = {
+      modelId: 'test-model',
+      backendId: 'rocm',
+      hostIds: ['test-host'],
+      healthy: false,
+      startedAt: new Date(0).toISOString(),
+    };
+
+    const out = plan({ modelId: 'test-model', mode: 'live' }, cfg, active);
+
+    assert.equal(out.ok, true);
+    if (!out.ok) return;
+    assert.equal(out.reuse, false);
+    assert.equal(out.steps.some((s) => s.kind === 'verify_backend'), true);
   });
 
   it('plan() with different model includes stop + start steps', () => {

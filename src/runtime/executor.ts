@@ -9,7 +9,7 @@ import type {
   StepOutcome,
   ActiveRuntime,
 } from './types.js';
-import { stateDir } from '../utils.js';
+import { stateDir, shellEscape } from '../utils.js';
 
 /**
  * Derive the API endpoint URL from the plan's host connection + model port.
@@ -204,10 +204,14 @@ async function runPlanStep(step: PlanStep, host: PlanResult['hosts'][number], ti
   }
   const target = host.connection.user ? `${host.connection.user}@${targetHost}` : targetHost;
 
-  const sshArgs: string[] = [];
+  const sshArgs: string[] = [
+    '-o', 'BatchMode=yes',
+    '-o', `ConnectTimeout=${Math.max(1, Math.ceil(timeoutMs / 1000))}`,
+  ];
   if (host.connection.key_path) sshArgs.push('-i', host.connection.key_path);
   if (host.connection.port && host.connection.port !== 22) sshArgs.push('-p', String(host.connection.port));
-  sshArgs.push(target, step.command);
+  // Use login-shell behavior for parity with manual SSH sessions.
+  sshArgs.push(target, 'bash', '-lc', shellEscape(step.command));
 
   return new Promise((resolve) => {
     const child = spawn('ssh', sshArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -343,16 +347,65 @@ export async function execute(plan: PlanResult, opts: ExecuteOpts = {}): Promise
     }
 
     if (plan.reuse === true) {
-      const probe = plan.steps.find((s) => s.kind === 'probe_health');
-      if (probe) {
-        const host = plan.hosts.find((h) => h.id === probe.host_id);
-        if (host) {
-          const result = await runStepWithRetry(probe, host);
-          if (result.exitCode === 0) {
-            return { ok: true, reused: true, steps: [] };
-          }
-        }
+      const probes = plan.steps.filter((s) => s.kind === 'probe_health');
+      if (probes.length === 0) {
+        return { ok: true, reused: true, steps: [] };
       }
+
+      for (const probe of probes) {
+        const host = plan.hosts.find((h) => h.id === probe.host_id);
+        if (!host) {
+          const failed: StepOutcome = {
+            step: probe,
+            status: 'error',
+            exit_code: 1,
+            stderr: `Host not found: ${probe.host_id}`,
+            duration_ms: 0,
+          };
+          outcomes.push(failed);
+          opts.onStep?.(probe, 'error', failed.stderr);
+          await clearActiveRuntime();
+          return { ok: false, reused: true, steps: outcomes, error: failed.stderr };
+        }
+
+        opts.onStep?.(probe, 'start');
+        const probeStarted = Date.now();
+        const result = await runStepWithRetry(probe, host);
+        const duration = Date.now() - probeStarted;
+
+        if (result.exitCode === 0) {
+          outcomes.push({
+            step: probe,
+            status: 'ok',
+            exit_code: 0,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            duration_ms: duration,
+          });
+          opts.onStep?.(probe, 'done');
+          continue;
+        }
+
+        let detail = (result.stderr || result.stdout || '').trim();
+        opts.onStep?.(probe, 'error', detail || undefined);
+        outcomes.push({
+          step: probe,
+          status: 'error',
+          exit_code: result.exitCode,
+          stdout: result.stdout,
+          stderr: detail,
+          duration_ms: duration,
+        });
+        await clearActiveRuntime();
+        return {
+          ok: false,
+          reused: true,
+          steps: outcomes,
+          error: `Reuse health probe failed on ${probe.host_id}${result.exitCode === 124 ? ' (timed out)' : ''}${detail ? `\n${detail}` : ''}`,
+        };
+      }
+
+      return { ok: true, reused: true, steps: outcomes };
     }
 
     for (const step of plan.steps) {

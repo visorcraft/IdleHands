@@ -120,7 +120,7 @@ function validateHost(raw: unknown, index: number): RuntimeHost {
 
 function validateBackend(raw: unknown, index: number): RuntimeBackend {
   if (!isRecord(raw)) throw new Error(`backends[${index}]: expected object`);
-  assertNoUnknownKeys(raw, ['id', 'display_name', 'enabled', 'type', 'host_filters', 'apply_cmd', 'verify_cmd', 'rollback_cmd', 'env', 'args'], `backends[${index}]`);
+  assertNoUnknownKeys(raw, ['id', 'display_name', 'enabled', 'type', 'host_filters', 'apply_cmd', 'verify_cmd', 'verify_always', 'rollback_cmd', 'env', 'args'], `backends[${index}]`);
 
   const id = validateId(raw.id, `backends[${index}]`);
   const display_name = assertString(raw.display_name, `backends[${index}].display_name`);
@@ -143,6 +143,7 @@ function validateBackend(raw: unknown, index: number): RuntimeBackend {
     host_filters: validatePolicy(raw.host_filters, `backends[${index}].host_filters`),
     apply_cmd: validateCommandTemplate(raw.apply_cmd, `backends[${index}].apply_cmd`, true),
     verify_cmd: validateCommandTemplate(raw.verify_cmd, `backends[${index}].verify_cmd`, true),
+    verify_always: raw.verify_always == null ? undefined : assertBoolean(raw.verify_always, `backends[${index}].verify_always`),
     rollback_cmd: validateCommandTemplate(raw.rollback_cmd, `backends[${index}].rollback_cmd`, true),
     env,
     args: raw.args == null ? undefined : validateStringArray(raw.args, `backends[${index}].args`),

@@ -63,7 +63,9 @@ describe('runtime executor', () => {
 
       assert.equal(result.ok, true);
       assert.equal(result.reused, true);
-      assert.deepEqual(result.steps, []);
+      assert.equal(result.steps.length, 1);
+      assert.equal(result.steps[0]?.step.kind, 'probe_health');
+      assert.equal(result.steps[0]?.status, 'ok');
       await assert.rejects(() => fs.access(marker));
     });
   });
