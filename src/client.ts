@@ -380,7 +380,9 @@ export class OpenAIClient {
   sanitizeRequest(body: any) {
     delete body.store;
     delete body.reasoning_effort;
-    delete body.stream_options;
+    // Keep stream_options for streaming calls (used for include_usage on SSE),
+    // but strip it from non-stream requests for compatibility.
+    if (!body.stream) delete body.stream_options;
 
     if (Array.isArray(body.messages)) {
       for (const m of body.messages) {
@@ -473,6 +475,16 @@ export class OpenAIClient {
       stream: opts.stream ?? false,
       ...opts.extra
     };
+
+    // Ask streaming servers to include usage in the terminal SSE chunk.
+    // llama.cpp emits this as a usage-only chunk (choices=[]), which we parse below.
+    if (body.stream === true) {
+      const so = (body.stream_options && typeof body.stream_options === 'object') ? body.stream_options : {};
+      if ((so as any).include_usage === undefined) {
+        body.stream_options = { ...so, include_usage: true };
+      }
+    }
+
     for (const k of Object.keys(body)) {
       if (body[k] === undefined) delete body[k];
     }
@@ -921,9 +933,23 @@ ${text.slice(0, 2000)}`,
               continue;
             }
 
+            // Capture usage even when this is a usage-only terminal chunk
+            // (e.g., llama.cpp with stream_options.include_usage=true has choices=[]).
+            if (chunk.usage) {
+              agg.usage = chunk.usage;
+            }
+
             const c = chunk.choices?.[0];
             const d = c?.delta;
-            if (!d) continue;
+
+            // Some chunks have no delta (usage-only or finish-only chunks).
+            // Keep finish_reason if present, then continue.
+            if (!d) {
+              if (c?.finish_reason) {
+                agg.choices[0].finish_reason = c.finish_reason;
+              }
+              continue;
+            }
 
             if (!sawDelta) {
               sawDelta = true;
@@ -959,11 +985,6 @@ ${text.slice(0, 2000)}`,
 
             if (c.finish_reason) {
               agg.choices[0].finish_reason = c.finish_reason;
-            }
-
-            // Capture usage if server provides it
-            if (chunk.usage) {
-              agg.usage = chunk.usage;
             }
           }
         }
