@@ -5,6 +5,8 @@ import { splitDiscord, safeContent } from './discord-routing.js';
 import { formatToolCallSummary } from '../progress/tool-summary.js';
 import { TurnProgressController } from '../progress/turn-progress.js';
 import { ToolTailBuffer } from '../progress/tool-tail.js';
+import { ProgressMessageRenderer } from '../progress/progress-message-renderer.js';
+import { renderDiscordMarkdown } from '../progress/serialize-discord.js';
 
 export class DiscordStreamingMessage {
   private buffer = '';
@@ -34,6 +36,12 @@ export class DiscordStreamingMessage {
       toolCallSummary: (c) => formatToolCallSummary({ name: c.name, args: c.args as any }),
     },
   );
+
+  private renderer = new ProgressMessageRenderer({
+    maxToolLines: 6,
+    maxTailLines: 4,
+    maxAssistantChars: 1400,
+  });
 
   constructor(
     private readonly placeholder: any | null,
@@ -115,33 +123,18 @@ export class DiscordStreamingMessage {
   }
 
   private renderProgressText(): string {
-    const parts: string[] = [];
+    const tail = this.activeToolId ? this.tails.get(this.activeToolId) : null;
+    const assistant = this.buffer.trim() ? safeContent(this.buffer) : '';
 
-    if (this.banner) parts.push(this.banner);
-    else parts.push(this.statusLine || '⏳ Thinking...');
+    const doc = this.renderer.render({
+      banner: this.banner,
+      statusLine: this.statusLine,
+      toolLines: this.toolLines,
+      toolTail: tail ? { name: tail.name, stream: tail.stream, lines: tail.lines } : null,
+      assistantMarkdown: assistant,
+    });
 
-    if (this.toolLines.length) {
-      parts.push('');
-      parts.push(this.toolLines.slice(-6).join('\n'));
-    }
-
-    if (this.activeToolId) {
-      const tail = this.tails.get(this.activeToolId);
-      if (tail?.lines?.length) {
-        const label = tail.stream === 'stderr' ? 'stderr' : 'stdout';
-        parts.push('');
-        parts.push('```' + label + '\n' + tail.lines.join('\n') + '\n```');
-      }
-    }
-
-    if (this.buffer.trim()) {
-      const snippet = this.buffer.length > 1200 ? this.buffer.slice(-1200) : this.buffer;
-      parts.push('');
-      parts.push(safeContent(snippet));
-    }
-
-    const out = parts.join('\n');
-    return out.length > 1900 ? out.slice(0, 1900) + '…' : out;
+    return renderDiscordMarkdown(doc, { maxLen: 1900 });
   }
 
   private async flush(): Promise<void> {

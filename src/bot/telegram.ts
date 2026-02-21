@@ -8,6 +8,8 @@ import type { IdlehandsConfig, BotTelegramConfig, ToolCallEvent, ToolResultEvent
 import type { AgentHooks } from '../agent.js';
 import { SessionManager, type ManagedSession } from './session-manager.js';
 import { markdownToTelegramHtml, splitMessage, escapeHtml, formatToolCallSummary } from './format.js';
+import { ProgressMessageRenderer } from '../progress/progress-message-renderer.js';
+import { renderTelegramHtml } from '../progress/serialize-telegram.js';
 import {
   handleStart, handleHelp, handleNew, handleCancel,
   handleStatus, handleWatchdog, handleDir, handleModel, handleCompact,
@@ -155,9 +157,15 @@ class StreamingMessage {
   private backoffMs = 0;
 
   private statusLine = '⏳ Thinking...';
+  private bannerText: string | null = null;
   private progress: TurnProgressController;
   private tails = new ToolTailBuffer({ maxChars: 4096, maxLines: 4 });
   private activeToolId: string | null = null;
+  private renderer = new ProgressMessageRenderer({
+    maxToolLines: 6,
+    maxTailLines: 4,
+    maxAssistantChars: 2400,
+  });
 
   constructor(
     private bot: Bot,
@@ -249,6 +257,10 @@ class StreamingMessage {
     this.progress.hooks.onTurnEnd?.(stats);
   }
 
+  setBanner(text: string | null): void {
+    this.bannerText = text?.trim() ? text.trim() : null;
+  }
+
   private startEditLoop(): void {
     this.editTimer = setInterval(() => this.flush(), this.editIntervalMs);
   }
@@ -280,25 +292,17 @@ class StreamingMessage {
   }
 
   private render(): string {
-    let out = `<i>${escapeHtml(this.statusLine)}</i>`;
+    const tail = this.activeToolId ? this.tails.get(this.activeToolId) : null;
 
-    if (this.toolLines.length) {
-      out += `\n\n<pre>${escapeHtml(this.toolLines.join('\n'))}</pre>`;
-    }
+    const doc = this.renderer.render({
+      banner: this.bannerText,
+      statusLine: this.statusLine,
+      toolLines: this.toolLines,
+      toolTail: tail ? { name: tail.name, stream: tail.stream, lines: tail.lines } : null,
+      assistantMarkdown: this.buffer,
+    });
 
-    if (this.activeToolId) {
-      const tail = this.tails.get(this.activeToolId);
-      if (tail?.lines?.length) {
-        const label = tail.stream === 'stderr' ? 'stderr' : 'stdout';
-        out += `\n\n<b>↳ ${escapeHtml(label)} tail</b>\n<pre>${escapeHtml(tail.lines.join('\n'))}</pre>`;
-      }
-    }
-
-    if (this.buffer) {
-      out += `\n\n${markdownToTelegramHtml(this.buffer)}`;
-    }
-
-    return out.slice(0, 4096);
+    return renderTelegramHtml(doc, { maxLen: 4096 });
   }
 
   /** Finalize: stop the edit loop and send the final response. */
@@ -1080,14 +1084,18 @@ async function processMessage(
       if (current.watchdogCompactAttempts < maxWatchdogCompacts) {
         current.watchdogCompactAttempts++;
         watchdogCompactPending = true;
+        const compactBanner = `🔄 Context too large — compacting and retrying (attempt ${current.watchdogCompactAttempts}/${maxWatchdogCompacts})...`;
+        streaming.setBanner(compactBanner);
         console.error(`[bot:telegram] ${managed.chatId} watchdog timeout on turn ${turnId} — compacting and retrying (attempt ${current.watchdogCompactAttempts}/${maxWatchdogCompacts})`);
         try { current.activeAbortController?.abort(); } catch {}
         current.session.compactHistory({ force: true }).then((result) => {
           console.error(`[bot:telegram] ${managed.chatId} watchdog compaction: freed ${result.freedTokens} tokens, dropped ${result.droppedMessages} messages`);
           current.lastProgressAt = Date.now();
+          streaming.setBanner(null);
           watchdogCompactPending = false;
         }).catch((e: any) => {
           console.error(`[bot:telegram] ${managed.chatId} watchdog compaction failed: ${e?.message ?? e}`);
+          streaming.setBanner(null);
           watchdogCompactPending = false;
         });
       } else {

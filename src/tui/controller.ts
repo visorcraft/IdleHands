@@ -18,6 +18,8 @@ import { TurnProgressController } from '../progress/turn-progress.js';
 import { chainAgentHooks } from '../progress/agent-hooks.js';
 import { formatToolCallSummary } from '../progress/tool-summary.js';
 import { ToolTailBuffer } from '../progress/tool-tail.js';
+import { ProgressMessageRenderer } from '../progress/progress-message-renderer.js';
+import { renderTuiLines } from '../progress/serialize-tui.js';
 
 const THEME_OPTIONS = ['default', 'dark', 'light', 'minimal', 'hacker'] as const;
 const APPROVAL_OPTIONS = ['plan', 'default', 'auto-edit', 'yolo'] as const;
@@ -516,19 +518,41 @@ export class TuiController {
       }
     }, 5_000);
 
+    const progressRenderer = new ProgressMessageRenderer({
+      maxToolLines: 6,
+      maxTailLines: 4,
+      maxAssistantChars: 800,
+    });
+
+    const tails = new ToolTailBuffer({ maxChars: 4096, maxLines: 4 });
+    let activeToolId: string | null = null;
+    let streamedSoFar = '';
+
+    const flushStatus = (snap: ReturnType<TurnProgressController['snapshot']>) => {
+      const tail = activeToolId ? tails.get(activeToolId) : null;
+      const doc = progressRenderer.render({
+        statusLine: snap.statusLine,
+        toolLines: snap.toolLines,
+        toolTail: tail ? { name: tail.name, stream: tail.stream, lines: tail.lines } : null,
+        assistantMarkdown: streamedSoFar,
+      });
+
+      const lines = renderTuiLines(doc, { maxLines: 8 });
+      const status = lines.find((l) => l.trim().length > 0) ?? '';
+      this.dispatch({ type: 'STATUS_SET', text: status });
+    };
+
     const progress = new TurnProgressController(
       (snap) => {
-        this.dispatch({ type: 'STATUS_SET', text: snap.statusLine });
+        flushStatus(snap);
       },
       {
         heartbeatMs: 1000,
         bucketMs: 5000,
-        maxToolLines: 0,
+        maxToolLines: 6,
         toolCallSummary: (c) => formatToolCallSummary({ name: c.name, args: c.args as any }),
       },
     );
-    const tails = new ToolTailBuffer({ maxChars: 4096, maxLines: 4 });
-    let activeToolId: string | null = null;
 
     progress.start();
 
@@ -548,6 +572,7 @@ export class TuiController {
           onToken: (t) => {
             this.lastProgressAt = Date.now();
             watchdogGraceUsed = 0;
+            streamedSoFar += t;
             this.dispatch({ type: 'AGENT_STREAM_TOKEN', id, token: t });
           },
           onToolCall: (c) => {
@@ -565,9 +590,10 @@ export class TuiController {
           },
           onToolStream: (ev) => {
             if (!activeToolId || ev.id !== activeToolId) return;
-            const snap = tails.push(ev);
-            const last = snap?.lines?.[snap.lines.length - 1];
+            const tailSnap = tails.push(ev);
+            const last = tailSnap?.lines?.[tailSnap.lines.length - 1];
             if (last) this.dispatch({ type: 'TOOL_TAIL', id: ev.id, tail: last });
+            flushStatus(progress.snapshot('manual'));
           },
           onToolResult: (r) => {
             this.lastProgressAt = Date.now();
