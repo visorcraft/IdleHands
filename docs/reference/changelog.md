@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.1.9 (2026-02-21)
+
+### Runtime reliability + discovery
+
+- `idlehands select` reuse plans now include explicit health probe steps.
+- `idlehands select --force` and `idlehands select --restart` force restart planning.
+- Reuse probe failures now auto-fallback to forced restart.
+- Backend `verify_cmd` is run whenever a backend is selected.
+- SSH plan execution now uses `BatchMode`, explicit connect timeout, and remote `bash -lc`.
+
+### Health command
+
+- Added **Loaded (discovered)** output section in `idlehands health`.
+- Discovery probes `/v1/models` with `/health` fallback and classifies `ready/loading/down/unknown`.
+- Added `--scan-ports` for custom discovery ports:
+  - range (`8000-8100`)
+  - list (`8080,8081,9000`)
+  - single port (`8080`)
+
+### Client fix
+
+- Streaming usage counters now include usage-only SSE chunks (`choices=[]`), improving status/usage accuracy.
+
 ## 1.1.8 (2026-02-21)
 
 ### Progress rendering

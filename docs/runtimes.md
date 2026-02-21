@@ -91,6 +91,7 @@ Each entry matches `RuntimeBackend`.
 | `host_filters` | `"any" \| string[]` | yes | Restrict to specific host IDs |
 | `apply_cmd` | string \| null | no | Optional backend switch command |
 | `verify_cmd` | string \| null | no | Optional backend verification command |
+| `verify_always` | boolean | no | If true, `verify_cmd` runs even when backend ID did not change |
 | `rollback_cmd` | string \| null | no | Optional rollback command |
 | `env` | `Record<string,string>` | no | Env vars to inject |
 | `args` | string[] | no | Extra launch args |

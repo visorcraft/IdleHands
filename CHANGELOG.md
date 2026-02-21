@@ -2,6 +2,30 @@
 
 All notable changes to Idle Hands are documented in this file.
 
+## [1.1.9] - 2026-02-21
+
+### Added
+
+- Runtime health discovery output:
+  - `idlehands health` now shows a **Loaded (discovered)** section per host.
+  - Probes `/v1/models` with `/health` fallback.
+  - Classifies discovered endpoints as `ready`, `loading` (503), `down`, or `unknown`.
+  - Supports custom port selection with `--scan-ports` (`range`, `list`, or single port).
+
+### Changed
+
+- Runtime selection reliability:
+  - reuse plans now include explicit probe step(s) instead of empty execution.
+  - `idlehands select --force` and `idlehands select --restart` force restart planning.
+  - failed reuse probe auto-falls back to forced restart.
+  - backend `verify_cmd` now runs whenever a backend is selected.
+- SSH runtime execution now uses `BatchMode`, `ConnectTimeout`, and remote `bash -lc` for deterministic behavior.
+- `select` step rendering now includes trimmed failure details for faster diagnosis.
+
+### Fixed
+
+- Streaming usage telemetry now captures usage-only SSE chunks (`choices=[]`) so status/usage counters remain accurate.
+
 ## [1.1.8] - 2026-02-21
 
 ### Added

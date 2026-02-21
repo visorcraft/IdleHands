@@ -83,7 +83,8 @@ Planner can return `reuse: true` when active runtime already matches:
 - same host set
 - active state currently healthy
 
-When reuse is true, executor can skip full stop/start orchestration and perform a cheap re-probe.
+When reuse is true, planner now emits explicit `probe_health` step(s) so reuse is always validated against live runtime state.
+If reuse probe fails, select can immediately re-plan with forced restart.
 
 ---
 
@@ -135,6 +136,7 @@ idlehands hosts ...
 idlehands backends ...
 idlehands models ...
 idlehands select --model <id>
+idlehands select --model <id> --restart
 idlehands select status
 ```
 
@@ -144,6 +146,7 @@ Useful operational commands:
 - `idlehands hosts test <id>`
 - `idlehands hosts doctor`
 - `idlehands select --model <id> --dry-run --json`
+- `idlehands health --scan-ports 8000-8100`
 
 ## Session commands
 

@@ -54,9 +54,17 @@ When running a session, endpoint source priority is:
 
 ```bash
 idlehands health
+idlehands health --scan-ports 8000-8100
+idlehands health --scan-ports 8080,8081,9000
 ```
 
-This probes enabled resources and reports runtime readiness.
+`idlehands health` probes enabled hosts/models and now also reports a **Loaded (discovered)** section:
+
+- probes `http://127.0.0.1:<port>/v1/models` (with `/health` fallback)
+- classifies `ready` (200), `loading` (503), `down` (connection/timeout), or `unknown`
+- highlights model IDs discovered on ports that are not in configured model entries
+
+`--scan-ports` overrides the default discovery range (`8080..8090` plus configured model ports).
 
 ## Core management commands
 
@@ -71,6 +79,8 @@ idlehands backends
 idlehands models
 
 idlehands select --model <id>
+idlehands select --model <id> --restart
+idlehands select --model <id> --force
 idlehands select status
 idlehands select --model <id> --dry-run
 ```
@@ -82,6 +92,16 @@ idlehands select --model <id> --dry-run
 - Validate hosts/backends before adding many models.
 - For shared environments, keep runtime IDs stable and human-readable.
 
+## Select reuse + restart behavior
+
+`idlehands select` now does a live safety check before declaring runtime reuse:
+
+- reuse plans include explicit probe steps (never empty execution)
+- stale active state is auto-corrected: if reuse probe fails, select retries with forced restart
+- `--restart` explicitly forces stop/start behavior
+- `--force` also forces restart planning (in addition to lock/confirmation behavior)
+
+For backend-managed services, `verify_cmd` runs whenever a backend is selected, so daemon dependencies are validated even when backend ID did not change.
 
 ## Probe timeout behavior (size-aware defaults)
 

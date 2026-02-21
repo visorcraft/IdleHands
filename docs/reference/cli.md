@@ -9,8 +9,8 @@ This page mirrors `idlehands --help` and highlights the most-used entry points.
 | `setup` | Interactive configuration wizard |
 | `bot <telegram\|discord>` | Start bot frontend |
 | `hosts` / `backends` / `models` | Runtime orchestration management |
-| `select --model <id>` | Activate a runtime model |
-| `health` | Probe enabled hosts/models |
+| `select --model <id>` | Activate a runtime model (supports `--restart` / `--force`) |
+| `health` | Probe enabled hosts/models + discovered loaded runtimes (`--scan-ports`) |
 | `init` | Generate `.idlehands.md` project context |
 | `upgrade` | Self-update from configured install source |
 | `rollback` | Restore previous version |
@@ -77,6 +77,12 @@ idlehands --dir ~/projects/app --approval-mode default
 
 # CI-style JSON output
 idlehands --one-shot --output-format json --fail-on-error -p "lint and summarize"
+
+# force a runtime restart
+idlehands select --model llama70b --restart
+
+# discover loaded model servers on custom ports
+idlehands health --scan-ports 8000-8100
 ```
 
 ::: tip

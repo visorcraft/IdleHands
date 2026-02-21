@@ -208,6 +208,20 @@ Default tiers used by idlehands select:
 Per-model override remains available in runtimes.json under models.launch.
 Explicit per-model values always take precedence.
 
+## Runtime reliability updates (v1.1.9+)
+
+- `idlehands select` now always validates reuse with live probe checks (no more silent "success" from stale active state).
+- `idlehands select --force` and `idlehands select --restart` force restart planning instead of reuse.
+- If reuse probes fail, select automatically retries with a forced restart.
+- SSH runtime execution now uses `BatchMode`, connection timeout, and `bash -lc` for more predictable remote behavior.
+- `idlehands health` now includes a **Loaded (discovered)** section that probes `/v1/models` and `/health` on discovered ports.
+- Health discovery supports custom ranges via `--scan-ports`:
+
+```bash
+idlehands health --scan-ports 8000-8100
+idlehands health --scan-ports 8080,8081,9000
+```
+
 ## Documentation map
 
 - [Getting Started](https://visorcraft.github.io/IdleHands/guide/getting-started)
