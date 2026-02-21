@@ -15,125 +15,40 @@ import { LensStore } from './lens.js';
 import { SYS_CONTEXT_SCHEMA, collectSnapshot } from './sys/context.js';
 import { MCPManager, type McpServerStatus, type McpToolStatus } from './mcp.js';
 import { LspManager, detectInstalledLspServers } from './lsp.js';
+import {
+  generateMinimalDiff,
+  toolResultSummary,
+  execCommandFromSig,
+  formatDurationMs,
+  looksLikePlanningNarration,
+  capTextByApproxTokens,
+  isLikelyBinaryBuffer,
+  sanitizePathsInMessage,
+} from './agent/formatting.js';
+import { parseToolCallsFromContent, getMissingRequiredParams, stripMarkdownFences } from './agent/tool-calls.js';
+export { parseToolCallsFromContent };
+import {
+  type ReviewArtifact,
+  reviewArtifactKeys,
+  looksLikeCodeReviewRequest,
+  looksLikeReviewRetrievalRequest,
+  retrievalAllowsStaleArtifact,
+  parseReviewArtifactStalePolicy,
+  parseReviewArtifact,
+  reviewArtifactStaleReason,
+  gitHead,
+  normalizeModelsResponse,
+} from './agent/review-artifact.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { stateDir, BASH_PATH as BASH, timestampedId } from './utils.js';
+import { stateDir, timestampedId } from './utils.js';
 
 function makeAbortController() {
   // Node 24: AbortController is global.
   return new AbortController();
 }
 
-/** Generate a minimal unified diff for Phase 7 rich display (max 20 lines, truncated). */
-function generateMinimalDiff(before: string, after: string, filePath: string): string {
-  const bLines = before.split('\n');
-  const aLines = after.split('\n');
-  const out: string[] = [];
-  out.push(`--- a/${filePath}`);
-  out.push(`+++ b/${filePath}`);
-
-  // Simple line-by-line diff (find changed region)
-  let diffStart = 0;
-  while (diffStart < bLines.length && diffStart < aLines.length && bLines[diffStart] === aLines[diffStart]) diffStart++;
-  let bEnd = bLines.length - 1;
-  let aEnd = aLines.length - 1;
-  while (bEnd > diffStart && aEnd > diffStart && bLines[bEnd] === aLines[aEnd]) { bEnd--; aEnd--; }
-
-  const contextBefore = Math.max(0, diffStart - 2);
-  const contextAfter = Math.min(Math.max(bLines.length, aLines.length) - 1, Math.max(bEnd, aEnd) + 2);
-  const bEndContext = Math.min(bLines.length - 1, contextAfter);
-  const aEndContext = Math.min(aLines.length - 1, contextAfter);
-
-  out.push(`@@ -${contextBefore + 1},${bEndContext - contextBefore + 1} +${contextBefore + 1},${aEndContext - contextBefore + 1} @@`);
-
-  let lineCount = 0;
-  const MAX_LINES = 20;
-
-  // Context before change
-  for (let i = contextBefore; i < diffStart && lineCount < MAX_LINES; i++) {
-    out.push(` ${bLines[i]}`);
-    lineCount++;
-  }
-  // Removed lines
-  for (let i = diffStart; i <= bEnd && i < bLines.length && lineCount < MAX_LINES; i++) {
-    out.push(`-${bLines[i]}`);
-    lineCount++;
-  }
-  // Added lines
-  for (let i = diffStart; i <= aEnd && i < aLines.length && lineCount < MAX_LINES; i++) {
-    out.push(`+${aLines[i]}`);
-    lineCount++;
-  }
-  // Context after change
-  const afterStart = Math.max(bEnd, aEnd) + 1;
-  for (let i = afterStart; i <= contextAfter && i < Math.max(bLines.length, aLines.length) && lineCount < MAX_LINES; i++) {
-    const line = i < aLines.length ? aLines[i] : bLines[i] ?? '';
-    out.push(` ${line}`);
-    lineCount++;
-  }
-
-  const totalChanges = (bEnd - diffStart + 1) + (aEnd - diffStart + 1);
-  if (lineCount >= MAX_LINES && totalChanges > MAX_LINES) {
-    out.push(`[+${totalChanges - MAX_LINES} more lines]`);
-  }
-
-  return out.join('\n');
-}
-
-/** Generate a one-line summary of a tool result for hooks/display. */
-function toolResultSummary(name: string, args: Record<string, unknown>, content: string, success: boolean): string {
-  if (!success) return content.slice(0, 120);
-  switch (name) {
-    case 'read_file':
-    case 'read_files': {
-      const lines = content.split('\n').length;
-      return `${lines} lines read`;
-    }
-    case 'write_file':
-      return `wrote ${(args.path as string) || 'file'}`;
-    case 'edit_file':
-      return content.startsWith('ERROR') ? content.slice(0, 120) : `applied edit`;
-    case 'insert_file':
-      return `inserted at line ${args.line ?? '?'}`;
-    case 'exec': {
-      try {
-        const r = JSON.parse(content);
-        const lines = (r.out || '').split('\n').filter(Boolean).length;
-        return `rc=${r.rc}, ${lines} lines`;
-      } catch { return content.slice(0, 80); }
-    }
-    case 'list_dir': {
-      const entries = content.split('\n').filter(Boolean).length;
-      return `${entries} entries`;
-    }
-    case 'search_files': {
-      const matches = (content.match(/^\d+:/gm) || []).length;
-      return `${matches} matches`;
-    }
-    case 'spawn_task': {
-      const line = content.split(/\r?\n/).find((l) => l.includes('status='));
-      return line ? line.trim() : 'sub-agent task finished';
-    }
-    case 'vault_search':
-      return `vault results`;
-    default:
-      return content.slice(0, 80);
-  }
-}
-
 const CACHED_EXEC_OBSERVATION_HINT = '[idlehands hint] Reused cached output for repeated read-only exec call (unchanged observation).';
-
-function execCommandFromSig(sig: string): string {
-  if (!sig.startsWith('exec:')) return '';
-  const raw = sig.slice('exec:'.length);
-  try {
-    const parsed = JSON.parse(raw);
-    return typeof parsed?.command === 'string' ? parsed.command : '';
-  } catch {
-    return '';
-  }
-}
 
 function looksLikeReadOnlyExecCommand(command: string): boolean {
   const cmd = String(command || '').trim().toLowerCase();
@@ -258,69 +173,6 @@ const APPROVAL_MODE_RANK: Record<ApprovalMode, number> = { plan: 0, reject: 1, d
  */
 function capApprovalMode(requested: ApprovalMode, parentMode: ApprovalMode): ApprovalMode {
   return APPROVAL_MODE_RANK[requested] <= APPROVAL_MODE_RANK[parentMode] ? requested : parentMode;
-}
-
-function formatDurationMs(ms: number): string {
-  if (!Number.isFinite(ms) || ms <= 0) return '0.0s';
-  return `${(ms / 1000).toFixed(1)}s`;
-}
-
-function looksLikePlanningNarration(text: string, finishReason?: string): boolean {
-  const s = String(text ?? '').trim().toLowerCase();
-  if (!s) return false;
-
-  // Incomplete streamed answer: likely still needs another turn.
-  if (finishReason === 'length') return true;
-
-  // Strong completion cues: treat as final answer.
-  if (/(^|\n)\s*(done|completed|finished|final answer|summary:)\b/.test(s)) return false;
-
-  // Typical "thinking out loud"/plan chatter that should continue with tools.
-  return /\b(let me|i(?:'|’)ll|i will|i'm going to|i am going to|next i(?:'|’)ll|first i(?:'|’)ll|i need to|i should|checking|reviewing|exploring|starting by)\b/.test(s);
-}
-
-function approxTokenCharCap(maxTokens: number): number {
-  const safe = Math.max(64, Math.floor(maxTokens));
-  return safe * 4;
-}
-
-function capTextByApproxTokens(text: string, maxTokens: number): { text: string; truncated: boolean } {
-  const raw = String(text ?? '');
-  const maxChars = approxTokenCharCap(maxTokens);
-  if (raw.length <= maxChars) return { text: raw, truncated: false };
-  const clipped = raw.slice(0, maxChars);
-  return {
-    text: `${clipped}\n\n[sub-agent] result truncated to ~${maxTokens} tokens (${raw.length} chars original)`,
-    truncated: true,
-  };
-}
-
-function isLikelyBinaryBuffer(buf: Buffer): boolean {
-  const n = Math.min(buf.length, 512);
-  for (let i = 0; i < n; i++) {
-    if (buf[i] === 0) return true;
-  }
-  return false;
-}
-
-/**
- * Strip absolute paths from a message to prevent cross-project leaks in vault.
- * Paths within cwd are replaced with relative equivalents; other absolute paths
- * are replaced with just the basename.
- */
-function sanitizePathsInMessage(message: string, cwd: string): string {
-  const normCwd = cwd.replace(/\/+$/, '');
-  // Match absolute Unix paths (at least 2 segments)
-  return message.replace(/\/(?:home|tmp|var|usr|opt|etc|root)\/[^\s"',;)\]}>]+/g, (match) => {
-    const normMatch = match.replace(/\/+$/, '');
-    if (normMatch.startsWith(normCwd + '/')) {
-      // Within cwd — make relative
-      return normMatch.slice(normCwd.length + 1);
-    }
-    // Outside cwd — strip to basename
-    const base = path.basename(normMatch);
-    return base || match;
-  });
 }
 
 async function buildSubAgentContextBlock(cwd: string, rawFiles: unknown): Promise<{ block: string; included: string[]; skipped: string[] }> {
@@ -701,218 +553,6 @@ function buildToolsSchema(opts?: {
   return schemas;
 }
 
-/** @internal Exported for testing. Parses tool calls from model content when tool_calls array is empty. */
-export function parseToolCallsFromContent(content: string): ToolCall[] | null {
-  // Fallback parser: if model printed JSON tool_calls in content.
-  const trimmed = content.trim();
-
-  const tryParse = (s: string) => {
-    try {
-      return JSON.parse(s);
-    } catch {
-      return null;
-    }
-  };
-
-  // Case 1: whole content is JSON
-  const whole = tryParse(trimmed);
-  if (whole?.tool_calls && Array.isArray(whole.tool_calls)) return whole.tool_calls;
-  if (whole?.name && whole?.arguments) {
-    return [
-      {
-        id: 'call_0',
-        type: 'function',
-        function: { name: String(whole.name), arguments: JSON.stringify(whole.arguments) }
-      }
-    ];
-  }
-
-  // Case 2: raw JSON array of tool calls (model writes [{name, arguments}, ...])
-  const arrStart = trimmed.indexOf('[');
-  const arrEnd = trimmed.lastIndexOf(']');
-  if (arrStart !== -1 && arrEnd !== -1 && arrEnd > arrStart) {
-    const arrSub = tryParse(trimmed.slice(arrStart, arrEnd + 1));
-    if (Array.isArray(arrSub) && arrSub.length > 0 && arrSub[0]?.name) {
-      return arrSub.map((item: any, i: number) => ({
-        id: `call_${i}`,
-        type: 'function' as const,
-        function: {
-          name: String(item.name),
-          arguments: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments ?? {})
-        }
-      }));
-    }
-  }
-
-  // Case 3: find a JSON object substring (handles tool_calls wrapper OR single tool-call)
-  const start = trimmed.indexOf('{');
-  const end = trimmed.lastIndexOf('}');
-  if (start !== -1 && end !== -1 && end > start) {
-    const sub = tryParse(trimmed.slice(start, end + 1));
-    if (sub?.tool_calls && Array.isArray(sub.tool_calls)) return sub.tool_calls;
-    if (sub?.name && sub?.arguments) {
-      return [
-        {
-          id: 'call_0',
-          type: 'function',
-          function: { name: String(sub.name), arguments: typeof sub.arguments === 'string' ? sub.arguments : JSON.stringify(sub.arguments) }
-        }
-      ];
-    }
-  }
-
-  // Case 4: XML tool calls — used by Qwen, Hermes, and other models whose chat
-  // templates emit <tool_call><function=name><parameter=key>value</parameter></function></tool_call>.
-  // When llama-server's XML→JSON conversion fails (common with large write_file content),
-  // the raw XML leaks into the content field. This recovers it.
-  const xmlCalls = parseXmlToolCalls(trimmed);
-  if (xmlCalls?.length) return xmlCalls;
-
-
-  // Case 5: Lightweight function-tag calls (seen in some Qwen content-mode outputs):
-  // <function=tool_name>
-  // {...json args...}
-  // </function>
-  // or single-line <function=tool_name>{...}</function>
-  const fnTagCalls = parseFunctionTagToolCalls(trimmed);
-  if (fnTagCalls?.length) return fnTagCalls;
-
-  return null;
-}
-
-/**
- * Parse XML-style tool calls from content.
- * Format: <tool_call><function=name><parameter=key>value</parameter>...</function></tool_call>
- * Handles multiple tool call blocks and arbitrary parameter names/values.
- */
-function parseXmlToolCalls(content: string): ToolCall[] | null {
-  // Quick bailout: no point parsing if there's no <tool_call> marker
-  if (!content.includes('<tool_call>')) return null;
-
-  const calls: ToolCall[] = [];
-
-  // Match each <tool_call>...</tool_call> block.
-  // Using a manual scan instead of a single greedy regex to handle nested angle brackets
-  // in parameter values (e.g. TypeScript generics, JSX, comparison operators).
-  let searchFrom = 0;
-  while (searchFrom < content.length) {
-    const blockStart = content.indexOf('<tool_call>', searchFrom);
-    if (blockStart === -1) break;
-
-    const blockEnd = content.indexOf('</tool_call>', blockStart);
-    if (blockEnd === -1) break; // Truncated — can't recover partial tool calls
-
-    const block = content.slice(blockStart + '<tool_call>'.length, blockEnd);
-    searchFrom = blockEnd + '</tool_call>'.length;
-
-    // Extract function name: <function=name>...</function>
-    const fnMatch = block.match(/<function=(\w[\w.-]*)>/);
-    if (!fnMatch) continue;
-
-    const fnName = fnMatch[1];
-    const fnStart = block.indexOf(fnMatch[0]) + fnMatch[0].length;
-    const fnEnd = block.lastIndexOf('</function>');
-    const fnBody = fnEnd !== -1 ? block.slice(fnStart, fnEnd) : block.slice(fnStart);
-
-    // Extract parameters: <parameter=key>value</parameter>
-    // Uses bracket-matching (depth counting) so that parameter values containing
-    // literal <parameter=...>...</parameter> (e.g. writing XML files) are handled
-    // correctly instead of being truncated at the inner close tag.
-    const args: Record<string, string> = {};
-    const openRe = /<parameter=(\w[\w.-]*)>/g;
-    const closeTag = '</parameter>';
-
-    let paramMatch: RegExpExecArray | null;
-    while ((paramMatch = openRe.exec(fnBody)) !== null) {
-      const paramName = paramMatch[1];
-      const valueStart = paramMatch.index + paramMatch[0].length;
-
-      // Bracket-match: find the </parameter> that balances this open tag.
-      // Depth starts at 1; nested <parameter=...> increments, </parameter> decrements.
-      let depth = 1;
-      let scanPos = valueStart;
-      let closeIdx = -1;
-
-      while (scanPos < fnBody.length && depth > 0) {
-        const nextOpen = fnBody.indexOf('<parameter=', scanPos);
-        const nextClose = fnBody.indexOf(closeTag, scanPos);
-
-        if (nextClose === -1) break; // No more close tags — truncated
-
-        if (nextOpen !== -1 && nextOpen < nextClose) {
-          // An open tag comes before the next close — increase depth
-          depth++;
-          scanPos = nextOpen + 1; // advance past '<' to avoid re-matching
-        } else {
-          // Close tag comes first — decrease depth
-          depth--;
-          if (depth === 0) {
-            closeIdx = nextClose;
-          }
-          scanPos = nextClose + closeTag.length;
-        }
-      }
-
-      if (closeIdx === -1) {
-        // No matching close tag — take rest of body as value (truncated output)
-        args[paramName] = fnBody.slice(valueStart).trim();
-        break;
-      }
-
-      // Trim exactly the template-added leading/trailing newline, preserve internal whitespace
-      let value = fnBody.slice(valueStart, closeIdx);
-      if (value.startsWith('\n')) value = value.slice(1);
-      if (value.endsWith('\n')) value = value.slice(0, -1);
-      args[paramName] = value;
-
-      // Advance the regex past the close tag so the next openRe.exec starts after it
-      openRe.lastIndex = closeIdx + closeTag.length;
-    }
-
-    if (fnName && Object.keys(args).length > 0) {
-      calls.push({
-        id: `call_xml_${calls.length}`,
-        type: 'function',
-        function: {
-          name: fnName,
-          arguments: JSON.stringify(args)
-        }
-      });
-    }
-  }
-
-  return calls.length > 0 ? calls : null;
-}
-
-/** Check for missing required params by tool name — universal pre-dispatch validation */
-function getMissingRequiredParams(toolName: string, args: Record<string, unknown>): string[] {
-  const required: Record<string, string[]> = {
-    read_file: ['path'],
-    read_files: ['requests'],
-    write_file: ['path', 'content'],
-    edit_file: ['path', 'old_text', 'new_text'],
-    insert_file: ['path', 'line', 'text'],
-    list_dir: ['path'],
-    search_files: ['pattern', 'path'],
-    exec: ['command'],
-    spawn_task: ['task'],
-    sys_context: [],
-    vault_search: ['query'],
-    vault_note: ['key', 'value']
-  };
-  const req = required[toolName];
-  if (!req) return [];
-  return req.filter(p => args[p] === undefined || args[p] === null);
-}
-
-/** Strip markdown code fences (```json ... ```) from tool argument strings */
-function stripMarkdownFences(s: string): string {
-  const trimmed = s.trim();
-  // Match ```json\n...\n``` or ```\n...\n```
-  const m = /^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/.exec(trimmed);
-  return m ? m[1] : s;
-}
-
 function isReadOnlyTool(name: string) {
   return name === 'read_file' || name === 'read_files' || name === 'list_dir' || name === 'search_files' || name === 'vault_search' || name === 'sys_context';
 }
@@ -958,148 +598,6 @@ function userDisallowsDelegation(content: UserContent): boolean {
     /\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b[^\n.]{0,50}\b(?:do not|don't|dont|not allowed|forbidden|no)\b/.test(text);
 
   return negationNearDelegation;
-}
-
-type ReviewArtifact = {
-  id: string;
-  kind: 'code_review';
-  createdAt: string;
-  model: string;
-  projectId: string;
-  projectDir: string;
-  prompt: string;
-  content: string;
-  gitHead?: string;
-  gitDirty?: boolean;
-};
-
-function reviewArtifactKeys(projectDir: string): { latestKey: string; byIdPrefix: string; projectId: string } {
-  const { projectId } = projectIndexKeys(projectDir);
-  return {
-    projectId,
-    latestKey: `artifact:review:latest:${projectId}`,
-    byIdPrefix: `artifact:review:item:${projectId}:`,
-  };
-}
-
-function looksLikeCodeReviewRequest(text: string): boolean {
-  const t = text.toLowerCase();
-  if (!t.trim()) return false;
-  if (/^\s*\/review\b/.test(t)) return true;
-  if (/\b(?:code\s+review|security\s+review|review\s+the\s+(?:code|diff|changes|repo|repository|pr)|audit\s+the\s+code)\b/.test(t)) return true;
-  return /\breview\b/.test(t) && /\b(?:code|repo|repository|diff|changes|pull\s*request|pr)\b/.test(t);
-}
-
-function looksLikeReviewRetrievalRequest(text: string): boolean {
-  const t = text.toLowerCase();
-  if (!t.trim()) return false;
-
-  if (/^\s*\/review\s+(?:print|show|replay|latest|last|full)\b/.test(t)) return true;
-
-  if (!/\breview\b/.test(t)) return false;
-
-  if (/\bprint\s+stale\s+review\s+anyway\b/.test(t)) return true;
-  if (/\b(?:print|show|display|repeat|paste|send|output|give)\b[^\n.]{0,80}\breview\b[^\n.]{0,40}\b(?:again|back)\b/.test(t)) return true;
-  if (/\b(?:print|show|display|repeat|paste|send|output|give)\b[^\n.]{0,80}\b(?:full|entire|complete|whole)\b[^\n.]{0,80}\breview\b/.test(t)) return true;
-  if (/\b(?:full|entire|complete|whole)\b[^\n.]{0,30}\bcode\s+review\b/.test(t) && /\b(?:print|show|display|repeat|paste|send|output|give)\b/.test(t)) return true;
-  if (/\b(?:print|show|display|repeat|paste|send|output|give)\b[^\n.]{0,80}\b(?:last|latest|previous)\b[^\n.]{0,40}\breview\b/.test(t)) return true;
-  return false;
-}
-
-function retrievalAllowsStaleArtifact(text: string): boolean {
-  const t = text.toLowerCase();
-  if (!t.trim()) return false;
-  if (/\bprint\s+stale\s+review\s+anyway\b/.test(t)) return true;
-  if (/\b(?:force|override|ignore)\b[^\n.]{0,80}\b(?:stale|old|previous)\b[^\n.]{0,80}\breview\b/.test(t)) return true;
-  if (/\b(?:stale|old|previous)\b[^\n.]{0,80}\breview\b[^\n.]{0,80}\b(?:anyway|still|force|override|ignore)\b/.test(t)) return true;
-  return false;
-}
-
-type ReviewArtifactStalePolicy = 'warn' | 'block';
-
-function parseReviewArtifactStalePolicy(raw: unknown): ReviewArtifactStalePolicy {
-  const v = typeof raw === 'string' ? raw.toLowerCase().trim() : '';
-  if (v === 'block') return 'block';
-  return 'warn';
-}
-
-function parseReviewArtifact(raw: string): ReviewArtifact | null {
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
-    if (parsed.kind !== 'code_review') return null;
-    if (typeof parsed.id !== 'string' || !parsed.id) return null;
-    if (typeof parsed.createdAt !== 'string' || !parsed.createdAt) return null;
-    if (typeof parsed.model !== 'string') return null;
-    if (typeof parsed.projectId !== 'string' || !parsed.projectId) return null;
-    if (typeof parsed.projectDir !== 'string' || !parsed.projectDir) return null;
-    if (typeof parsed.prompt !== 'string') return null;
-    if (typeof parsed.content !== 'string') return null;
-    return parsed as ReviewArtifact;
-  } catch {
-    return null;
-  }
-}
-
-function gitHead(cwd: string): string | undefined {
-  const inside = spawnSync(BASH, ['-lc', 'git rev-parse --is-inside-work-tree'], {
-    cwd,
-    encoding: 'utf8',
-    timeout: 1000,
-  });
-  if (inside.status !== 0 || !String(inside.stdout || '').trim().startsWith('true')) return undefined;
-
-  const head = spawnSync(BASH, ['-lc', 'git rev-parse HEAD'], {
-    cwd,
-    encoding: 'utf8',
-    timeout: 1000,
-  });
-  if (head.status !== 0) return undefined;
-  const sha = String(head.stdout || '').trim();
-  return sha || undefined;
-}
-
-function shortSha(sha?: string): string {
-  if (!sha) return 'unknown';
-  return sha.slice(0, 8);
-}
-
-function reviewArtifactStaleReason(artifact: ReviewArtifact, cwd: string): string {
-  const currentHead = gitHead(cwd);
-  const currentDirty = isGitDirty(cwd);
-
-  if (artifact.gitHead && currentHead && artifact.gitHead !== currentHead) {
-    return `Stored review was generated at commit ${shortSha(artifact.gitHead)}; repository is now at ${shortSha(currentHead)}.`;
-  }
-  if (artifact.gitDirty === false && currentDirty) {
-    return 'Stored review was generated on a clean tree; working tree now has uncommitted changes.';
-  }
-  return '';
-}
-
-function normalizeModelsResponse(raw: any): { data: Array<{ id: string; [k: string]: any }> } {
-  if (Array.isArray(raw)) {
-    return {
-      data: raw
-        .map((m: any) => {
-          if (!m) return null;
-          if (typeof m === 'string') return { id: m };
-          if (typeof m.id === 'string' && m.id) return m;
-          return null;
-        })
-        .filter(Boolean) as Array<{ id: string; [k: string]: any }>
-    };
-  }
-
-  if (raw && Array.isArray(raw.data)) {
-    return {
-      data: raw.data
-        .map((m: any) => (m && typeof m.id === 'string' && m.id ? m : null))
-        .filter(Boolean) as Array<{ id: string; [k: string]: any }>
-    };
-  }
-
-  return { data: [] };
 }
 
 export type AgentRuntime = {
@@ -3859,34 +3357,4 @@ async function autoPickModel(client: OpenAIClient, cached?: { data: Array<{ id: 
   } finally {
     clearTimeout(timer);
   }
-}
-
-
-
-function parseFunctionTagToolCalls(content: string): ToolCall[] | null {
-  const m = content.match(/<function=([\w.-]+)>([\s\S]*?)<\/function>/i);
-  if (!m) return null;
-
-  const name = m[1];
-  const body = (m[2] ?? '').trim();
-
-  // If body contains JSON object, use it as arguments; else empty object.
-  let args = '{}';
-  const jsonStart = body.indexOf('{');
-  const jsonEnd = body.lastIndexOf('}');
-  if (jsonStart !== -1 && jsonEnd > jsonStart) {
-    const sub = body.slice(jsonStart, jsonEnd + 1);
-    try {
-      JSON.parse(sub);
-      args = sub;
-    } catch {
-      // keep {}
-    }
-  }
-
-  return [{
-    id: 'call_0',
-    type: 'function',
-    function: { name, arguments: args }
-  }];
 }

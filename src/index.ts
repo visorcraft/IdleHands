@@ -10,13 +10,12 @@ import fs from 'node:fs/promises';
 import { loadConfig, defaultConfigPath, applyRuntimeEndpoint } from './config.js';
 import { runSetup, guidedRuntimeOnboarding } from './cli/setup.js';
 import { projectDir } from './utils.js';
-import { splitTokens } from './cli/command-utils.js';
 import { createSession } from './agent.js';
 import { unifiedDiffFromBuffers } from './replay_cli.js';
 import { makeStyler, resolveColorMode, colorizeUnifiedDiff, warn as warnFmt, err as errFmt } from './term.js';
 import { resolveTheme } from './themes.js';
 import { createVimState, handleVimKeypress } from './vim.js';
-import { loadCustomCommands, expandArgs } from './commands.js';
+import { loadCustomCommands } from './commands.js';
 import { performUpgrade, performRollback, dailyUpdateCheck, detectInstallSource, type InstallSource } from './upgrade.js';
 import { setLockdown, setSafetyLogging, loadSafetyConfig } from './safety.js';
 import { loadGitStartupSummary } from './git.js';
@@ -35,7 +34,7 @@ import {
   lastSessionPath, namedSessionPath, projectSessionPath,
   loadPromptTemplates, loadHistory, appendHistoryLine, rotateHistoryIfNeeded,
 } from './cli/session-state.js';
-import { runDirectShellCommand } from './cli/shell.js';
+import { runReplPreTurn } from './cli/repl-dispatch.js';
 import {
   replayCaptureFile,
   formatStatusLine,
@@ -50,7 +49,7 @@ import { runAgentTurnWithSpinner } from './cli/agent-turn.js';
 import { printBotHelp, runBotSubcommand } from './cli/bot.js';
 import { runHostsSubcommand, runBackendsSubcommand, runModelsSubcommand, runSelectSubcommand, runHealthSubcommand } from './cli/runtime-cmds.js';
 import { runOneShot } from './cli/oneshot.js';
-import { registerAll, findCommand, allCommandNames } from './cli/command-registry.js';
+import { registerAll, allCommandNames } from './cli/command-registry.js';
 import { sessionCommands } from './cli/commands/session.js';
 import { runtimeCommands } from './cli/commands/runtime.js';
 import { modelCommands } from './cli/commands/model.js';
@@ -721,63 +720,16 @@ async function main() {
       }
     }
 
-    // Direct shell execution
-    const shouldRunShell = (ctx.shellMode && !line.startsWith('/')) || /^!{1,2}\s*\S/.test(line);
-    if (shouldRunShell) {
-      const injectOutput = !ctx.shellMode && line.startsWith('!!');
-      const command = ctx.shellMode ? line : line.slice(injectOutput ? 2 : 1).trim();
-      if (!command) { console.log('Usage: !<command> (or !!<command> to also inject output into context)'); continue; }
-      const timeoutSec = config.mode === 'sys' ? 60 : 30;
-      console.log(S.dim(`[shell] $ ${command}`));
-      const result = await runDirectShellCommand({
-        command, cwd: projectDir(config), timeoutSec,
-        onStart: (proc) => { ctx.activeShellProc = proc; },
-        onStop: () => { ctx.activeShellProc = null; },
-      });
-      if (result.timedOut) console.log(warnFmt(`[shell] killed after ${timeoutSec}s timeout`, S));
-      if (!result.timedOut && result.rc !== 0) console.log(warnFmt(`[shell] exited with rc=${result.rc}`, S));
-      if (injectOutput) {
-        const merged = `${result.out}${result.err}`.slice(-4000);
-        session.messages.push({ role: 'user', content: `[Shell output]\n$ ${command}\n${merged}` } as any);
-        console.log(S.dim('[shell] output injected into conversation context.'));
-      }
-      continue;
-    }
-
-    // Slash command dispatch via registry
-    const slashTokens = splitTokens(line);
-    const slashHead = (slashTokens[0] ?? '').toLowerCase();
-    const slashRest = slashTokens.slice(1);
-
-    const registeredCmd = findCommand(line);
-    if (registeredCmd) {
-      const cmdArgs = line.replace(/^\S+\s*/, '').trim();
-      try {
-        const handled = await registeredCmd.execute(ctx, cmdArgs, line);
-        S = ctx.S; // sync in case command changed styler (e.g. /theme)
-        if (handled) continue;
-      } catch (e: any) {
-        console.error(errFmt(`${registeredCmd.name}: ${e?.message ?? String(e)}`, S));
-        continue;
-      }
-    }
-
-    // Template expansion (fall through to agent turn)
-    if (line.startsWith('/') && Object.prototype.hasOwnProperty.call(promptTemplates, slashHead)) {
-      const template = promptTemplates[slashHead];
-      ctx.pendingTemplate = template;
-      console.log(S.dim(`[template] queued from ${slashHead}. Your next prompt will be prefixed.`));
-      continue;
-    }
-
-    // Custom command expansion (modifies line, falls through to agent turn)
-    if (line.startsWith('/') && ctx.customCommands.has(slashHead)) {
-      const cmd = ctx.customCommands.get(slashHead)!;
-      const expanded = expandArgs(cmd.template, slashRest).trim();
-      if (!expanded) { console.log(warnFmt(`[command] ${slashHead} expanded to empty prompt.`, S)); continue; }
-      line = expanded;
-      console.log(S.dim(`[command] ${slashHead} → prompt injected (${cmd.source})`));
-    }
+    const preTurn = await runReplPreTurn({
+      line,
+      ctx,
+      session: session as any,
+      config: config as any,
+      promptTemplates,
+    });
+    S = ctx.S;
+    line = preTurn.line;
+    if (preTurn.handled) continue;
 
     // ── Agent turn ──
     try {
