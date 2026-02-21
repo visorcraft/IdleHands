@@ -178,6 +178,19 @@ Recent tool updates reduce context bloat and make edits cheaper:
 
 ---
 
+## Shared progress rendering (v1.1.8+)
+
+All three frontends (TUI, Telegram, Discord) now use a shared progress message renderer:
+
+- **Platform-agnostic IR**: `ProgressMessageRenderer` produces an intermediate representation.
+- **Consistent UX**: same banner → status → tools → tail → assistant flow everywhere.
+- **Serializers**:
+  - Telegram: compact HTML with `<pre>` code blocks
+  - Discord: markdown with fenced code blocks
+  - TUI: plain text lines for status bar
+
+---
+
 ## Runtime probe defaults (size-aware)
 
 When a model does not explicitly set probe timeout and probe interval, Idle Hands derives defaults from estimated model size on the target host.

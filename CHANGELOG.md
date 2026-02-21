@@ -2,6 +2,22 @@
 
 All notable changes to Idle Hands are documented in this file.
 
+## [1.1.8] - 2026-02-21
+
+### Added
+
+- Shared progress message rendering system:
+  - `ProgressMessageRenderer` produces a platform-agnostic IR for progress updates.
+  - `renderTelegramHtml()` serializes IR to Telegram HTML.
+  - `renderDiscordMarkdown()` serializes IR to Discord markdown.
+  - `renderTuiLines()` serializes IR to TUI plain text lines.
+- All three frontends (TUI, Telegram, Discord) now share the same rendering logic.
+
+### Changed
+
+- Simplified progress renderer to use banner → status → tools → tail → assistant flow.
+- Removed redundant renderer configuration options.
+
 ## [Unreleased]
 
 ### Added

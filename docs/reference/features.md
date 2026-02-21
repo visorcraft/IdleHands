@@ -51,6 +51,17 @@ Recent defaults focus on reducing context blowups in long coding sessions:
   - `edit_range` for line-range replacement in one file (including clean deletions with empty replacement).
 - Live history stores compact tool-output digests while full raw output is archived in Vault (when enabled).
 
+## Shared progress rendering
+
+Idle Hands uses a platform-agnostic progress message renderer across all UIs:
+
+- **IR-based rendering**: `ProgressMessageRenderer` produces an intermediate representation (IR) that serializers convert to platform-specific formats.
+- **Telegram HTML**: `renderTelegramHtml()` — compact HTML with tool summaries and live tails.
+- **Discord Markdown**: `renderDiscordMarkdown()` — Discord-compatible markdown with code blocks.
+- **TUI text**: `renderTuiLines()` — plain text lines for terminal status display.
+
+All three frontends (TUI, Telegram, Discord) share the same rendering logic, ensuring consistent progress updates across platforms.
+
 ## Capture + replay
 
 ::: code-group

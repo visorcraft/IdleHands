@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.1.8 (2026-02-21)
+
+### Progress rendering
+
+- Added shared `ProgressMessageRenderer` that produces a platform-agnostic intermediate representation (IR).
+- Added three IR serializers:
+  - `renderTelegramHtml()` for Telegram HTML output
+  - `renderDiscordMarkdown()` for Discord markdown output
+  - `renderTuiLines()` for TUI plain text display
+- All three frontends (TUI, Telegram, Discord) now use the same rendering logic for consistent progress updates.
+
+### Internal
+
+- Simplified progress message rendering with banner → status → tools → tail → assistant flow.
+- Removed redundant renderer options (`toolLinesAsCode`, `showStatusAlways`, `showStatusWhenEmpty`).
+
 ## Unreleased
 
 ### New tools
