@@ -167,6 +167,19 @@ describe('OpenAIClient request sanitization', () => {
     assert.equal(clean.tools[0].function.strict, undefined);
     assert.equal(clean.tools[0].function.parameters.strict, undefined);
   });
+
+  it('keeps stream_options for streaming requests and enables include_usage by default', () => {
+    const client: any = new OpenAIClient('http://example.invalid/v1', undefined, false);
+
+    const clean = client.buildBody({
+      model: 'fake',
+      messages: [{ role: 'user', content: 'u' }],
+      stream: true,
+    });
+
+    assert.equal(clean.stream, true);
+    assert.equal(clean.stream_options?.include_usage, true);
+  });
 });
 
 describe('OpenAIClient SSE parsing + malformed handling', () => {
@@ -203,6 +216,36 @@ describe('OpenAIClient SSE parsing + malformed handling', () => {
     assert.equal(resp.choices?.[0]?.message?.content, 'Hello');
     assert.equal(resp.usage?.prompt_tokens, 3);
     assert.equal(resp.usage?.completion_tokens, 2);
+  });
+
+  it('captures usage from usage-only SSE chunks (choices = [])', async () => {
+    const client: any = new OpenAIClient('http://example.invalid/v1', undefined, false);
+    const enc = new TextEncoder();
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(enc.encode('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'));
+        controller.enqueue(enc.encode('data: {"choices":[{"finish_reason":"stop","delta":{}}]}\n\n'));
+        controller.enqueue(enc.encode('data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}\n\n'));
+        controller.enqueue(enc.encode('data: [DONE]\n\n'));
+        controller.close();
+      }
+    });
+
+    client.fetchWithConnTimeout = async () =>
+      new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' }
+      });
+
+    const resp = await client.chatStream({
+      model: 'fake',
+      messages: [{ role: 'user', content: 'u' }]
+    });
+
+    assert.equal(resp.choices?.[0]?.message?.content, 'ok');
+    assert.equal(resp.usage?.prompt_tokens, 11);
+    assert.equal(resp.usage?.completion_tokens, 7);
   });
 
   it('ignores malformed SSE frames and continues parsing', async () => {
