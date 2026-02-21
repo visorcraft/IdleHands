@@ -294,13 +294,29 @@ When you escalate, your request will be re-run on a more capable model.`;
   }
 
   function cancelActive(managed: ManagedSession): { ok: boolean; message: string } {
-    if (!managed.inFlight) return { ok: false, message: 'Nothing running.' };
-    managed.state = 'canceling';
+    const wasRunning = managed.inFlight;
+    const queueSize = managed.pendingQueue.length;
+
+    if (!wasRunning && queueSize === 0) {
+      return { ok: false, message: 'Nothing to cancel.' };
+    }
+
+    // Always clear queued work.
     managed.pendingQueue = [];
-    try { managed.activeAbortController?.abort(); } catch {}
-    try { managed.session.cancel(); } catch {}
+
+    if (wasRunning) {
+      managed.state = 'canceling';
+      try { managed.activeAbortController?.abort(); } catch {}
+      try { managed.session.cancel(); } catch {}
+    }
+
     managed.lastActivity = Date.now();
-    return { ok: true, message: '⏹ Cancel requested. Stopping current turn...' };
+
+    const parts: string[] = [];
+    if (wasRunning) parts.push('stopping current task');
+    if (queueSize > 0) parts.push(`cleared ${queueSize} queued task${queueSize > 1 ? 's' : ''}`);
+
+    return { ok: true, message: `⏹ Cancelled: ${parts.join(', ')}.` };
   }
 
   async function processMessage(managed: ManagedSession, msg: Message): Promise<void> {
@@ -783,11 +799,9 @@ When you escalate, your request will be re-run on a more capable model.`;
         const managed = sessions.get(key);
         if (!managed) {
           await interaction.reply('No active session.');
-        } else if (managed.state !== 'running') {
-          await interaction.reply('Nothing to cancel.');
         } else {
-          cancelActive(managed);
-          await interaction.reply('🛑 Cancelling...');
+          const res = cancelActive(managed);
+          await interaction.reply(res.message);
         }
         break;
       }

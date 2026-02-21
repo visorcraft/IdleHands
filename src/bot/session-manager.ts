@@ -278,15 +278,30 @@ When you escalate, your request will be re-run on a more capable model.`;
   cancelActive(chatId: number): { ok: boolean; message: string } {
     const managed = this.sessions.get(chatId);
     if (!managed) return { ok: false, message: 'No active session.' };
-    if (!managed.inFlight) return { ok: false, message: 'Nothing running right now.' };
 
-    managed.state = 'canceling';
+    const wasRunning = managed.inFlight;
+    const queueSize = managed.pendingQueue.length;
+
+    if (!wasRunning && queueSize === 0) {
+      return { ok: false, message: 'Nothing to cancel.' };
+    }
+
+    // Always clear queued work.
     managed.pendingQueue = [];
-    try { managed.activeAbortController?.abort(); } catch {}
-    try { managed.session.cancel(); } catch {}
+
+    if (wasRunning) {
+      managed.state = 'canceling';
+      try { managed.activeAbortController?.abort(); } catch {}
+      try { managed.session.cancel(); } catch {}
+    }
+
     managed.lastActivity = Date.now();
 
-    return { ok: true, message: '⏹ Cancel requested. Stopping current turn...' };
+    const parts: string[] = [];
+    if (wasRunning) parts.push('stopping current task');
+    if (queueSize > 0) parts.push(`cleared ${queueSize} queued task${queueSize > 1 ? 's' : ''}`);
+
+    return { ok: true, message: `⏹ Cancelled: ${parts.join(', ')}.` };
   }
 
   resetSession(chatId: number): { ok: boolean; message: string } {
