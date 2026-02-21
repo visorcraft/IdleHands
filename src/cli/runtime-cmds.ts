@@ -861,7 +861,7 @@ function classifyProbe(exitCode: number, httpCode: number | null): 'ready' | 'lo
   return 'unknown';
 }
 
-export async function runHealthSubcommand(_args: any, _config: any): Promise<void> {
+export async function runHealthSubcommand(args: any, _config: any): Promise<void> {
   const { runOnHost } = await import('../runtime/executor.js');
 
   let runtimes;
@@ -876,6 +876,36 @@ export async function runHealthSubcommand(_args: any, _config: any): Promise<voi
   const enabledHosts = runtimes.hosts.filter((h) => h.enabled);
   const enabledModels = runtimes.models.filter((m) => m.enabled);
   const enabledBackends = runtimes.backends.filter((b) => b.enabled);
+
+  // Parse --scan-ports (e.g., "8000-8100" or "8080,8081,8082")
+  function parseScanPorts(input: string | undefined): number[] | null {
+    if (!input) return null;
+    const trimmed = input.trim();
+    if (!trimmed) return null;
+
+    // Try range format: "8000-8100"
+    if (/^\d+-\d+$/.test(trimmed)) {
+      const [start, end] = trimmed.split('-').map(Number);
+      if (start > end || start < 1 || end > 65535) return null;
+      const ports: number[] = [];
+      for (let p = start; p <= end; p++) ports.push(p);
+      return ports;
+    }
+
+    // Try comma-separated: "8080,8081,8082"
+    if (trimmed.includes(',')) {
+      const parts = trimmed.split(',').map((s) => s.trim()).filter(Boolean);
+      const ports = parts.map(Number).filter((p) => Number.isFinite(p) && p >= 1 && p <= 65535);
+      return ports.length > 0 ? ports : null;
+    }
+
+    // Single port
+    const port = Number(trimmed);
+    if (Number.isFinite(port) && port >= 1 && port <= 65535) return [port];
+    return null;
+  }
+
+  const scanPortsOverride = parseScanPorts(args['scan-ports'] ?? args.scan_ports);
 
   if (enabledHosts.length === 0) {
     console.log('No enabled hosts configured. Run `idlehands setup` first.');
@@ -977,9 +1007,14 @@ export async function runHealthSubcommand(_args: any, _config: any): Promise<voi
 
   // ── Discovery: what is actually loaded (configured + common ports) ──
   console.log(`\n${BOLD}Loaded (discovered)${RESET}`);
-  const configuredPorts = new Set<number>(enabledModels.map((m) => m.runtime_defaults?.port ?? 8080));
-  for (let p = 8080; p <= 8090; p++) configuredPorts.add(p);
-  const candidatePorts = Array.from(configuredPorts).sort((a, b) => a - b);
+  let candidatePorts: number[];
+  if (scanPortsOverride) {
+    candidatePorts = scanPortsOverride;
+  } else {
+    const configuredPorts = new Set<number>(enabledModels.map((m) => m.runtime_defaults?.port ?? 8080));
+    for (let p = 8080; p <= 8090; p++) configuredPorts.add(p);
+    candidatePorts = Array.from(configuredPorts).sort((a, b) => a - b);
+  }
   const configuredModelIds = new Set(enabledModels.map((m) => m.id));
 
   for (const host of enabledHosts) {
