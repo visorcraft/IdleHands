@@ -83,8 +83,8 @@ export function parseTaskString(content: string, filePath: string): AntonTaskFil
       continue;
     }
     
-    // Match task lines
-    const taskMatch = line.match(/^(\s*)- \[([ xX])\] (.+)$/);
+    // Match task lines (both "- [ ]" and "● [ ]" formats)
+    const taskMatch = line.match(/^(\s*)(?:-|●) \[([ xX])\] (.+)$/);
     if (taskMatch) {
       const indentStr = taskMatch[1];
       const checkbox = taskMatch[2];
@@ -249,7 +249,8 @@ export async function markTaskChecked(filePath: string, taskKey: string): Promis
   
   if (lineIndex >= 0 && lineIndex < lines.length) {
     const line = lines[lineIndex];
-    const updatedLine = line.replace(/- \[ \]/, '- [x]');
+    // Handle both "- [ ]" and "● [ ]" formats
+    const updatedLine = line.replace(/(-|●) \[ \]/, (match, bullet) => `${bullet} [x]`);
     lines[lineIndex] = updatedLine;
     
     const newContent = lines.join('\n');
@@ -311,8 +312,8 @@ export async function insertSubTasks(
   // Calculate indentation for subtasks
   const childIndent = '  '.repeat(parentTask.depth + 1);
   
-  // Generate subtask lines
-  const subtaskLines = items.map(item => `${childIndent}- [ ] ${item}`);
+  // Generate subtask lines (support both "- [ ]" and "● [ ]" formats)
+  const subtaskLines = items.map(item => `${childIndent}● [ ] ${item}`);
   
   // Split content into lines and insert subtasks
   const lines = content.split('\n');
