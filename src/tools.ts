@@ -1292,7 +1292,7 @@ export async function exec(ctx: ToolContext, args: any) {
   let execCwdWarning = '';
   if (args?.cwd) {
     const absExecCwd = path.resolve(cwd);
-    if (!absExecCwd.startsWith(absCwd + path.sep) && absExecCwd !== absCwd) {
+    if (!isWithinDir(absExecCwd, absCwd)) {
       throw new Error(`exec: BLOCKED — cwd "${absExecCwd}" is outside the working directory "${absCwd}". Use relative paths and work within the project directory.`);
     }
   }
@@ -1302,7 +1302,7 @@ export async function exec(ctx: ToolContext, args: any) {
     let cdMatch: RegExpExecArray | null;
     while ((cdMatch = cdPattern.exec(command)) !== null) {
       const cdTarget = path.resolve(cdMatch[2]);
-      if (!cdTarget.startsWith(absCwd + path.sep) && cdTarget !== absCwd) {
+      if (!isWithinDir(cdTarget, absCwd)) {
         throw new Error(`exec: BLOCKED — command navigates to "${cdTarget}" which is outside the working directory "${absCwd}". Use relative paths and work within the project directory.`);
       }
     }
@@ -1312,7 +1312,7 @@ export async function exec(ctx: ToolContext, args: any) {
     let apMatch: RegExpExecArray | null;
     while ((apMatch = absPathPattern.exec(command)) !== null) {
       const absTarget = path.resolve(apMatch[2]);
-      if (!absTarget.startsWith(absCwd + path.sep) && absTarget !== absCwd) {
+      if (!isWithinDir(absTarget, absCwd)) {
         throw new Error(`exec: BLOCKED — command targets "${absTarget}" which is outside the working directory "${absCwd}". Use relative paths to work within the project directory.`);
       }
     }
@@ -1663,12 +1663,21 @@ function resolvePath(ctx: ToolContext, p: any): string {
 }
 
 /**
+ * Check if a target path is within a directory.
+ * Handles the classic root directory edge case: when dir is `/`, every absolute path is valid.
+ */
+function isWithinDir(target: string, dir: string): boolean {
+  if (dir === '/') return target.startsWith('/');
+  return target === dir || target.startsWith(dir + path.sep);
+}
+
+/**
  * Check if a resolved path is outside the working directory.
  * Returns a model-visible warning string if so, empty string otherwise.
  */
 function checkCwdWarning(tool: string, resolvedPath: string, ctx: ToolContext): string {
   const absCwd = path.resolve(ctx.cwd);
-  if (resolvedPath.startsWith(absCwd + path.sep) || resolvedPath === absCwd) return '';
+  if (isWithinDir(resolvedPath, absCwd)) return '';
   const warning = `\n[WARNING] Path "${resolvedPath}" is OUTSIDE the working directory "${absCwd}". You MUST use relative paths and work within the project directory. Do NOT create or edit files outside the cwd.`;
   console.warn(`[warning] ${tool}: path "${resolvedPath}" is outside the working directory "${absCwd}".`);
   return warning;
