@@ -159,6 +159,24 @@ If you use a dedicated `idlehands` account, install/manage the service while log
 
 ---
 
+## Token-efficient file tooling
+
+Recent tool updates reduce context bloat and make edits cheaper:
+
+- `read_file`
+  - bounded default when `limit` is omitted (`limit=200`)
+  - supports `format=plain|numbered|sparse`
+  - supports `max_bytes` (default `20000`, validated up to `262144`)
+- `edit_range`
+  - replace an inclusive line range in one file
+  - preserves existing EOL style (`LF`/`CRLF`)
+  - supports clean deletions by passing empty replacement text
+- `apply_patch`
+  - apply unified diffs across multiple files
+  - validates touched files against declared `files[]`
+  - dry-runs before apply (`git apply --check` with fallback to `patch --dry-run`)
+
+---
 
 ## Runtime probe defaults (size-aware)
 

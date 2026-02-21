@@ -996,5 +996,734 @@ This is more invasive, but very implementable with the same architecture: you’
 
 ---
 
-If you want, I can also sketch the minimal “tool streaming” changes (`tools.exec` + new hook type + how to display a tail in each UI) using the same modular pattern above.
+# Sketch of the minimal “tool streaming” changes (`tools.exec` + new hook type + how to display a tail in each UI) using the same modular pattern above.
+Below is a minimal, end-to-end “tool streaming” sketch that:
+
+1. adds a new hook/event (`ToolStreamEvent` + `AgentHooks.onToolStream`)
+2. wires it through `createSession.ask()` → tool dispatch → `ToolContext`
+3. makes **`tools.exec` emit throttled stdout/stderr chunks** while the process runs
+4. shows a **tail** (last N lines) in **TUI**, **Telegram**, and **Discord**, with a **shared tail buffer** (so the UIs aren’t duplicating parsing/line-capping logic)
+
+I’m keeping this intentionally “smallest plausible surface area” so you can extend later (e.g., streaming for MCP tools, LSP, downloads, etc.).
+
+---
+
+## 1) New event type: `ToolStreamEvent`
+
+### `src/types.ts` (add)
+
+```ts
+export type ToolStreamEvent = {
+  /** tool call id (same as ToolCallEvent.id / ToolResultEvent.id) */
+  id: string;
+  /** tool name (e.g. "exec") */
+  name: string;
+  /** where the chunk came from */
+  stream: 'stdout' | 'stderr';
+  /** text chunk (UTF-8, already safe to display; ANSI stripped recommended) */
+  chunk: string;
+};
+```
+
+---
+
+## 2) Agent hook: `onToolStream`, and wiring into tool execution
+
+### `src/agent.ts` (modify `AgentHooks`)
+
+Add the hook:
+
+```ts
+export type AgentHooks = {
+  signal?: AbortSignal;
+  onToken?: (t: string) => void;
+  onFirstDelta?: () => void;
+  onToolCall?: (call: ToolCallEvent) => void;
+  onToolResult?: (result: ToolResultEvent) => void | Promise<void>;
+  onToolStream?: (ev: ToolStreamEvent) => void | Promise<void>;
+  onTurnEnd?: (stats: TurnEndEvent) => void | Promise<void>;
+};
+```
+
+Also update the imports at the top of `agent.ts` to include `ToolStreamEvent` from `./types.js`.
+
+### Wire it during tool dispatch (core idea)
+
+Wherever you currently call built-in tools like:
+
+```ts
+const value = await builtInFn(ctx as any, args);
+```
+
+wrap the base ctx into a per-call context that includes the tool id/name and a streaming emitter:
+
+```ts
+const emitToolStream = (ev: ToolStreamEvent): void => {
+  try {
+    hookObj.onToolStream?.(ev);
+  } catch {}
+  // Optional: if you want plugins to see it, add a hookManager event as well.
+  // If you do, also update src/hooks/types.ts and manager redaction (see §3.5).
+  try {
+    void hookManager?.emit('tool_stream' as any, { askId, turn: turns, stream: ev });
+  } catch {}
+};
+
+const callCtx = {
+  ...ctx,
+  toolCallId: callId,
+  toolName: name,
+  onToolStream: emitToolStream,
+};
+
+const value = await builtInFn(callCtx as any, args);
+```
+
+The only requirement is: `ToolContext` must accept `toolCallId`, `toolName`, and `onToolStream` (next section), and `tools.exec` must use them.
+
+---
+
+## 3) ToolContext additions + `tools.exec` streaming
+
+### 3.1 `src/tools.ts`: extend `ToolContext`
+
+Add these optional fields:
+
+```ts
+export type ToolContext = {
+  cwd: string;
+  noConfirm: boolean;
+  dryRun: boolean;
+  mode?: 'code' | 'sys';
+  backupDir?: string;
+  maxExecBytes?: number;
+  maxExecCaptureBytes?: number;
+  maxBackupsPerFile?: number;
+  confirm?: (prompt: string, ctx?: { tool?: string; args?: Record; diff?: string }) => Promise<boolean>;
+  replay?: ReplayStore;
+  vault?: VaultStore;
+  lens?: LensStore;
+  signal?: AbortSignal;
+  lastEditedPath?: string;
+  onMutation?: (absPath: string) => void;
+
+  /** NEW: assigned per-tool-call by agent */
+  toolCallId?: string;
+  toolName?: string;
+
+  /** NEW: tool output streaming hook (don’t await inside exec) */
+  onToolStream?: (ev: import('./types.js').ToolStreamEvent) => void | Promise<void>;
+
+  /**
+   * NEW: optional throttling knobs (safe defaults in tools.exec)
+   * - interval controls UI update cadence
+   * - chunk chars controls how much text per event
+   */
+  toolStreamIntervalMs?: number;
+  toolStreamMaxChunkChars?: number;
+  toolStreamMaxBufferChars?: number;
+};
+```
+
+### 3.2 `src/tools.ts`: import the new type
+
+At the top:
+
+```ts
+import { ExecResult, type ToolStreamEvent } from './types.js';
+```
+
+### 3.3 `src/tools.ts`: minimal streaming emitter inside `exec`
+
+Right before you attach stdout/stderr listeners, add a small throttled streamer.
+
+This is written to be **fire-and-forget** (never `await` inside the hot path), and it always sends the **tail** of the buffered output (so UIs can show “latest”).
+
+```ts
+function safeFireAndForget(fn: (() => void | Promise<void>) | undefined): void {
+  if (!fn) return;
+  try {
+    const r = fn();
+    if (r && typeof (r as any).catch === 'function') (r as any).catch(() => {});
+  } catch {}
+}
+
+function makeExecStreamer(ctx: ToolContext) {
+  const cb = ctx.onToolStream;
+  if (!cb) return null;
+
+  const id = ctx.toolCallId ?? '';
+  const name = ctx.toolName ?? 'exec';
+
+  const intervalMs = Math.max(50, Math.floor(ctx.toolStreamIntervalMs ?? 750));
+  const maxChunkChars = Math.max(80, Math.floor(ctx.toolStreamMaxChunkChars ?? 900));
+  const maxBufferChars = Math.max(maxChunkChars, Math.floor(ctx.toolStreamMaxBufferChars ?? 12_000));
+
+  let outBuf = '';
+  let errBuf = '';
+  let lastEmit = 0;
+  let timer: NodeJS.Timeout | null = null;
+
+  const emit = (stream: 'stdout' | 'stderr', chunk: string) => {
+    const trimmed = chunk.length > maxChunkChars ? chunk.slice(-maxChunkChars) : chunk;
+    const ev: ToolStreamEvent = { id, name, stream, chunk: trimmed };
+    safeFireAndForget(() => cb(ev));
+  };
+
+  const flush = (force = false) => {
+    if (!cb) return;
+    const now = Date.now();
+    if (!force && now - lastEmit < intervalMs) {
+      schedule();
+      return;
+    }
+    lastEmit = now;
+
+    if (outBuf) {
+      emit('stdout', outBuf);
+      outBuf = '';
+    }
+    if (errBuf) {
+      emit('stderr', errBuf);
+      errBuf = '';
+    }
+  };
+
+  const schedule = () => {
+    if (timer) return;
+    const delay = Math.max(0, intervalMs - (Date.now() - lastEmit));
+    timer = setTimeout(() => {
+      timer = null;
+      flush(false);
+    }, delay);
+  };
+
+  const push = (stream: 'stdout' | 'stderr', textRaw: string) => {
+    // Normalize carriage returns so progress bars “advance” instead of overwriting.
+    const text = stripAnsi(textRaw).replace(/\r/g, '\n');
+    if (!text) return;
+
+    if (stream === 'stdout') outBuf += text;
+    else errBuf += text;
+
+    if (outBuf.length > maxBufferChars) outBuf = outBuf.slice(-maxBufferChars);
+    if (errBuf.length > maxBufferChars) errBuf = errBuf.slice(-maxBufferChars);
+
+    schedule();
+  };
+
+  const done = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    flush(true);
+  };
+
+  return { push, done };
+}
+```
+
+### 3.4 `src/tools.ts`: use it in the non-PTY exec path
+
+In your `exec` function, after creating `child` and the `pushCapped` helper, set up streaming:
+
+```ts
+const streamer = makeExecStreamer(ctx);
+
+child.stdout.on('data', (d) => {
+  pushCapped(outChunks, d, 'out');
+  streamer?.push('stdout', d.toString('utf8'));
+});
+
+child.stderr.on('data', (d) => {
+  pushCapped(errChunks, d, 'err');
+  streamer?.push('stderr', d.toString('utf8'));
+});
+```
+
+And after the child closes (right after you clear timers / remove abort listener), flush the last chunk:
+
+```ts
+streamer?.done();
+```
+
+### 3.5 Optional: also expose streaming to hook plugins
+
+If you want plugins to observe tool streaming, you should *actually* add it to hook typing and redact it when the plugin lacks `read_tool_results`.
+
+**`src/hooks/types.ts`**: add to `HookEventMap`:
+
+```ts
+import type { ToolCallEvent, ToolResultEvent, TurnEndEvent, ToolStreamEvent } from '../types.js';
+
+export type HookEventMap = {
+  // ...
+  tool_stream: { askId: string; turn: number; stream: ToolStreamEvent };
+};
+```
+
+**`src/hooks/manager.ts`**: redact `tool_stream` if missing capability:
+
+```ts
+if (event === 'tool_stream' && !caps.has('read_tool_results')) {
+  if (out.stream && typeof out.stream === 'object') {
+    out.stream.chunk = '[redacted: missing read_tool_results capability]';
+  }
+}
+```
+
+If you don’t care about plugins seeing streaming output right now, skip this entirely.
+
+---
+
+## 4) Shared tail buffer (reused by TUI + Telegram + Discord)
+
+This keeps the “tail rendering logic” in one place.
+
+### `src/progress/tool-tail.ts` (new)
+
+```ts
+import type { ToolStreamEvent } from '../types.js';
+
+export type ToolTailSnapshot = {
+  id: string;
+  name: string;
+  stream: 'stdout' | 'stderr';
+  lines: string[];
+  updatedAt: number;
+};
+
+type TailState = {
+  name: string;
+  stream: 'stdout' | 'stderr';
+  buf: string;
+  updatedAt: number;
+};
+
+export class ToolTailBuffer {
+  private byId = new Map<string, TailState>();
+  private readonly maxChars: number;
+  private readonly maxLines: number;
+
+  constructor(opts?: { maxChars?: number; maxLines?: number }) {
+    this.maxChars = Math.max(256, Math.floor(opts?.maxChars ?? 4096));
+    this.maxLines = Math.max(1, Math.floor(opts?.maxLines ?? 4));
+  }
+
+  reset(id: string, name: string): void {
+    this.byId.set(id, { name, stream: 'stdout', buf: '', updatedAt: Date.now() });
+  }
+
+  clear(id: string): void {
+    this.byId.delete(id);
+  }
+
+  push(ev: ToolStreamEvent): ToolTailSnapshot | null {
+    if (!ev?.id) return null;
+
+    const cur =
+      this.byId.get(ev.id) ??
+      ({ name: ev.name ?? 'tool', stream: ev.stream, buf: '', updatedAt: 0 } satisfies TailState);
+
+    cur.name = ev.name ?? cur.name;
+    cur.stream = ev.stream === 'stderr' ? 'stderr' : 'stdout';
+    cur.updatedAt = Date.now();
+
+    cur.buf += (ev.chunk ?? '').replace(/\r/g, '\n');
+    if (cur.buf.length > this.maxChars) cur.buf = cur.buf.slice(-this.maxChars);
+
+    this.byId.set(ev.id, cur);
+    return this.get(ev.id);
+  }
+
+  get(id: string): ToolTailSnapshot | null {
+    const cur = this.byId.get(id);
+    if (!cur) return null;
+
+    const rawLines = cur.buf.split(/\r?\n/);
+    const lines = rawLines.filter((l) => l.trim().length > 0).slice(-this.maxLines);
+
+    return {
+      id,
+      name: cur.name,
+      stream: cur.stream,
+      lines,
+      updatedAt: cur.updatedAt,
+    };
+  }
+}
+```
+
+---
+
+## 5) UI: show a tail in each interface
+
+### 5.1 TUI
+
+Goal: show *something* while tools run, without flooding transcript.
+
+Minimal UX: update the current “running tool” line with `— <last output line>`.
+
+#### a) Add a new TUI event for tail updates
+
+**`src/tui/events.ts`**: add to `TuiEvent` union:
+
+```ts
+| { type: "TOOL_TAIL"; id: string; tail: string }
+```
+
+#### b) Handle it in reducer
+
+**`src/tui/state.ts`**: add a case:
+
+```ts
+case "TOOL_TAIL": {
+  // Update the most recent TOOL_START for that id (don’t append new events).
+  const idxFromEnd = [...state.toolEvents].reverse().findIndex(
+    (e) => e.id === ev.id && e.phase === "start"
+  );
+  if (idxFromEnd < 0) return state;
+
+  const idx = state.toolEvents.length - 1 - idxFromEnd;
+  const toolEvents = state.toolEvents.map((t, i) =>
+    i === idx ? { ...t, detail: ev.tail } : t
+  );
+  return { ...state, toolEvents };
+}
+```
+
+#### c) Render the tail (small tweak)
+
+**`src/tui/render.ts`**: tweak `formatToolUsage`:
+
+```ts
+function formatToolUsage(e: ToolEvent): string {
+  const durationMs = typeof e.durationMs === 'number' ? e.durationMs : Math.max(0, Date.now() - e.ts);
+  const icon = e.phase === 'error' ? `${C.red}✗${C.reset}` : e.phase === 'end' ? `${C.green}✓${C.reset}` : `${C.yellow}⠋${C.reset}`;
+  const base = `${icon} ${e.name} (${secs(durationMs)})`;
+  if (e.phase === 'start' && e.detail) return `${base} — ${truncate(e.detail, 70)}`;
+  return base;
+}
+```
+
+#### d) Wire `onToolStream` in controller (reuse shared `ToolTailBuffer`)
+
+**`src/tui/controller.ts`**: import and use:
+
+```ts
+import { ToolTailBuffer } from "../progress/tool-tail.js";
+```
+
+Inside the ask loop, create one buffer:
+
+```ts
+const tails = new ToolTailBuffer({ maxChars: 4096, maxLines: 4 });
+let activeToolId: string | null = null;
+```
+
+Then update hooks:
+
+```ts
+onToolCall: (c) => {
+  this.lastProgressAt = Date.now();
+  watchdogGraceUsed = 0;
+
+  activeToolId = c.id;
+  tails.reset(c.id, c.name);
+
+  this.dispatch({
+    type: "TOOL_START",
+    id: c.id,                 // IMPORTANT: use tool call id
+    name: c.name,
+    detail: JSON.stringify(c.args).slice(0, 120),
+  });
+},
+
+onToolStream: (ev) => {
+  if (!activeToolId || ev.id !== activeToolId) return;
+  const snap = tails.push(ev);
+  const last = snap?.lines?.[snap.lines.length - 1];
+  if (last) {
+    this.dispatch({ type: "TOOL_TAIL", id: ev.id, tail: last });
+  }
+},
+
+onToolResult: async (r) => {
+  this.lastProgressAt = Date.now();
+  watchdogGraceUsed = 0;
+
+  if (activeToolId === r.id) {
+    activeToolId = null;
+    tails.clear(r.id);
+  }
+
+  this.dispatch({
+    type: r.success ? "TOOL_END" : "TOOL_ERROR",
+    id: r.id,                 // IMPORTANT: use tool result id (same as call id)
+    name: r.name,
+    detail: r.summary,
+  });
+},
+```
+
+That’s enough for “tail while running” without spamming the transcript.
+
+---
+
+### 5.2 Telegram bot
+
+Telegram already edits a “Thinking…” message. Add `onToolStream` and a tail block under the tool lines.
+
+#### a) Import and store tail buffer
+
+In `src/bot/telegram.ts`:
+
+```ts
+import { ToolTailBuffer } from '../progress/tool-tail.js';
+import type { ToolStreamEvent } from '../types.js';
+```
+
+Inside `StreamingMessage`:
+
+```ts
+private tails = new ToolTailBuffer({ maxChars: 4096, maxLines: 4 });
+private activeToolId: string | null = null;
+```
+
+#### b) Add `onToolStream`
+
+```ts
+onToolCall(call: ToolCallEvent): void {
+  this.activeToolId = call.id;
+  this.tails.reset(call.id, call.name);
+  // existing toolLines logic...
+}
+
+onToolStream(ev: ToolStreamEvent): void {
+  if (!this.activeToolId || ev.id !== this.activeToolId) return;
+  this.tails.push(ev);
+}
+
+onToolResult(result: ToolResultEvent): void {
+  if (this.activeToolId === result.id) {
+    this.tails.clear(result.id);
+    this.activeToolId = null;
+  }
+  // existing tool result logic...
+}
+```
+
+#### c) Render the tail
+
+In `render()` after toolLines:
+
+```ts
+if (this.activeToolId) {
+  const tail = this.tails.get(this.activeToolId);
+  if (tail?.lines?.length) {
+    const label = tail.stream === 'stderr' ? 'stderr' : 'stdout';
+    out += `<b>↳ ${escapeHtml(label)} tail</b>\n<pre>${escapeHtml(tail.lines.join('\n'))}</pre>\n\n`;
+  }
+}
+```
+
+That’s it: users will see the last few lines of `exec` output while the command is running.
+
+---
+
+### 5.3 Discord bot
+
+Discord’s current flow (as of the code you have) doesn’t continuously edit the placeholder with progress. Minimal approach: introduce a tiny “edit loop” helper (same as Telegram concept) and show tool tail + partial model output.
+
+Here’s the smallest self-contained pattern that won’t spam messages:
+
+#### a) Add the helper (can live in `src/bot/discord.ts` or a small shared file)
+
+```ts
+import { ToolTailBuffer } from '../progress/tool-tail.js';
+import type { ToolStreamEvent, ToolCallEvent, ToolResultEvent } from '../types.js';
+
+class DiscordStreamingMessage {
+  private buffer = '';
+  private toolLines: string[] = [];
+  private tails = new ToolTailBuffer({ maxChars: 4096, maxLines: 4 });
+  private activeToolId: string | null = null;
+
+  private timer: NodeJS.Timeout | null = null;
+  private dirty = true;
+
+  constructor(private placeholder: import('discord.js').Message, private editEveryMs: number) {}
+
+  start() {
+    this.timer = setInterval(() => void this.flush(), this.editEveryMs);
+  }
+
+  stop() {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+  }
+
+  onToken(t: string) {
+    this.buffer += t;
+    this.dirty = true;
+  }
+
+  onToolCall(c: ToolCallEvent) {
+    this.activeToolId = c.id;
+    this.tails.reset(c.id, c.name);
+    this.toolLines.push(`◆ ${c.name}…`);
+    this.dirty = true;
+  }
+
+  onToolStream(ev: ToolStreamEvent) {
+    if (!this.activeToolId || ev.id !== this.activeToolId) return;
+    this.tails.push(ev);
+    this.dirty = true;
+  }
+
+  onToolResult(r: ToolResultEvent) {
+    const icon = r.success ? '✓' : '✗';
+    // Replace last “◆ ...” if present
+    if (this.toolLines.length) this.toolLines[this.toolLines.length - 1] = `${icon} ${r.name}: ${r.summary}`;
+    if (this.activeToolId === r.id) {
+      this.tails.clear(r.id);
+      this.activeToolId = null;
+    }
+    this.dirty = true;
+  }
+
+  private render(): string {
+    const parts: string[] = [];
+    parts.push('⏳ Thinking…');
+
+    if (this.toolLines.length) {
+      parts.push('');
+      parts.push(this.toolLines.slice(-6).join('\n'));
+    }
+
+    if (this.activeToolId) {
+      const tail = this.tails.get(this.activeToolId);
+      if (tail?.lines?.length) {
+        const label = tail.stream === 'stderr' ? 'stderr' : 'stdout';
+        parts.push('');
+        parts.push(`\`\`\`${label}\n${tail.lines.join('\n')}\n\`\`\``);
+      }
+    }
+
+    if (this.buffer.trim()) {
+      // Keep placeholder short—Discord has message limits.
+      const snippet = this.buffer.length > 1500 ? this.buffer.slice(-1500) : this.buffer;
+      parts.push('');
+      parts.push(snippet);
+    }
+
+    const out = parts.join('\n');
+    return out.length > 1900 ? out.slice(0, 1900) + '…' : out;
+  }
+
+  private async flush() {
+    if (!this.dirty) return;
+    this.dirty = false;
+    try {
+      await this.placeholder.edit(this.render());
+    } catch {
+      // ignore (deleted message, perms, etc.)
+    }
+  }
+}
+```
+
+#### b) Wire it into existing `processMessage` hooks
+
+Where you currently do:
+
+```ts
+const placeholder = await sendUserVisible(msg, '⏳ Thinking...').catch(() => null);
+let streamed = '';
+const hooks: AgentHooks = { onToken: ..., onToolCall: ..., onToolResult: ... };
+```
+
+Replace with:
+
+```ts
+const placeholder = await sendUserVisible(msg, '⏳ Thinking...').catch(() => null);
+const streamer = placeholder ? new DiscordStreamingMessage(placeholder, 1500) : null;
+streamer?.start();
+
+const hooks: AgentHooks = {
+  onToken: (t) => {
+    if (!isTurnActive(managed, turnId)) return;
+    markProgress(managed, turnId);
+    streamer?.onToken(t);
+  },
+  onToolCall: (c) => {
+    if (!isTurnActive(managed, turnId)) return;
+    markProgress(managed, turnId);
+    streamer?.onToolCall(c);
+  },
+  onToolStream: (ev) => {
+    if (!isTurnActive(managed, turnId)) return;
+    markProgress(managed, turnId);
+    streamer?.onToolStream(ev);
+  },
+  onToolResult: (r) => {
+    if (!isTurnActive(managed, turnId)) return;
+    markProgress(managed, turnId);
+    streamer?.onToolResult(r);
+  },
+  onTurnEnd: () => {
+    if (!isTurnActive(managed, turnId)) return;
+    markProgress(managed, turnId);
+  },
+};
+
+try {
+  const result = await managed.session.ask(msg.content, hooks);
+  streamer?.stop();
+  // send final response normally...
+} finally {
+  streamer?.stop();
+}
+```
+
+Now Discord gets the same “tail while tool runs” UX as Telegram, without chat spam.
+
+---
+
+## 6) Why this is “minimal” but extensible
+
+* The only new cross-cutting concepts are:
+
+  * `ToolStreamEvent`
+  * `AgentHooks.onToolStream`
+  * `ToolContext.onToolStream` + `toolCallId/toolName`
+
+* Only **`exec`** streams for now. Later you can stream from:
+
+  * MCP tool calls (if the MCP server supports progress callbacks)
+  * long file ops (downloads, git clone, etc.)
+  * LSP operations (progress notifications)
+
+* The UI tail logic is centralized in `ToolTailBuffer` so all UIs behave consistently and you tune one place.
+
+---
+
+## 7) Tuning knobs you’ll likely want
+
+You can tune without touching UIs:
+
+* `ctx.toolStreamIntervalMs`
+
+  * 500–1000ms is a sweet spot (Telegram edit limits; Discord rate limits)
+
+* `ctx.toolStreamMaxChunkChars`
+
+  * 600–1200 chars is usually enough
+
+* `ToolTailBuffer(maxLines)`
+
+  * 3–6 lines is enough for “what’s happening now”
+
+If you want a config surface, you can expose these under `IdlehandsConfig` (e.g., `ui.tool_stream_interval_ms`, `ui.tool_tail_lines`) and set them when building `callCtx` inside the agent.
 

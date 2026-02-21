@@ -44,11 +44,11 @@ Commands:
 
 Recent defaults focus on reducing context blowups in long coding sessions:
 
-- `read_file` now defaults to bounded output (`limit=200`, max `240`) and supports `format=plain|numbered|sparse`.
-- `read_file` supports bounded byte output via `max_bytes` (default `20000`).
+- `read_file` now defaults to bounded output (`limit=200` when omitted) and supports `format=plain|numbered|sparse`.
+- `read_file` supports bounded byte output via `max_bytes` (default `20000`; validated range `256..262144`).
 - New mutation tools:
-  - `apply_patch` for unified diff application across files
-  - `edit_range` for line-range replacement in one file
+  - `apply_patch` for unified diff application across files, with touched-file validation and `git apply --check`/`patch --dry-run` safety checks.
+  - `edit_range` for line-range replacement in one file (including clean deletions with empty replacement).
 - Live history stores compact tool-output digests while full raw output is archived in Vault (when enabled).
 
 ## Capture + replay

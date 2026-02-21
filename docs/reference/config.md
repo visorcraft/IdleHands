@@ -47,7 +47,7 @@ Idle Hands can load project bootstrap context from `.idlehands.md`, `AGENTS.md`,
 - `context_summarize` (default `true`): summarize oversized context files instead of hard-failing.
 - `context_summary_max_tokens`: target budget for the summary payload.
 
-When summarization is used, Idle Hands injects a compact summary plus a retrieval hint so the model can fetch exact sections with `read_file(path, limit, search)`.
+When summarization is used, Idle Hands injects a compact summary plus a retrieval hint so the model can fetch exact sections with `read_file(path, limit, search, format, max_bytes)`.
 
 ## Structured sections
 

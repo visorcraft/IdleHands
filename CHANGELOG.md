@@ -16,9 +16,11 @@ All notable changes to Idle Hands are documented in this file.
 ### Changed
 
 - `read_file` now uses safe bounded defaults when arguments are omitted:
-  - default `limit=200` (max `240`)
-  - default `max_bytes=20000`
+  - default `limit=200`
+  - default `max_bytes=20000` (validated range `256..262144`)
   - supports `format=plain|numbered|sparse`
+- `apply_patch` now validates touched files against declared `files[]` and runs dry-run checks before apply (`git apply --check` or `patch --dry-run`).
+- `edit_range` now preserves file EOL style and supports clean line-range deletions with empty replacement.
 - Tool schemas were compacted to reduce per-request prompt overhead.
 - Oversized project context now defaults to summary injection with retrieval hints, instead of immediate hard failure.
 
