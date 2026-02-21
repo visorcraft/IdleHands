@@ -11,6 +11,7 @@
 import type { Bot } from 'grammy';
 import type { ConfirmationProvider, ConfirmRequest, ConfirmPlanRequest, PlanDecision, BlockedNotice } from '../types.js';
 import { escapeHtml } from './format.js';
+import { randomId } from '../utils.js';
 
 type PendingSingle = {
   kind: 'single';
@@ -59,7 +60,7 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
     private chatId: number,
     private timeoutSec: number = 300,
   ) {
-    this.sid = Math.random().toString(16).slice(2, 8);
+    this.sid = randomId(3);
   }
 
   async confirm(opts: ConfirmRequest): Promise<boolean> {

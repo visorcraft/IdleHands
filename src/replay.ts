@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { stateDir } from './utils.js';
+import { stateDir, randomId } from './utils.js';
 
 export type Checkpoint = {
   id: string;
@@ -24,10 +24,6 @@ function defaultReplayDir() {
 
 function sha256Bytes(buf: Buffer) {
   return crypto.createHash('sha256').update(buf).digest('hex');
-}
-
-function randId() {
-  return crypto.randomBytes(6).toString('hex');
 }
 
 export class ReplayStore {
@@ -71,7 +67,7 @@ export class ReplayStore {
     await this.init();
 
     const ts = new Date().toISOString();
-    const id = `${ts.replace(/[:.]/g, '-')}_${randId()}`;
+    const id = `${ts.replace(/[:.]/g, '-')}_${randomId()}`;
 
     const beforeHash = sha256Bytes(args.before);
     const afterHash = args.after ? sha256Bytes(args.after) : undefined;

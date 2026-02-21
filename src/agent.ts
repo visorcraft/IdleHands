@@ -18,7 +18,7 @@ import { LspManager, detectInstalledLspServers } from './lsp.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { stateDir, BASH_PATH as BASH } from './utils.js';
+import { stateDir, BASH_PATH as BASH, timestampedId } from './utils.js';
 
 function makeAbortController() {
   // Node 24: AbortController is global.
@@ -1281,7 +1281,7 @@ export async function createSession(opts: {
   });
   let supportsVision = supportsVisionModel(model, modelMeta, harness);
 
-  const sessionId = `session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const sessionId = `session-${timestampedId()}`;
   const hookCfg: HookSystemConfig = cfg.hooks ?? {};
   const hookManager = opts.runtime?.hookManager ?? new HookManager({
     enabled: hookCfg.enabled !== false,
@@ -2487,7 +2487,7 @@ export async function createSession(opts: {
     let turns = 0;
     let toolCalls = 0;
 
-    const askId = `ask-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const askId = `ask-${timestampedId()}`;
 
     const emitToolCall = async (call: ToolCallEvent): Promise<void> => {
       hookObj.onToolCall?.(call);
@@ -2585,7 +2585,7 @@ export async function createSession(opts: {
       if (!clean) return;
 
       const createdAt = new Date().toISOString();
-      const id = `review-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const id = `review-${timestampedId()}`;
       const artifact: ReviewArtifact = {
         id,
         kind: 'code_review',

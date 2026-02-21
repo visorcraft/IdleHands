@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import os from 'node:os';
+import { randomBytes } from 'node:crypto';
 
 /** Package version read once at startup. Falls back to '0.0.0'. */
 export const PKG_VERSION: string = (() => {
@@ -86,4 +87,22 @@ export async function fetchWithTimeout(url: string, init: RequestInit = {}, time
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Generate a short random hex ID.
+ * @param bytes - Number of random bytes (default 6 = 12 hex chars)
+ */
+export function randomId(bytes = 6): string {
+  return randomBytes(bytes).toString('hex');
+}
+
+/**
+ * Generate a timestamped random ID: `<ts>_<random>`
+ * Useful for session IDs, request IDs, etc.
+ */
+export function timestampedId(): string {
+  const ts = Date.now().toString(36);
+  const rand = randomBytes(4).toString('hex');
+  return `${ts}-${rand}`;
 }
