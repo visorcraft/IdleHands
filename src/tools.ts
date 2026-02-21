@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { ExecResult, type ToolStreamEvent } from './types.js';
+import { ToolError } from './tools/tool-error.js';
 
 import type { ReplayStore } from './replay.js';
 import type { VaultStore } from './vault.js';
@@ -474,13 +475,28 @@ export async function read_file(ctx: ToolContext, args: any) {
 
 export async function read_files(ctx: ToolContext, args: any) {
   const reqs = Array.isArray(args?.requests) ? args.requests : [];
-  if (!reqs.length) throw new Error('read_files: missing requests[]');
+  if (!reqs.length) throw new ToolError('invalid_args', 'read_files: missing requests[]', false, 'Provide requests as an array of {path, limit,...} objects.');
 
   const parts: string[] = [];
-  for (const r of reqs) {
-    parts.push(await read_file(ctx, r));
+  let failures = 0;
+
+  for (let i = 0; i < reqs.length; i++) {
+    const r = reqs[i];
+    const p = typeof r?.path === 'string' ? r.path : `request[${i}]`;
+    try {
+      parts.push(await read_file(ctx, r));
+    } catch (e: any) {
+      failures++;
+      const te = ToolError.fromError(e, 'internal');
+      parts.push(`[file:${p}] ERROR: code=${te.code} msg=${te.message}`);
+    }
     parts.push('');
   }
+
+  if (failures > 0) {
+    parts.push(`# read_files completed with partial failures: ${failures}/${reqs.length}`);
+  }
+
   return parts.join('\n');
 }
 
@@ -1140,7 +1156,17 @@ export async function search_files(ctx: ToolContext, args: any) {
   }
 
   // Slow fallback
-  const re = new RegExp(pattern);
+  let re: RegExp;
+  try {
+    re = new RegExp(pattern);
+  } catch (e: any) {
+    throw new ToolError(
+      'invalid_args',
+      `search_files: invalid regex pattern: ${e?.message ?? String(e)}`,
+      false,
+      'Escape regex metacharacters (\\, [, ], (, ), +, *, ?). If you intended literal text, use an escaped/literal pattern.'
+    );
+  }
   const out: string[] = [];
 
   async function walk(dir: string, depth: number) {
@@ -1399,7 +1425,8 @@ export async function exec(ctx: ToolContext, args: any) {
       maxBytes,
       captureLimit,
       signal: ctx.signal,
-    }) + execCwdWarning;
+      execCwdWarning,
+    });
   }
 
   // Use spawn with shell:true — lets Node.js resolve the shell internally,
@@ -1506,14 +1533,20 @@ export async function exec(ctx: ToolContext, args: any) {
     errText = (errText ? errText + '\n' : '') + `[killed after ${timeout}s timeout]`;
   }
 
-  const result: ExecResult = { rc, out: outText, err: errText, truncated: outT.truncated || errT.truncated || capOut || capErr };
+  const result: ExecResult = { 
+    rc, 
+    out: outText, 
+    err: errText, 
+    truncated: outT.truncated || errT.truncated || capOut || capErr,
+    ...(execCwdWarning && { warnings: [execCwdWarning.trim()] })
+  };
 
   // Phase 9d: auto-note system changes in sys mode
   if (ctx.mode === 'sys' && ctx.vault && rc === 0) {
     autoNoteSysChange(ctx.vault, command, outText).catch(() => {});
   }
 
-  return JSON.stringify(result) + execCwdWarning;
+  return JSON.stringify(result);
 }
 
 type ExecWithPtyArgs = {
@@ -1524,10 +1557,11 @@ type ExecWithPtyArgs = {
   maxBytes: number;
   captureLimit: number;
   signal?: AbortSignal;
+  execCwdWarning?: string;
 };
 
 async function execWithPty(args: ExecWithPtyArgs): Promise<string> {
-  const { pty, command, cwd, timeout, maxBytes, captureLimit, signal } = args;
+  const { pty, command, cwd, timeout, maxBytes, captureLimit, signal, execCwdWarning } = args;
 
   const proc = pty.spawn(BASH_PATH, ['-lc', command], {
     name: 'xterm-color',
@@ -1607,6 +1641,7 @@ async function execWithPty(args: ExecWithPtyArgs): Promise<string> {
     out: outText,
     err: errText,
     truncated: outT.truncated || cap || killed,
+    ...(execCwdWarning && { warnings: [execCwdWarning.trim()] })
   };
   return JSON.stringify(result);
 }

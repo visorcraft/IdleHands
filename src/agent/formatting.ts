@@ -8,13 +8,36 @@ const MAX_DIGEST_CHARS = 4000;
  * This is stored in live messages[] instead of full output to reduce prompt size.
  * Full output should be archived to vault keyed by tool_call_id for retrieval.
  */
+function digestFailureContent(content: string, callIdHint?: string): string {
+  const lines = String(content ?? '').split('\n');
+  const head = lines.slice(0, 20);
+  const tail = lines.length > 40 ? lines.slice(-20) : lines.slice(20);
+  const middleOmitted = Math.max(0, lines.length - (head.length + tail.length));
+
+  const out: string[] = [];
+  out.push(...head);
+  if (middleOmitted > 0) out.push(`... (${middleOmitted} lines omitted)`);
+  if (tail.length) out.push(...tail);
+  if (callIdHint) out.push(`[full failure output archived in vault: call_id=${callIdHint}]`);
+
+  const joined = out.join('\n');
+  return joined.length > MAX_DIGEST_CHARS
+    ? joined.slice(0, MAX_DIGEST_CHARS) + '\n# [failure digest truncated]'
+    : joined;
+}
+
 export function digestToolResult(
   name: string,
   args: Record<string, unknown>,
   content: string,
   success: boolean
 ): string {
-  if (!success || content.length <= MAX_DIGEST_CHARS) {
+  if (!success) {
+    const callIdHint = typeof (args as any)?._tool_call_id === 'string' ? String((args as any)._tool_call_id) : undefined;
+    return digestFailureContent(content, callIdHint);
+  }
+
+  if (content.length <= MAX_DIGEST_CHARS) {
     return content;
   }
 

@@ -321,6 +321,7 @@ export type ExecResult = {
   out: string;
   err: string;
   truncated?: boolean;
+  warnings?: string[]; // Non-fatal warnings (e.g., path outside cwd)
 };
 
 // --- Bot config (Phase 8.5) ---
@@ -533,6 +534,12 @@ export type ToolResultEvent = {
   name: string;
   success: boolean;
   summary: string;
+  /** Structured error code when success=false. */
+  errorCode?: string;
+  /** Whether the tool failure is retryable. */
+  retryable?: boolean;
+  /** Exec exit code when name==='exec'. */
+  execRc?: number;
   /** Raw tool result content (possibly truncated by tool runtime). */
   result?: string;
   /** Unified diff text for edit_file/write_file (Phase 7 rich display) */

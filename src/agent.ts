@@ -26,7 +26,8 @@ import {
   sanitizePathsInMessage,
   digestToolResult,
 } from './agent/formatting.js';
-import { parseToolCallsFromContent, getMissingRequiredParams, stripMarkdownFences } from './agent/tool-calls.js';
+import { parseToolCallsFromContent, getMissingRequiredParams, getArgValidationIssues, stripMarkdownFences } from './agent/tool-calls.js';
+import { ToolError, ValidationError } from './tools/tool-error.js';
 export { parseToolCallsFromContent };
 import {
   type ReviewArtifact,
@@ -75,6 +76,22 @@ function looksLikeReadOnlyExecCommand(command: string): boolean {
 
   if (/^\s*(?:grep|rg|ag|ack|find|ls|cat|head|tail|wc|stat)\b/.test(cmd)) return true;
   if (/\|\s*(?:grep|rg|ag|ack)\b/.test(cmd)) return true;
+
+  return false;
+}
+
+function execRcShouldSignalFailure(command: string): boolean {
+  const cmd = String(command || '').toLowerCase();
+  if (!cmd) return false;
+
+  // Common checks where non-zero usually means real failure.
+  if (/\b(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:test|build|lint|typecheck|check)\b/.test(cmd)) return true;
+  if (/\bnode\s+--test\b/.test(cmd)) return true;
+  if (/\b(?:pytest|go\s+test|cargo\s+test|ctest|mvn\s+test|gradle\s+test)\b/.test(cmd)) return true;
+  if (/\b(?:cargo\s+build|go\s+build|tsc\b)\b/.test(cmd)) return true;
+
+  // Grep/rg no-match rc=1 should not be treated as failure.
+  if (/^\s*(?:rg|grep|ag|ack)\b/.test(cmd)) return false;
 
   return false;
 }
@@ -2128,6 +2145,8 @@ export async function createSession(opts: {
     const consecutiveCounts = new Map<string, number>();
 
     let malformedCount = 0;
+    let toolRepairAttempts = 0;
+    const MAX_TOOL_REPAIR_ATTEMPTS = 1;
     let noProgressTurns = 0;
     const NO_PROGRESS_TURN_CAP = 3;
     let noToolTurns = 0;
@@ -2186,7 +2205,12 @@ export async function createSession(opts: {
       }
 
       const success = !String(rawContent).startsWith('ERROR:');
-      const digested = digestToolResult(toolName, toolArgs, compact, success);
+      const digested = digestToolResult(
+        toolName,
+        { ...(toolArgs as Record<string, unknown>), _tool_call_id: toolCallId },
+        compact,
+        success
+      );
 
       if (digested !== rawContent) {
         return {
@@ -2713,7 +2737,11 @@ export async function createSession(opts: {
                 // Break the outer loop — this model won't self-correct
                 throw new AgentLoopBreak(`tool ${name}: malformed JSON exceeded retry limit (${harness.toolCalls.retryOnMalformed}): ${rawArgs.slice(0, 200)}`);
               }
-              throw new Error(`tool ${name}: arguments not valid JSON: ${rawArgs.slice(0, 200)}`);
+              throw new ToolError('invalid_args', `tool ${name}: arguments not valid JSON`, false, 'Return a valid JSON object for function.arguments.', { raw: rawArgs.slice(0, 200) });
+            }
+
+            if (args == null || typeof args !== 'object' || Array.isArray(args)) {
+              throw new ValidationError([{ field: 'arguments', message: 'must be a JSON object', value: args }]);
             }
 
             const builtInFn = (tools as any)[name] as Function | undefined;
@@ -2725,13 +2753,21 @@ export async function createSession(opts: {
             // Keep parsed args by call-id so we can digest/archive tool outputs with context.
             toolArgsByCallId.set(callId, args && typeof args === 'object' && !Array.isArray(args) ? args : {});
 
-            // Pre-dispatch check for missing required params.
-            // Universal: catches omitted params early with a clear, instructive error
-            // before the tool itself throws a less helpful message.
+            // Pre-dispatch argument validation.
+            // - Required params
+            // - Type/range/enums
+            // - Unknown properties
             if (builtInFn || isSpawnTask) {
               const missing = getMissingRequiredParams(name, args);
               if (missing.length) {
-                throw new Error(`REQUIRED parameter(s) ${missing.map(p => `'${p}'`).join(', ')} missing. You MUST include ${missing.join(', ')} in every ${name} call.`);
+                throw new ValidationError(
+                  missing.map((m) => ({ field: m, message: 'required parameter is missing', value: undefined }))
+                );
+              }
+
+              const argIssues = getArgValidationIssues(name, args);
+              if (argIssues.length) {
+                throw new ValidationError(argIssues.map((i) => ({ field: i.field, message: i.message, value: i.value })));
               }
             }
 
@@ -2935,7 +2971,8 @@ export async function createSession(opts: {
             }
 
             // Hook: onToolResult (Phase 8.5 + Phase 7 rich display)
-            const summary = reusedCachedReadOnlyExec
+            let toolSuccess = true;
+            let summary = reusedCachedReadOnlyExec
               ? 'cached read-only exec observation (unchanged)'
               : toolResultSummary(name, args, content, true);
             const resultEvent: ToolResultEvent = { id: callId, name, success: true, summary, result: content };
@@ -2945,6 +2982,14 @@ export async function createSession(opts: {
               try {
                 const parsed = JSON.parse(content);
                 if (parsed.out) resultEvent.execOutput = parsed.out;
+                const rc = Number(parsed?.rc ?? NaN);
+                if (Number.isFinite(rc)) {
+                  resultEvent.execRc = rc;
+                  const cmd = String(args?.command ?? '');
+                  if (execRcShouldSignalFailure(cmd) && rc !== 0) {
+                    toolSuccess = false;
+                  }
+                }
               } catch {}
             } else if (name === 'search_files') {
               const lines = content.split('\n').filter(Boolean);
@@ -2963,6 +3008,11 @@ export async function createSession(opts: {
                   }
                 }
               } catch {}
+            }
+
+            resultEvent.success = toolSuccess;
+            if (!toolSuccess && name === 'exec' && typeof resultEvent.execRc === 'number') {
+              resultEvent.summary = `rc=${resultEvent.execRc} (command failed)`;
             }
 
             await emitToolResult(resultEvent);
@@ -2994,11 +3044,20 @@ export async function createSession(opts: {
           };
 
           const results: Array<{ id: string; content: string }> = [];
+          let invalidArgsThisTurn = false;
 
           // Helper: catch tool errors but re-throw AgentLoopBreak (those must break the outer loop)
           const catchToolError = async (e: any, tc: ToolCall) => {
             if (e instanceof AgentLoopBreak) throw e;
-            const msg = e?.message ?? String(e);
+
+            const te = e instanceof ToolError || e instanceof ValidationError
+              ? e
+              : ToolError.fromError(e, 'internal');
+            if (te.code === 'invalid_args' || te.code === 'validation') {
+              invalidArgsThisTurn = true;
+            }
+            const msg = te.message ?? String(e ?? 'unknown error');
+            const toolErrorContent = te instanceof ValidationError ? te.toToolResult() : te.toToolResult();
 
             // Fast-fail repeated blocked command loops with accurate reason labeling.
             // Applies to direct exec attempts and spawn_task delegation attempts.
@@ -3028,11 +3087,18 @@ export async function createSession(opts: {
               }
             }
 
-            // Hook: onToolResult for errors (Phase 8.5)
             const callId = resolveCallId(tc);
-            await emitToolResult({ id: callId, name: tc.function.name, success: false, summary: msg || 'unknown error', result: `ERROR: ${msg || 'unknown error'}` });
-            // Never return undefined error text; it makes bench failures impossible to debug.
-            return { id: callId, content: `ERROR: ${msg || 'unknown tool error'}` };
+            await emitToolResult({
+              id: callId,
+              name: tc.function.name,
+              success: false,
+              summary: `${te.code}: ${msg}`.slice(0, 240),
+              errorCode: te.code,
+              retryable: te.retryable,
+              result: toolErrorContent,
+            });
+
+            return { id: callId, content: toolErrorContent };
           };
 
           // ── Anti-scan guardrails (§ read budget, dir scan, same-search) ──
@@ -3080,6 +3146,10 @@ export async function createSession(opts: {
                 results.push(await runOne(tc));
               } catch (e: any) {
                 results.push(await catchToolError(e, tc));
+                if (FILE_MUTATION_TOOL_SET.has(tc.function.name)) {
+                  // Fail-fast: after mutating tool failure, stop the remaining batch.
+                  break;
+                }
               }
             }
           } else {
@@ -3091,6 +3161,10 @@ export async function createSession(opts: {
                 results.push(await runOne(tc));
               } catch (e: any) {
                 results.push(await catchToolError(e, tc));
+                if (FILE_MUTATION_TOOL_SET.has(tc.function.name)) {
+                  // Fail-fast: after mutating tool failure, stop the remaining batch.
+                  break;
+                }
               }
             }
           }
@@ -3136,6 +3210,17 @@ export async function createSession(opts: {
             messages.push({
               role: 'user' as const,
               content: `[System] ⚠ Read budget: ${cumulativeReadOnlyCalls}/${READ_BUDGET_HARD}. ${remaining} reads remaining before hard stop. Use search_files or exec grep — do NOT continue reading files one at a time.`,
+            });
+          }
+
+          // One bounded automatic repair attempt for invalid tool args.
+          if (invalidArgsThisTurn && toolRepairAttempts < MAX_TOOL_REPAIR_ATTEMPTS) {
+            toolRepairAttempts++;
+            messages.push({
+              role: 'user' as const,
+              content:
+                '[system] Your previous tool call failed argument validation. Re-issue a corrected tool_calls array only. ' +
+                'Do not narrate. Fix required/mistyped fields and unknown keys.',
             });
           }
 

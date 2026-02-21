@@ -127,6 +127,10 @@ export class ProgressPresenter {
           this.tails.clear(res.id);
           this.activeToolId = null;
         }
+        if (!res.success) {
+          const code = res.errorCode ? ` (${res.errorCode})` : '';
+          this.banner = `⚠ Tool failed: ${res.name}${code}`;
+        }
         this.dirty = true;
       },
       onTurnEnd: (stats: TurnEndEvent) => {

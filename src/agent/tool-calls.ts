@@ -1,5 +1,11 @@
 import type { ToolCall } from '../types.js';
 
+export type ArgValidationIssue = {
+  field: string;
+  message: string;
+  value?: unknown;
+};
+
 /** @internal Exported for testing. Parses tool calls from model content when tool_calls array is empty. */
 export function parseToolCallsFromContent(content: string): ToolCall[] | null {
   // Fallback parser: if model printed JSON tool_calls in content.
@@ -204,6 +210,141 @@ export function getMissingRequiredParams(toolName: string, args: Record<string, 
   const req = required[toolName];
   if (!req) return [];
   return req.filter(p => args[p] === undefined || args[p] === null);
+}
+
+const TOOL_ALLOWED_KEYS: Record<string, string[]> = {
+  read_file: ['path', 'offset', 'limit', 'search', 'context', 'format', 'max_bytes'],
+  read_files: ['requests'],
+  write_file: ['path', 'content'],
+  apply_patch: ['patch', 'files', 'strip'],
+  edit_range: ['path', 'start_line', 'end_line', 'replacement'],
+  edit_file: ['path', 'old_text', 'new_text', 'replace_all'],
+  insert_file: ['path', 'line', 'text'],
+  list_dir: ['path', 'recursive', 'max_entries'],
+  search_files: ['pattern', 'path', 'include', 'max_results'],
+  exec: ['command', 'cwd', 'timeout'],
+  spawn_task: ['task', 'context_files', 'model', 'endpoint', 'max_iterations', 'max_tokens', 'timeout_sec', 'system_prompt', 'approval_mode'],
+  sys_context: ['kind', 'tail_lines', 'include_journal', 'include_logs'],
+  vault_search: ['query', 'limit'],
+  vault_note: ['key', 'value'],
+};
+
+const isInt = (v: unknown): boolean => Number.isInteger(v);
+const isStr = (v: unknown): boolean => typeof v === 'string';
+const isBool = (v: unknown): boolean => typeof v === 'boolean';
+
+function checkRange(field: string, value: unknown, min?: number, max?: number): ArgValidationIssue | null {
+  if (value == null) return null;
+  if (!isInt(value)) return { field, message: 'must be an integer', value };
+  if (min != null && (value as number) < min) return { field, message: `must be >= ${min}`, value };
+  if (max != null && (value as number) > max) return { field, message: `must be <= ${max}`, value };
+  return null;
+}
+
+export function getArgValidationIssues(toolName: string, args: Record<string, unknown>): ArgValidationIssue[] {
+  const issues: ArgValidationIssue[] = [];
+  const allowed = TOOL_ALLOWED_KEYS[toolName] ?? [];
+
+  // Unknown keys
+  for (const k of Object.keys(args ?? {})) {
+    if (!allowed.includes(k)) {
+      issues.push({ field: k, message: 'unknown property', value: (args as any)[k] });
+    }
+  }
+
+  // Per-tool checks (lightweight runtime schema validation)
+  switch (toolName) {
+    case 'read_file': {
+      if (args.path != null && !isStr(args.path)) issues.push({ field: 'path', message: 'must be a string', value: args.path });
+      const off = checkRange('offset', args.offset, 1, 1_000_000); if (off) issues.push(off);
+      const lim = checkRange('limit', args.limit, 1, 240); if (lim) issues.push(lim);
+      const ctx = checkRange('context', args.context, 0, 80); if (ctx) issues.push(ctx);
+      const mb = checkRange('max_bytes', args.max_bytes, 256, 20_000); if (mb) issues.push(mb);
+      if (args.search != null && !isStr(args.search)) issues.push({ field: 'search', message: 'must be a string', value: args.search });
+      if (args.format != null && !['plain', 'numbered', 'sparse'].includes(String(args.format))) {
+        issues.push({ field: 'format', message: 'must be one of: plain, numbered, sparse', value: args.format });
+      }
+      break;
+    }
+    case 'read_files': {
+      if (!Array.isArray(args.requests)) {
+        issues.push({ field: 'requests', message: 'must be an array', value: args.requests });
+      } else {
+        for (let i = 0; i < args.requests.length; i++) {
+          const r = args.requests[i] as any;
+          if (!r || typeof r !== 'object') {
+            issues.push({ field: `requests[${i}]`, message: 'must be an object', value: r });
+            continue;
+          }
+          const nested = getArgValidationIssues('read_file', r);
+          for (const n of nested) issues.push({ ...n, field: `requests[${i}].${n.field}` });
+        }
+      }
+      break;
+    }
+    case 'apply_patch': {
+      if (args.patch != null && !isStr(args.patch)) issues.push({ field: 'patch', message: 'must be a string', value: args.patch });
+      if (args.files != null && (!Array.isArray(args.files) || args.files.some((f) => typeof f !== 'string'))) {
+        issues.push({ field: 'files', message: 'must be an array of strings', value: args.files });
+      }
+      const strip = checkRange('strip', args.strip, 0, 5); if (strip) issues.push(strip);
+      break;
+    }
+    case 'edit_range': {
+      if (args.path != null && !isStr(args.path)) issues.push({ field: 'path', message: 'must be a string', value: args.path });
+      const s = checkRange('start_line', args.start_line, 1); if (s) issues.push(s);
+      const e = checkRange('end_line', args.end_line, 1); if (e) issues.push(e);
+      if (isInt(args.start_line) && isInt(args.end_line) && (args.end_line as number) < (args.start_line as number)) {
+        issues.push({ field: 'end_line', message: 'must be >= start_line', value: args.end_line });
+      }
+      if (args.replacement != null && !isStr(args.replacement)) issues.push({ field: 'replacement', message: 'must be a string', value: args.replacement });
+      break;
+    }
+    case 'search_files': {
+      if (args.pattern != null && !isStr(args.pattern)) issues.push({ field: 'pattern', message: 'must be a string', value: args.pattern });
+      if (args.path != null && !isStr(args.path)) issues.push({ field: 'path', message: 'must be a string', value: args.path });
+      if (args.include != null && !isStr(args.include)) issues.push({ field: 'include', message: 'must be a string', value: args.include });
+      const mr = checkRange('max_results', args.max_results, 1, 100); if (mr) issues.push(mr);
+      break;
+    }
+    case 'exec': {
+      if (args.command != null && !isStr(args.command)) issues.push({ field: 'command', message: 'must be a string', value: args.command });
+      if (args.cwd != null && !isStr(args.cwd)) issues.push({ field: 'cwd', message: 'must be a string', value: args.cwd });
+      const t = checkRange('timeout', args.timeout, 1, 120); if (t) issues.push(t);
+      break;
+    }
+    case 'write_file':
+      if (args.path != null && !isStr(args.path)) issues.push({ field: 'path', message: 'must be a string', value: args.path });
+      if (args.content != null && !isStr(args.content)) issues.push({ field: 'content', message: 'must be a string', value: args.content });
+      break;
+    case 'edit_file':
+      if (args.path != null && !isStr(args.path)) issues.push({ field: 'path', message: 'must be a string', value: args.path });
+      if (args.old_text != null && !isStr(args.old_text)) issues.push({ field: 'old_text', message: 'must be a string', value: args.old_text });
+      if (args.new_text != null && !isStr(args.new_text)) issues.push({ field: 'new_text', message: 'must be a string', value: args.new_text });
+      if (args.replace_all != null && !isBool(args.replace_all)) issues.push({ field: 'replace_all', message: 'must be a boolean', value: args.replace_all });
+      break;
+    case 'insert_file': {
+      if (args.path != null && !isStr(args.path)) issues.push({ field: 'path', message: 'must be a string', value: args.path });
+      const ln = checkRange('line', args.line); if (ln) issues.push(ln);
+      if (args.text != null && !isStr(args.text)) issues.push({ field: 'text', message: 'must be a string', value: args.text });
+      break;
+    }
+    case 'list_dir':
+      if (args.path != null && !isStr(args.path)) issues.push({ field: 'path', message: 'must be a string', value: args.path });
+      if (args.recursive != null && !isBool(args.recursive)) issues.push({ field: 'recursive', message: 'must be a boolean', value: args.recursive });
+      { const me = checkRange('max_entries', args.max_entries, 1, 500); if (me) issues.push(me); }
+      break;
+    case 'vault_search':
+      if (args.query != null && !isStr(args.query)) issues.push({ field: 'query', message: 'must be a string', value: args.query });
+      { const lim2 = checkRange('limit', args.limit, 1, 50); if (lim2) issues.push(lim2); }
+      break;
+    case 'vault_note':
+      if (args.key != null && !isStr(args.key)) issues.push({ field: 'key', message: 'must be a string', value: args.key });
+      if (args.value != null && !isStr(args.value)) issues.push({ field: 'value', message: 'must be a string', value: args.value });
+      break;
+  }
+
+  return issues;
 }
 
 /** Strip markdown code fences (```json ... ```) from tool argument strings */
