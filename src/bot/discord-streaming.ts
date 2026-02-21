@@ -1,47 +1,24 @@
 import type { TextBasedChannel } from 'discord.js';
 import type { AgentHooks } from '../agent.js';
-import type { ToolCallEvent, ToolResultEvent, ToolStreamEvent, TurnEndEvent } from '../types.js';
 import { splitDiscord, safeContent } from './discord-routing.js';
 import { formatToolCallSummary } from '../progress/tool-summary.js';
-import { TurnProgressController } from '../progress/turn-progress.js';
-import { ToolTailBuffer } from '../progress/tool-tail.js';
-import { ProgressMessageRenderer } from '../progress/progress-message-renderer.js';
-import { renderDiscordMarkdown } from '../progress/serialize-discord.js';
+import { ProgressPresenter } from '../progress/progress-presenter.js';
+import { MessageEditScheduler, classifyDiscordEditError } from '../progress/message-edit-scheduler.js';
 
 export class DiscordStreamingMessage {
-  private buffer = '';
-  private toolLines: string[] = [];
-  private lastToolLine = '';
-  private lastToolRepeat = 0;
-
-  private statusLine = '⏳ Thinking...';
   private banner: string | null = null;
-
-  private tails = new ToolTailBuffer({ maxChars: 4096, maxLines: 4 });
-  private activeToolId: string | null = null;
-
-  private timer: ReturnType<typeof setInterval> | null = null;
-  private dirty = true;
   private finalized = false;
 
-  private progress = new TurnProgressController(
-    (snap) => {
-      this.statusLine = snap.statusLine;
-      this.dirty = true;
-    },
-    {
-      heartbeatMs: 1000,
-      bucketMs: 5000,
-      maxToolLines: 8,
-      toolCallSummary: (c) => formatToolCallSummary({ name: c.name, args: c.args as any }),
-    },
-  );
-
-  private renderer = new ProgressMessageRenderer({
-    maxToolLines: 6,
+  private presenter = new ProgressPresenter({
+    maxToolLines: 8,
     maxTailLines: 4,
+    maxDiffLines: 32,
     maxAssistantChars: 1200,
+    discordMaxLen: 1900,
+    toolCallSummary: (c) => formatToolCallSummary({ name: c.name, args: c.args as any }),
   });
+
+  private scheduler: MessageEditScheduler | null = null;
 
   constructor(
     private readonly placeholder: any | null,
@@ -50,119 +27,54 @@ export class DiscordStreamingMessage {
   ) {}
 
   start(): void {
-    if (this.timer) return;
-    this.progress.start();
-    const every = Math.max(500, Math.floor(this.opts?.editIntervalMs ?? 1500));
-    this.timer = setInterval(() => void this.flush(), every);
+    if (this.scheduler || this.finalized) return;
+
+    this.presenter.start();
+
+    if (this.placeholder) {
+      const every = Math.max(500, Math.floor(this.opts?.editIntervalMs ?? 1500));
+      this.scheduler = new MessageEditScheduler({
+        intervalMs: every,
+        render: () => this.presenter.renderDiscordMarkdown(),
+        apply: async (text) => {
+          if (!this.placeholder) return;
+          await this.placeholder.edit(text);
+        },
+        isDirty: () => this.presenter.isDirty(),
+        clearDirty: () => this.presenter.clearDirty(),
+        classifyError: classifyDiscordEditError,
+      });
+      this.scheduler.start();
+    }
   }
 
   stop(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
+    if (this.scheduler) {
+      this.scheduler.stop();
+      this.scheduler = null;
     }
-    this.progress.stop();
+    this.presenter.stop();
   }
 
   setBanner(text: string | null): void {
     this.banner = text?.trim() ? text.trim() : null;
-    this.dirty = true;
+    this.presenter.setBanner(this.banner);
   }
 
   hooks(): AgentHooks {
-    return {
-      onToken: (t) => {
-        this.buffer += t;
-        this.progress.hooks.onToken?.(t);
-        this.dirty = true;
-      },
-      onToolCall: (call) => {
-        this.progress.hooks.onToolCall?.(call);
-
-        this.activeToolId = call.id;
-        this.tails.reset(call.id, call.name);
-
-        const line = `◆ ${formatToolCallSummary({ name: call.name, args: call.args as any })}...`;
-        if (this.lastToolLine === line && this.toolLines.length > 0) {
-          this.lastToolRepeat += 1;
-          this.toolLines[this.toolLines.length - 1] = `${line} (x${this.lastToolRepeat + 1})`;
-        } else {
-          this.lastToolLine = line;
-          this.lastToolRepeat = 0;
-          this.toolLines.push(line);
-          if (this.toolLines.length > 8) this.toolLines.splice(0, this.toolLines.length - 8);
-        }
-
-        this.dirty = true;
-      },
-      onToolStream: (ev: ToolStreamEvent) => {
-        if (!this.activeToolId || ev.id !== this.activeToolId) return;
-        this.tails.push(ev);
-        this.dirty = true;
-      },
-      onToolResult: (result: ToolResultEvent) => {
-        this.progress.hooks.onToolResult?.(result);
-
-        this.lastToolLine = '';
-        this.lastToolRepeat = 0;
-        if (this.toolLines.length > 0) {
-          const icon = result.success ? '✓' : '✗';
-          this.toolLines[this.toolLines.length - 1] = `${icon} ${result.name}: ${result.summary}`;
-        }
-        if (this.activeToolId === result.id) {
-          this.tails.clear(result.id);
-          this.activeToolId = null;
-        }
-
-        this.dirty = true;
-      },
-      onTurnEnd: (stats: TurnEndEvent) => {
-        this.progress.hooks.onTurnEnd?.(stats);
-      },
-    };
-  }
-
-  private renderProgressText(): string {
-    const tail = this.activeToolId ? this.tails.get(this.activeToolId) : null;
-
-    const doc = this.renderer.render({
-      banner: this.banner,
-      statusLine: this.statusLine || '⏳ Thinking...',
-      toolLines: this.toolLines,
-      toolTail: tail ? { name: tail.name, stream: tail.stream, lines: tail.lines } : null,
-      assistantMarkdown: this.buffer.trim() ? safeContent(this.buffer) : null,
-    });
-
-    return renderDiscordMarkdown(doc, { maxLen: 1900 });
-  }
-
-  private async flush(): Promise<void> {
-    if (this.finalized) return;
-    if (!this.dirty) return;
-    this.dirty = false;
-
-    const text = this.renderProgressText();
-    try {
-      if (this.placeholder) {
-        await this.placeholder.edit(text);
-      }
-    } catch {
-      // ignore edit failures
-    }
+    return this.presenter.hooks();
   }
 
   async finalize(finalText: string): Promise<void> {
     this.finalized = true;
     this.stop();
 
-    const snap = this.progress.snapshot('stop');
+    const snap = this.presenter.snapshot('stop');
     const toolLines = snap.toolLines.slice(-8);
 
     // Build combined text with informative fallback
     let combined = '';
-    if (toolLines.length) {
-      combined += toolLines.join('\n') + '\n\n';
-    }
+    if (toolLines.length) combined += toolLines.join('\n') + '\n\n';
 
     if (finalText && finalText.trim()) {
       combined += finalText;
@@ -192,7 +104,7 @@ export class DiscordStreamingMessage {
     this.finalized = true;
     this.stop();
 
-    const snap = this.progress.snapshot('stop');
+    const snap = this.presenter.snapshot('stop');
     const toolLines = snap.toolLines.slice(-8);
     const combined = safeContent((toolLines.length ? toolLines.join('\n') + '\n\n' : '') + `❌ ${errMsg}`);
     const chunks = splitDiscord(combined);

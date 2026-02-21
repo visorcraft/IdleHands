@@ -26,6 +26,16 @@ export function renderTuiLines(doc: IRDoc, opts?: TuiRenderOptions): string[] {
       for (const ln of b.lines ?? []) push(ln.spans.map((sp) => sp.text ?? '').join(''));
       continue;
     }
+    if (b.type === 'kv') {
+      for (const it of b.items ?? []) out.push(`${it.key}: ${it.value}`);
+      continue;
+    }
+    if (b.type === 'diff') {
+      const title = (b.title ?? 'Δ diff').trim();
+      if (title) out.push(title);
+      for (const ln of b.lines ?? []) out.push('  ' + ln);
+      continue;
+    }
     if (b.type === 'code') {
       // Indent code blocks lightly for readability
       for (const ln of b.lines ?? []) out.push('  ' + ln);

@@ -14,12 +14,9 @@ import { formatWatchdogCancelMessage, resolveWatchdogSettings } from "../watchdo
 import type { SettingsMenuItem, StepNavigatorItem } from "./types.js";
 import { TuiConfirmProvider } from "./confirm.js";
 import { splitTokens } from '../cli/command-utils.js';
-import { TurnProgressController } from '../progress/turn-progress.js';
 import { chainAgentHooks } from '../progress/agent-hooks.js';
 import { formatToolCallSummary } from '../progress/tool-summary.js';
-import { ToolTailBuffer } from '../progress/tool-tail.js';
-import { ProgressMessageRenderer } from '../progress/progress-message-renderer.js';
-import { renderTuiLines } from '../progress/serialize-tui.js';
+import { ProgressPresenter } from '../progress/progress-presenter.js';
 
 const THEME_OPTIONS = ['default', 'dark', 'light', 'minimal', 'hacker'] as const;
 const APPROVAL_OPTIONS = ['plan', 'default', 'auto-edit', 'yolo'] as const;
@@ -479,6 +476,26 @@ export class TuiController {
     let watchdogCompactPending = false;
     let watchdogGraceUsed = 0;
     let watchdogForcedCancel = false;
+    const presenter = new ProgressPresenter({
+      maxToolLines: 6,
+      maxTailLines: 4,
+      maxDiffLines: 24,
+      maxAssistantChars: 800,
+      tuiMaxLines: 8,
+      toolCallSummary: (c) => formatToolCallSummary({ name: c.name, args: c.args as any }),
+    });
+
+    presenter.start();
+
+    // Render status at a steady cadence rather than on every token.
+    const statusTimer = setInterval(() => {
+      if (!presenter.isDirty()) return;
+      const lines = presenter.renderTuiLines();
+      const status = lines.find((l) => l.trim().length > 0) ?? '';
+      this.dispatch({ type: 'STATUS_SET', text: status });
+      presenter.clearDirty();
+    }, 250);
+
     const watchdog = setInterval(() => {
       if (!this.inFlight) return;
       if (watchdogCompactPending) return;
@@ -486,6 +503,7 @@ export class TuiController {
         if (watchdogGraceUsed < watchdogIdleGraceTimeouts) {
           watchdogGraceUsed += 1;
           this.lastProgressAt = Date.now();
+          presenter.setBanner('⏳ Still working... model is taking longer than usual.');
           console.error(`[tui] watchdog inactivity — applying grace period (${watchdogGraceUsed}/${watchdogIdleGraceTimeouts})`);
           this.dispatch({
             type: "ALERT_PUSH",
@@ -499,14 +517,17 @@ export class TuiController {
         if (this.watchdogCompactAttempts < maxWatchdogCompacts) {
           this.watchdogCompactAttempts++;
           watchdogCompactPending = true;
+          presenter.setBanner('🧹 Compacting context and retrying...');
           console.error(`[tui] watchdog timeout — compacting and retrying (attempt ${this.watchdogCompactAttempts}/${maxWatchdogCompacts})`);
           try { this.aborter?.abort(); } catch {}
           this.session!.compactHistory({ force: true }).then((result) => {
             console.error(`[tui] watchdog compaction: freed ${result.freedTokens} tokens, dropped ${result.droppedMessages} messages`);
+            presenter.setBanner(null);
             this.lastProgressAt = Date.now();
             watchdogCompactPending = false;
           }).catch((e: any) => {
             console.error(`[tui] watchdog compaction failed: ${e?.message ?? e}`);
+            presenter.setBanner(null);
             watchdogCompactPending = false;
           });
         } else {
@@ -518,43 +539,7 @@ export class TuiController {
       }
     }, 5_000);
 
-    const progressRenderer = new ProgressMessageRenderer({
-      maxToolLines: 6,
-      maxTailLines: 4,
-      maxAssistantChars: 800,
-    });
-
-    const tails = new ToolTailBuffer({ maxChars: 4096, maxLines: 4 });
     let activeToolId: string | null = null;
-    let streamedSoFar = '';
-
-    const flushStatus = (snap: ReturnType<TurnProgressController['snapshot']>) => {
-      const tail = activeToolId ? tails.get(activeToolId) : null;
-      const doc = progressRenderer.render({
-        statusLine: snap.statusLine,
-        toolLines: snap.toolLines,
-        toolTail: tail ? { name: tail.name, stream: tail.stream, lines: tail.lines } : null,
-        assistantMarkdown: streamedSoFar,
-      });
-
-      const lines = renderTuiLines(doc, { maxLines: 8 });
-      const status = lines.find((l) => l.trim().length > 0) ?? '';
-      this.dispatch({ type: 'STATUS_SET', text: status });
-    };
-
-    const progress = new TurnProgressController(
-      (snap) => {
-        flushStatus(snap);
-      },
-      {
-        heartbeatMs: 1000,
-        bucketMs: 5000,
-        maxToolLines: 6,
-        toolCallSummary: (c) => formatToolCallSummary({ name: c.name, args: c.args as any }),
-      },
-    );
-
-    progress.start();
 
     try {
       let askComplete = false;
@@ -567,20 +552,25 @@ export class TuiController {
           ? 'Continue working on the task from where you left off. Context was compacted to free memory — do NOT restart from the beginning.'
           : trimmed;
 
+        const presenterHooks = presenter.hooks();
         const uiHooks: AgentHooks = {
           signal: attemptController.signal,
+          onFirstDelta: () => {
+            this.lastProgressAt = Date.now();
+            watchdogGraceUsed = 0;
+            presenterHooks.onFirstDelta?.();
+          },
           onToken: (t) => {
             this.lastProgressAt = Date.now();
             watchdogGraceUsed = 0;
-            streamedSoFar += t;
+            presenterHooks.onToken?.(t);
             this.dispatch({ type: 'AGENT_STREAM_TOKEN', id, token: t });
           },
           onToolCall: (c) => {
             this.lastProgressAt = Date.now();
             watchdogGraceUsed = 0;
-
             activeToolId = c.id;
-            tails.reset(c.id, c.name);
+            presenterHooks.onToolCall?.(c);
             this.dispatch({
               type: 'TOOL_START',
               id: c.id,
@@ -590,28 +580,30 @@ export class TuiController {
           },
           onToolStream: (ev) => {
             if (!activeToolId || ev.id !== activeToolId) return;
-            const tailSnap = tails.push(ev);
-            const last = tailSnap?.lines?.[tailSnap.lines.length - 1];
+            presenterHooks.onToolStream?.(ev);
+            const chunk = String(ev.chunk ?? '').replace(/\r/g, '\n');
+            const last = chunk
+              .split(/\n/)
+              .map((l) => l.trimEnd())
+              .reverse()
+              .find((l) => l.trim().length > 0);
             if (last) this.dispatch({ type: 'TOOL_TAIL', id: ev.id, tail: last });
-            flushStatus(progress.snapshot('manual'));
           },
           onToolResult: (r) => {
             this.lastProgressAt = Date.now();
             watchdogGraceUsed = 0;
-
-            if (activeToolId === r.id) {
-              activeToolId = null;
-              tails.clear(r.id);
-            }
+            presenterHooks.onToolResult?.(r);
+            if (activeToolId === r.id) activeToolId = null;
             this.dispatch({ type: r.success ? 'TOOL_END' : 'TOOL_ERROR', id: r.id, name: r.name, detail: r.summary });
           },
-          onTurnEnd: () => {
+          onTurnEnd: (stats) => {
             this.lastProgressAt = Date.now();
             watchdogGraceUsed = 0;
+            presenterHooks.onTurnEnd?.(stats);
           },
         };
 
-        const hooks = chainAgentHooks(uiHooks, progress.hooks);
+        const hooks = chainAgentHooks(uiHooks);
 
         try {
           await this.session.ask(askText, hooks);
@@ -644,9 +636,10 @@ export class TuiController {
         }
       }
     } finally {
-      progress.stop();
+      presenter.stop();
       this.dispatch({ type: 'STATUS_CLEAR' });
       clearInterval(watchdog);
+      clearInterval(statusTimer);
       this.dispatch({ type: 'AGENT_STREAM_DONE', id });
       this.inFlight = false;
       this.aborter = null;

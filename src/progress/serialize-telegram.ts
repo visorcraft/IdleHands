@@ -1,4 +1,4 @@
-import type { IRDoc, IRBlock, IRSpan } from './ir.js';
+import type { IRDoc, IRBlock, IRSpan, IRKvItem } from './ir.js';
 import { markdownToTelegramHtml, escapeHtml } from '../bot/format.js';
 
 export type TelegramRenderOptions = {
@@ -20,6 +20,12 @@ function spanToHtml(s: IRSpan): string {
   }
 }
 
+function kvItemToHtml(it: IRKvItem): string {
+  const k = spanToHtml({ text: it.key, style: it.keyStyle ?? 'bold' });
+  const v = spanToHtml({ text: it.value, style: it.valueStyle ?? 'plain' });
+  return `${k}: ${v}`;
+}
+
 function blockToHtml(b: IRBlock): string {
   switch (b.type) {
     case 'spacer':
@@ -28,9 +34,16 @@ function blockToHtml(b: IRBlock): string {
       return '────────';
     case 'lines':
       return (b.lines ?? []).map((ln) => ln.spans.map(spanToHtml).join('')).join('\n');
+    case 'kv':
+      return (b.items ?? []).map(kvItemToHtml).join('\n');
     case 'code': {
       const body = escapeHtml((b.lines ?? []).join('\n'));
       return `<pre>${body}</pre>`;
+    }
+    case 'diff': {
+      const title = escapeHtml((b.title ?? 'Δ diff').trim());
+      const body = escapeHtml((b.lines ?? []).join('\n'));
+      return `<i>${title}</i>\n<pre>${body}</pre>`;
     }
     case 'markdown':
       return markdownToTelegramHtml(b.markdown ?? '');

@@ -4,12 +4,12 @@
  */
 
 import { Bot, InputFile } from 'grammy';
-import type { IdlehandsConfig, BotTelegramConfig, ToolCallEvent, ToolResultEvent, ToolStreamEvent, TurnEndEvent, ModelEscalation } from '../types.js';
+import type { IdlehandsConfig, BotTelegramConfig, ModelEscalation } from '../types.js';
 import type { AgentHooks } from '../agent.js';
 import { SessionManager, type ManagedSession } from './session-manager.js';
 import { markdownToTelegramHtml, splitMessage, escapeHtml, formatToolCallSummary } from './format.js';
-import { ProgressMessageRenderer } from '../progress/progress-message-renderer.js';
-import { renderTelegramHtml } from '../progress/serialize-telegram.js';
+import { ProgressPresenter } from '../progress/progress-presenter.js';
+import { MessageEditScheduler, classifyTelegramEditError } from '../progress/message-edit-scheduler.js';
 import {
   handleStart, handleHelp, handleNew, handleCancel,
   handleStatus, handleWatchdog, handleDir, handleModel, handleCompact,
@@ -18,8 +18,6 @@ import {
 } from './commands.js';
 import { TelegramConfirmProvider } from './confirm-telegram.js';
 import { formatWatchdogCancelMessage, resolveWatchdogSettings } from '../watchdog.js';
-import { TurnProgressController } from '../progress/turn-progress.js';
-import { ToolTailBuffer } from '../progress/tool-tail.js';
 
 // ---------------------------------------------------------------------------
 // Escalation helpers (mirrored from discord.ts)
@@ -145,26 +143,20 @@ function checkKeywordEscalation(
 // ---------------------------------------------------------------------------
 
 class StreamingMessage {
-  private buffer = '';
-  private toolLines: string[] = [];
-  private lastToolLine = "";
-  private lastToolRepeat = 0;
   private messageId: number | null = null;
-  private editTimer: ReturnType<typeof setInterval> | null = null;
   private typingTimer: ReturnType<typeof setInterval> | null = null;
-  private lastEditText = '';
   private finalized = false;
-  private backoffMs = 0;
 
-  private statusLine = '⏳ Thinking...';
-  private progress: TurnProgressController;
-  private tails = new ToolTailBuffer({ maxChars: 4096, maxLines: 4 });
-  private activeToolId: string | null = null;
-  private renderer = new ProgressMessageRenderer({
+  private presenter = new ProgressPresenter({
     maxToolLines: 8,
     maxTailLines: 4,
+    maxDiffLines: 32,
     maxAssistantChars: 2400,
+    telegramMaxLen: 4096,
+    toolCallSummary: (c) => formatToolCallSummary(c as any),
   });
+
+  private scheduler: MessageEditScheduler | null = null;
 
   constructor(
     private bot: Bot,
@@ -172,17 +164,7 @@ class StreamingMessage {
     private editIntervalMs: number,
     private replyToId?: number,
     private fileThresholdChars: number = 8192
-  ) {
-    this.progress = new TurnProgressController(
-      (snap) => { this.statusLine = snap.statusLine; },
-      {
-        heartbeatMs: 1000,
-        bucketMs: 5000,
-        maxToolLines: 8,
-        toolCallSummary: (c) => formatToolCallSummary(c as any),
-      }
-    );
-  }
+  ) {}
 
   async init(): Promise<void> {
     // Show "typing..." indicator immediately; repeat every 4s (Telegram auto-expires at ~5s)
@@ -197,8 +179,25 @@ class StreamingMessage {
       reply_to_message_id: this.replyToId,
     });
     this.messageId = msg.message_id;
-    this.progress.start();
-    this.startEditLoop();
+
+    this.presenter.start();
+
+    if (this.messageId) {
+      this.scheduler = new MessageEditScheduler({
+        intervalMs: this.editIntervalMs,
+        render: () => this.presenter.renderTelegramHtml(),
+        apply: async (rendered) => {
+          if (!this.messageId) return;
+          await this.bot.api.editMessageText(this.chatId, this.messageId, rendered, {
+            parse_mode: 'HTML',
+          });
+        },
+        isDirty: () => this.presenter.isDirty(),
+        clearDirty: () => this.presenter.clearDirty(),
+        classifyError: classifyTelegramEditError,
+      });
+      this.scheduler.start();
+    }
   }
 
   private stopTyping(): void {
@@ -208,108 +207,23 @@ class StreamingMessage {
     }
   }
 
-  onToken(token: string): void {
-    this.buffer += token;
-    this.progress.hooks.onToken?.(token);
+  setBanner(text: string | null): void {
+    this.presenter.setBanner(text);
   }
 
-  onToolCall(call: ToolCallEvent): void {
-    this.progress.hooks.onToolCall?.(call);
-
-    this.activeToolId = call.id;
-    this.tails.reset(call.id, call.name);
-
-    const summary = formatToolCallSummary(call);
-    const line = `◆ ${summary}...`;
-    if (this.lastToolLine === line && this.toolLines.length > 0) {
-      this.lastToolRepeat += 1;
-      this.toolLines[this.toolLines.length - 1] = `${line} (x${this.lastToolRepeat + 1})`;
-      return;
-    }
-    this.lastToolLine = line;
-    this.lastToolRepeat = 0;
-    this.toolLines.push(line);
-  }
-
-  onToolStream(ev: ToolStreamEvent): void {
-    if (!this.activeToolId || ev.id !== this.activeToolId) return;
-    this.tails.push(ev);
-  }
-
-  onToolResult(result: ToolResultEvent): void {
-    this.progress.hooks.onToolResult?.(result);
-
-    this.lastToolLine = "";
-    this.lastToolRepeat = 0;
-    if (this.toolLines.length > 0) {
-      const icon = result.success ? '✓' : '✗';
-      this.toolLines[this.toolLines.length - 1] = `${icon} ${result.name}: ${result.summary}`;
-    }
-
-    if (this.activeToolId === result.id) {
-      this.tails.clear(result.id);
-      this.activeToolId = null;
-    }
-  }
-
-  onTurnEnd(stats: TurnEndEvent): void {
-    this.progress.hooks.onTurnEnd?.(stats);
-  }
-
-  private startEditLoop(): void {
-    this.editTimer = setInterval(() => this.flush(), this.editIntervalMs);
-  }
-
-  private async flush(): Promise<void> {
-    if (!this.messageId || this.finalized) return;
-    if (this.backoffMs > 0) {
-      this.backoffMs = Math.max(0, this.backoffMs - this.editIntervalMs);
-      return; // skip this edit cycle while backing off
-    }
-    const text = this.render();
-    if (!text || text === this.lastEditText) return;
-    this.lastEditText = text;
-    try {
-      await this.bot.api.editMessageText(this.chatId, this.messageId, text, {
-        parse_mode: 'HTML',
-      });
-    } catch (e: any) {
-      const desc = e?.description ?? e?.message ?? '';
-      if (desc.includes('Too Many Requests') || desc.includes('429')) {
-        // Exponential backoff on rate limit
-        const retryAfter = (e?.parameters?.retry_after ?? 3) * 1000;
-        this.backoffMs = Math.min(retryAfter * 2, 30_000);
-        console.error(`[bot] rate limited, backing off ${this.backoffMs}ms`);
-      } else if (!desc.includes('message is not modified') && !desc.includes('message to edit not found')) {
-        console.error(`[bot] edit error: ${desc}`);
-      }
-    }
-  }
-
-  private render(): string {
-    const tail = this.activeToolId ? this.tails.get(this.activeToolId) : null;
-
-    const doc = this.renderer.render({
-      statusLine: this.statusLine,
-      toolLines: this.toolLines,
-      toolTail: tail ? { name: tail.name, stream: tail.stream, lines: tail.lines } : null,
-      assistantMarkdown: this.buffer,
-    });
-
-    return renderTelegramHtml(doc, { maxLen: 4096 });
+  hooks(): AgentHooks {
+    return this.presenter.hooks();
   }
 
   /** Finalize: stop the edit loop and send the final response. */
   async finalize(text: string): Promise<void> {
     this.finalized = true;
     this.stopTyping();
-    if (this.editTimer) {
-      clearInterval(this.editTimer);
-      this.editTimer = null;
+    if (this.scheduler) {
+      this.scheduler.stop();
+      this.scheduler = null;
     }
-    this.progress.stop();
-
-    const html = this.renderFinal(text);
+    this.presenter.stop();
 
     // Large output fallback: send as .md file attachment
     if (text.length > this.fileThresholdChars) {
@@ -330,6 +244,7 @@ class StreamingMessage {
       return;
     }
 
+    const html = this.renderFinal(text);
     const chunks = splitMessage(html, 4096);
 
     // Edit the first message with the first chunk
@@ -367,8 +282,9 @@ class StreamingMessage {
 
   private renderFinal(text: string): string {
     let out = '';
-    if (this.toolLines.length) {
-      out += `<pre>${escapeHtml(this.toolLines.join('\n'))}</pre>\n\n`;
+    const snap = this.presenter.snapshot('stop');
+    if (snap.toolLines.length) {
+      out += `<pre>${escapeHtml(snap.toolLines.join('\n'))}</pre>\n\n`;
     }
     const sanitized = markdownToTelegramHtml(text);
     if (sanitized.trim()) {
@@ -385,18 +301,16 @@ class StreamingMessage {
   async finalizeError(errMsg: string): Promise<void> {
     this.finalized = true;
     this.stopTyping();
-    if (this.editTimer) {
-      clearInterval(this.editTimer);
-      this.editTimer = null;
+    if (this.scheduler) {
+      this.scheduler.stop();
+      this.scheduler = null;
     }
-    this.progress.stop();
+    this.presenter.stop();
 
+    const snap = this.presenter.snapshot('stop');
     let html = '';
-    if (this.toolLines.length) {
-      html += `<pre>${escapeHtml(this.toolLines.join('\n'))}</pre>\n\n`;
-    }
-    if (this.buffer.trim()) {
-      html += markdownToTelegramHtml(this.buffer) + '\n\n';
+    if (snap.toolLines.length) {
+      html += `<pre>${escapeHtml(snap.toolLines.join('\n'))}</pre>\n\n`;
     }
     html += `❌ ${escapeHtml(errMsg)}`;
 
@@ -1021,36 +935,43 @@ async function processMessage(
   const streaming = new StreamingMessage(bot, managed.chatId, editIntervalMs, replyToId, fileThresholdChars);
   await streaming.init();
 
+  const uiHooks = streaming.hooks();
   const hooks: AgentHooks = {
+    onFirstDelta: () => {
+      if (!sessions.isTurnActive(managed.chatId, turnId)) return;
+      sessions.markProgress(managed.chatId, turnId);
+      watchdogGraceUsed = 0;
+      uiHooks.onFirstDelta?.();
+    },
     onToken: (t) => {
       if (!sessions.isTurnActive(managed.chatId, turnId)) return;
       sessions.markProgress(managed.chatId, turnId);
       watchdogGraceUsed = 0;
-      streaming.onToken(t);
+      uiHooks.onToken?.(t);
     },
     onToolCall: (call) => {
       if (!sessions.isTurnActive(managed.chatId, turnId)) return;
       sessions.markProgress(managed.chatId, turnId);
       watchdogGraceUsed = 0;
-      streaming.onToolCall(call);
+      uiHooks.onToolCall?.(call);
     },
     onToolStream: (ev) => {
       if (!sessions.isTurnActive(managed.chatId, turnId)) return;
       sessions.markProgress(managed.chatId, turnId);
       watchdogGraceUsed = 0;
-      streaming.onToolStream(ev);
+      uiHooks.onToolStream?.(ev);
     },
     onToolResult: (result) => {
       if (!sessions.isTurnActive(managed.chatId, turnId)) return;
       sessions.markProgress(managed.chatId, turnId);
       watchdogGraceUsed = 0;
-      streaming.onToolResult(result);
+      uiHooks.onToolResult?.(result);
     },
     onTurnEnd: (stats) => {
       if (!sessions.isTurnActive(managed.chatId, turnId)) return;
       sessions.markProgress(managed.chatId, turnId);
       watchdogGraceUsed = 0;
-      streaming.onTurnEnd(stats);
+      uiHooks.onTurnEnd?.(stats);
     },
   };
 
@@ -1078,6 +999,7 @@ async function processMessage(
       if (watchdogGraceUsed < watchdogIdleGraceTimeouts) {
         watchdogGraceUsed += 1;
         current.lastProgressAt = Date.now();
+        streaming.setBanner('⏳ Still working... model is taking longer than usual.');
         console.error(`[bot:telegram] ${managed.chatId} watchdog inactivity on turn ${turnId} — applying grace period (${watchdogGraceUsed}/${watchdogIdleGraceTimeouts})`);
         return;
       }
@@ -1085,14 +1007,17 @@ async function processMessage(
       if (current.watchdogCompactAttempts < maxWatchdogCompacts) {
         current.watchdogCompactAttempts++;
         watchdogCompactPending = true;
+        streaming.setBanner('🧹 Compacting context and retrying...');
         console.error(`[bot:telegram] ${managed.chatId} watchdog timeout on turn ${turnId} — compacting and retrying (attempt ${current.watchdogCompactAttempts}/${maxWatchdogCompacts})`);
         try { current.activeAbortController?.abort(); } catch {}
         current.session.compactHistory({ force: true }).then((result) => {
           console.error(`[bot:telegram] ${managed.chatId} watchdog compaction: freed ${result.freedTokens} tokens, dropped ${result.droppedMessages} messages`);
+          streaming.setBanner(null);
           current.lastProgressAt = Date.now();
           watchdogCompactPending = false;
         }).catch((e: any) => {
           console.error(`[bot:telegram] ${managed.chatId} watchdog compaction failed: ${e?.message ?? e}`);
+          streaming.setBanner(null);
           watchdogCompactPending = false;
         });
       } else {

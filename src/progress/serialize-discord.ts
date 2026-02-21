@@ -1,4 +1,4 @@
-import type { IRDoc, IRBlock, IRSpan } from './ir.js';
+import type { IRDoc, IRBlock, IRSpan, IRKvItem } from './ir.js';
 
 export type DiscordRenderOptions = {
   maxLen?: number; // keep under 2000; recommended 1900
@@ -25,6 +25,12 @@ function spanToMd(s: IRSpan): string {
   }
 }
 
+function kvItemToMd(it: IRKvItem): string {
+  const k = spanToMd({ text: it.key, style: it.keyStyle ?? 'bold' });
+  const v = spanToMd({ text: it.value, style: it.valueStyle ?? 'plain' });
+  return `${k}: ${v}`;
+}
+
 function blockToMd(b: IRBlock): string {
   switch (b.type) {
     case 'spacer':
@@ -33,10 +39,17 @@ function blockToMd(b: IRBlock): string {
       return '---';
     case 'lines':
       return (b.lines ?? []).map((ln) => ln.spans.map(spanToMd).join('')).join('\n');
+    case 'kv':
+      return (b.items ?? []).map(kvItemToMd).join('\n');
     case 'code': {
       const lang = b.lang ? String(b.lang).trim() : '';
       const body = escapeCodeFence((b.lines ?? []).join('\n'));
       return `\`\`\`${lang}\n${body}\n\`\`\``;
+    }
+    case 'diff': {
+      const title = String((b.title ?? 'Δ diff').trim());
+      const body = escapeCodeFence((b.lines ?? []).join('\n'));
+      return `*${title}*\n\`\`\`diff\n${body}\n\`\`\``;
     }
     case 'markdown':
       return String(b.markdown ?? '');
