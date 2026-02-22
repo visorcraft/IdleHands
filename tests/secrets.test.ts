@@ -65,14 +65,14 @@ describe('SecretsStore', () => {
   });
 
   it('should load and decrypt secrets', async () => {
-    store.set('api-key', 'secret-api-key-123');
+    store.set('api-key', 'sample-config-value-123');
     await store.save();
 
     // Create new store instance and load
     const newStore = new SecretsStore(testPassphrase);
     await newStore.load();
 
-    assert.strictEqual(newStore.get('api-key'), 'secret-api-key-123');
+    assert.strictEqual(newStore.get('api-key'), 'sample-config-value-123');
   });
 
   it('should handle missing store file gracefully', async () => {
