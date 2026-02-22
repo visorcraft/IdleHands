@@ -74,6 +74,18 @@ function createMockSession(responses: string[]): AgentSession {
     planSteps: [],
     executePlanStep: async () => [],
     clearPlan: () => {},
+    compactionStats: {
+      inProgress: false,
+      lockHeld: false,
+      runs: 0,
+      failedRuns: 0,
+      beforeMessages: 0,
+      afterMessages: 0,
+      freedTokens: 0,
+      archivedToolMessages: 0,
+      droppedMessages: 0,
+      dryRun: false,
+    },
     compactHistory: async () => ({
       beforeMessages: 0,
       afterMessages: 0,

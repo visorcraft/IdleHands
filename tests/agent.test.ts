@@ -47,6 +47,55 @@ function baseConfig(tmpDir: string, overrides?: Record<string, any>): any {
   };
 }
 
+describe('compaction lock/stats', () => {
+  it('serializes concurrent compactions and publishes fresh stats after completion', async () => {
+    const fakeClient: any = {
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
+      async warmup() {},
+      async chatStream() {
+        return {
+          id: 'fake',
+          choices: [
+            {
+              index: 0,
+              finish_reason: 'stop',
+              message: { role: 'assistant', content: 'ok' },
+            },
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 2 },
+        };
+      }
+    };
+
+    const session = await createSession({
+      config: baseConfig(tmpDir, { max_iterations: 2 }),
+      runtime: { client: fakeClient }
+    });
+
+    session.restore([
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'task one' },
+      { role: 'assistant', content: 'ack' },
+      { role: 'user', content: 'task two' },
+    ] as any);
+
+    await Promise.all([
+      session.compactHistory({ force: true, dry: true, reason: 'test-compaction-a' }),
+      session.compactHistory({ force: true, dry: true, reason: 'test-compaction-b' }),
+    ]);
+
+    const stats = session.compactionStats;
+    assert.equal(stats.inProgress, false);
+    assert.equal(stats.lockHeld, false);
+    assert.equal(stats.failedRuns, 0);
+    assert.equal(stats.runs, 2);
+    assert.equal(stats.lastReason, 'test-compaction-b');
+    assert.ok(typeof stats.updatedAt === 'string' && stats.updatedAt.length > 0);
+  });
+});
+
 async function makeMockMcpServerScript(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'idlehands-agent-mcp-'));
   const file = path.join(dir, 'mock-mcp-server.mjs');

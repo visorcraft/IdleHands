@@ -142,6 +142,7 @@ All notable changes to Idle Hands are documented in this file.
 - `edit_range` now rejects likely double-escaped replacements (literal `\\n` with no real newlines) and returns guidance to resend with real multiline text.
 - `write_file` now refuses to overwrite existing non-empty files unless `overwrite=true` (or `force=true`) is explicitly provided.
 - Agent auto-recovery now compacts and retries when `/chat/completions` returns 400/413 context-window overflow errors (e.g. `request (...) exceeds the available context size (...)`). After compaction, it re-anchors with the most recent user objective; when Vault is active it reminds the model to use `vault_search(...)`, and in passive mode it notes that relevant entries may be auto-injected.
+- Compaction now runs behind a calculation lock shared across manual and automatic compaction paths, with per-run stats reset before calculation and atomically refreshed after completion.
 
 ### Internal
 
