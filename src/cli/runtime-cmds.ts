@@ -43,7 +43,7 @@ function runLocalCommand(
   command: string,
   timeoutSec = 5
 ): { ok: boolean; code: number | null; stdout: string; stderr: string } {
-  const p = spawnSync('bash', ['-lc', command], { encoding: 'utf8', timeout: timeoutSec * 1000 });
+  const p = spawnSync('bash', ['-c', command], { encoding: 'utf8', timeout: timeoutSec * 1000 });
   return {
     ok: p.status === 0,
     code: p.status,

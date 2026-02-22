@@ -29,7 +29,7 @@ const CACHE_TTL_MS = 60_000; // 60 seconds
  */
 export function detectPackageManager(): string {
   const has = (cmd: string) =>
-    spawnSync('bash', ['-lc', `command -v ${cmd}`], { stdio: 'ignore' }).status === 0;
+    spawnSync('bash', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }).status === 0;
   if (has('apt')) return 'apt';
   if (has('dnf')) return 'dnf';
   if (has('pacman')) return 'pacman';

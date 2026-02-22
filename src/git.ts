@@ -1,32 +1,25 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 
-import { BASH_PATH as BASH } from './utils.js';
-
-async function sh(
-  cmd: string,
+function runGit(
   cwd: string,
-  timeoutSec: number
-): Promise<{ rc: number; out: string }> {
-  return await new Promise((resolve) => {
-    let child;
-    try {
-      child = spawn(BASH, ['-lc', cmd], { cwd, stdio: ['ignore', 'pipe', 'ignore'] });
-    } catch {
-      resolve({ rc: 127, out: '' });
-      return;
-    }
-    const out: Buffer[] = [];
-    const t = setTimeout(() => child.kill('SIGKILL'), Math.max(1, timeoutSec) * 1000);
-    child.on('error', () => {
-      clearTimeout(t);
-      resolve({ rc: 127, out: '' });
-    });
-    child.stdout.on('data', (d) => out.push(d));
-    child.on('close', (code) => {
-      clearTimeout(t);
-      resolve({ rc: code ?? 0, out: Buffer.concat(out).toString('utf8') });
-    });
+  args: string[],
+  timeoutMs: number
+): { status: number; stdout: string; stderr: string } {
+  const res = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    timeout: timeoutMs,
   });
+  return {
+    status: res.status ?? 1,
+    stdout: String(res.stdout || ''),
+    stderr: String(res.stderr || ''),
+  };
+}
+
+function isInsideWorkTree(cwd: string): boolean {
+  const inside = runGit(cwd, ['rev-parse', '--is-inside-work-tree'], 1000);
+  return inside.status === 0 && inside.stdout.trim().startsWith('true');
 }
 
 function clipLines(s: string, maxLines: number, maxChars: number): string {
@@ -40,30 +33,29 @@ function clipLines(s: string, maxLines: number, maxChars: number): string {
 
 export async function loadGitContext(cwd: string): Promise<string> {
   // Avoid slow git operations; keep it short and bounded.
-  const inside = await sh('git rev-parse --is-inside-work-tree', cwd, 1);
-  if (inside.rc !== 0 || !inside.out.trim().startsWith('true')) return '';
+  if (!isInsideWorkTree(cwd)) return '';
 
-  const branch = await sh('git rev-parse --abbrev-ref HEAD', cwd, 1);
-  const status = await sh('git status -s', cwd, 2);
-  const diffstat = await sh('git diff --stat', cwd, 2);
-  const recent = await sh('git log --oneline -5', cwd, 2);
+  const branch = runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'], 1000).stdout;
+  const status = runGit(cwd, ['status', '-s'], 2000).stdout;
+  const diffstat = runGit(cwd, ['diff', '--stat'], 2000).stdout;
+  const recent = runGit(cwd, ['log', '--oneline', '-5'], 2000).stdout;
 
   const parts: string[] = [];
-  parts.push(`[git branch: ${branch.out.trim() || 'unknown'}]`);
+  parts.push(`[git branch: ${branch.trim() || 'unknown'}]`);
 
-  const st = clipLines(status.out, 40, 2000);
+  const st = clipLines(status, 40, 2000);
   if (st.trim()) {
     parts.push('[git status -s]');
     parts.push(st);
   }
 
-  const ds = clipLines(diffstat.out, 40, 2000);
+  const ds = clipLines(diffstat, 40, 2000);
   if (ds.trim()) {
     parts.push('[git diff --stat]');
     parts.push(ds);
   }
 
-  const lg = clipLines(recent.out, 8, 1200);
+  const lg = clipLines(recent, 8, 1200);
   if (lg.trim()) {
     parts.push('[git log --oneline -5]');
     parts.push(lg);
@@ -73,44 +65,24 @@ export async function loadGitContext(cwd: string): Promise<string> {
 }
 
 export function isGitDirty(cwd: string): boolean {
-  const inside = spawnSync(BASH, ['-lc', 'git rev-parse --is-inside-work-tree'], {
-    cwd,
-    encoding: 'utf8',
-    timeout: 1000,
-  });
-  if (
-    inside.status !== 0 ||
-    !String(inside.stdout || '')
-      .trim()
-      .startsWith('true')
-  )
-    return false;
-  const st = spawnSync(BASH, ['-lc', 'git status --porcelain'], {
-    cwd,
-    encoding: 'utf8',
-    timeout: 1500,
-  });
-  return st.status === 0 && String(st.stdout || '').trim().length > 0;
+  if (!isInsideWorkTree(cwd)) return false;
+  const st = runGit(cwd, ['status', '--porcelain'], 1500);
+  return st.status === 0 && st.stdout.trim().length > 0;
 }
 
 export function stashWorkingTree(cwd: string): { ok: boolean; message: string } {
   const stamp = new Date().toISOString();
-  const res = spawnSync(BASH, ['-lc', `git stash push -u -m "idlehands auto-stash ${stamp}"`], {
-    cwd,
-    encoding: 'utf8',
-    timeout: 5000,
-  });
-  const out = `${res.stdout || ''}${res.stderr || ''}`.trim();
+  const res = runGit(cwd, ['stash', 'push', '-u', '-m', `idlehands auto-stash ${stamp}`], 5000);
+  const out = `${res.stdout}${res.stderr}`.trim();
   if (res.status === 0) return { ok: true, message: out || 'stashed' };
-  return { ok: false, message: out || `git stash failed (rc=${res.status ?? 1})` };
+  return { ok: false, message: out || `git stash failed (rc=${res.status})` };
 }
 
 export async function loadGitStartupSummary(cwd: string): Promise<string> {
-  const inside = await sh('git rev-parse --is-inside-work-tree', cwd, 1);
-  if (inside.rc !== 0 || !inside.out.trim().startsWith('true')) return '';
+  if (!isInsideWorkTree(cwd)) return '';
 
-  const branch = (await sh('git rev-parse --abbrev-ref HEAD', cwd, 1)).out.trim() || 'unknown';
-  const status = (await sh('git status --porcelain', cwd, 2)).out.split(/\r?\n/).filter(Boolean);
+  const branch = runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'], 1000).stdout.trim() || 'unknown';
+  const status = runGit(cwd, ['status', '--porcelain'], 2000).stdout.split(/\r?\n/).filter(Boolean);
   const modified = status.filter(
     (l) => /^[ MARC][MDARC]/.test(l) || /^[MDARC][ MARC]/.test(l)
   ).length;
@@ -126,79 +98,55 @@ export function ensureCleanWorkingTree(cwd: string): void {
 }
 
 export function getWorkingDiff(cwd: string): string {
-  const inside = spawnSync(BASH, ['-lc', 'git rev-parse --is-inside-work-tree'], {
-    cwd,
-    encoding: 'utf8',
-    timeout: 1000,
-  });
-  if (
-    inside.status !== 0 ||
-    !String(inside.stdout || '')
-      .trim()
-      .startsWith('true')
-  )
-    return '';
-
-  const res = spawnSync(BASH, ['-lc', 'git diff HEAD'], { cwd, encoding: 'utf8', timeout: 30000 });
-  return String(res.stdout || '');
+  if (!isInsideWorkTree(cwd)) return '';
+  const res = runGit(cwd, ['diff', 'HEAD'], 30000);
+  return res.stdout;
 }
 
 export function commitAll(cwd: string, message: string): string {
-  const res = spawnSync(BASH, ['-lc', `git add -A && git commit -m ${JSON.stringify(message)}`], {
-    cwd,
-    encoding: 'utf8',
-    timeout: 30000,
-  });
-  if (res.status !== 0) {
-    // Check if it's because there's nothing to commit
-    const status = spawnSync(BASH, ['-lc', 'git status --porcelain'], {
-      cwd,
-      encoding: 'utf8',
-      timeout: 1500,
-    });
-    if (status.status === 0 && String(status.stdout || '').trim().length === 0) {
-      return '';
-    }
-    throw new Error(`git commit failed: ${res.stderr || res.stdout || 'unknown error'}`);
+  const addRes = runGit(cwd, ['add', '-A'], 30000);
+  if (addRes.status !== 0) {
+    throw new Error(`git add failed: ${addRes.stderr || addRes.stdout || 'unknown error'}`);
   }
 
-  // Get the commit hash
-  const hashRes = spawnSync(BASH, ['-lc', 'git rev-parse --short HEAD'], {
-    cwd,
-    encoding: 'utf8',
-    timeout: 30000,
-  });
-  return String(hashRes.stdout || '').trim();
+  const commitRes = runGit(cwd, ['commit', '-m', message], 30000);
+  if (commitRes.status !== 0) {
+    // Check if it's because there's nothing to commit
+    const status = runGit(cwd, ['status', '--porcelain'], 1500);
+    if (status.status === 0 && status.stdout.trim().length === 0) {
+      return '';
+    }
+    throw new Error(`git commit failed: ${commitRes.stderr || commitRes.stdout || 'unknown error'}`);
+  }
+
+  const hashRes = runGit(cwd, ['rev-parse', '--short', 'HEAD'], 30000);
+  return hashRes.stdout.trim();
 }
 
 export function commitAmend(cwd: string): void {
-  const res = spawnSync(BASH, ['-lc', 'git add -A && git commit --amend --no-edit'], {
-    cwd,
-    encoding: 'utf8',
-    timeout: 30000,
-  });
+  const addRes = runGit(cwd, ['add', '-A'], 30000);
+  if (addRes.status !== 0) {
+    throw new Error(`git add failed: ${addRes.stderr || addRes.stdout || 'unknown error'}`);
+  }
+  const res = runGit(cwd, ['commit', '--amend', '--no-edit'], 30000);
   if (res.status !== 0) {
     throw new Error(`git commit --amend failed: ${res.stderr || res.stdout || 'unknown error'}`);
   }
 }
 
 export function restoreTrackedChanges(cwd: string): void {
-  spawnSync(BASH, ['-lc', 'git checkout -- .'], { cwd, encoding: 'utf8', timeout: 30000 });
+  runGit(cwd, ['checkout', '--', '.'], 30000);
 }
 
 export function cleanUntracked(cwd: string): void {
-  const res = spawnSync(BASH, ['-lc', 'git clean -fd'], { cwd, encoding: 'utf8', timeout: 30000 });
+  const res = runGit(cwd, ['clean', '-fd'], 30000);
   if (res.status !== 0) {
     throw new Error(`git clean failed: ${res.stderr || res.stdout || 'unknown error'}`);
   }
 }
 
 export function createBranch(cwd: string, name: string): void {
-  const res = spawnSync(BASH, ['-lc', `git checkout -b ${JSON.stringify(name)}`], {
-    cwd,
-    encoding: 'utf8',
-    timeout: 30000,
-  });
+  const res = runGit(cwd, ['checkout', '-b', name], 30000);
   if (res.status !== 0) {
     throw new Error(`git checkout -b failed: ${res.stderr || res.stdout || 'unknown error'}`);
   }

@@ -348,7 +348,7 @@ export class LspClient {
 }
 
 function commandExists(command: string): boolean {
-  const child = spawnSync('bash', ['-lc', `command -v ${shellEscape(command)} >/dev/null 2>&1`], {
+  const child = spawnSync('bash', ['-c', `command -v ${shellEscape(command)} >/dev/null 2>&1`], {
     stdio: 'ignore',
   });
 

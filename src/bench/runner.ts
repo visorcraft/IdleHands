@@ -29,7 +29,7 @@ async function mkTempDir(prefix = 'idlehands-bench-') {
 async function runShell(command: string, cwd: string, timeoutSec: number) {
   return await new Promise<{ rc: number; out: string; err: string }>((resolve, reject) => {
     const shell = process.env.IDLEHANDS_SHELL || 'bash';
-    const child = spawn(shell, ['-lc', command], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(shell, ['-c', command], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     const t = setTimeout(() => child.kill('SIGKILL'), Math.max(1, timeoutSec) * 1000);

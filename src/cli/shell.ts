@@ -53,7 +53,7 @@ export async function runDirectShellCommand(opts: {
   onStart?: (proc: ChildProcessWithoutNullStreams) => void;
   onStop?: () => void;
 }): Promise<{ rc: number; out: string; err: string; timedOut: boolean }> {
-  const child = spawn('bash', ['-lc', opts.command], {
+  const child = spawn('bash', ['-c', opts.command], {
     cwd: opts.cwd,
     env: { ...process.env, IDLEHANDS: '1' },
     stdio: ['pipe', 'pipe', 'pipe'],

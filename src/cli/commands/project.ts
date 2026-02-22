@@ -65,7 +65,7 @@ export const projectCommands: SlashCommand[] = [
       try {
         const sub = args.toLowerCase();
         if (sub === 'diff') {
-          const full = spawnSync('bash', ['-lc', 'git diff'], {
+          const full = spawnSync('bash', ['-c', 'git diff'], {
             cwd: projectDir(ctx.config),
             encoding: 'utf8',
             timeout: 4000,
@@ -103,7 +103,7 @@ export const projectCommands: SlashCommand[] = [
       try {
         const cwd = projectDir(ctx.config);
         if (!args) {
-          const current = spawnSync('bash', ['-lc', 'git rev-parse --abbrev-ref HEAD'], {
+          const current = spawnSync('bash', ['-c', 'git rev-parse --abbrev-ref HEAD'], {
             cwd,
             encoding: 'utf8',
             timeout: 1500,
@@ -150,7 +150,7 @@ export const projectCommands: SlashCommand[] = [
       const targetFile = !args.startsWith('--') && args !== '' ? args : '';
 
       if (targetFile) {
-        const diff = spawnSync('bash', ['-lc', `git diff -- ${JSON.stringify(targetFile)}`], {
+        const diff = spawnSync('bash', ['-c', `git diff -- ${JSON.stringify(targetFile)}`], {
           cwd,
           encoding: 'utf8',
           timeout: 4000,
@@ -195,7 +195,7 @@ export const projectCommands: SlashCommand[] = [
       }
 
       if (full) {
-        const fullDiff = spawnSync('bash', ['-lc', 'git diff'], {
+        const fullDiff = spawnSync('bash', ['-c', 'git diff'], {
           cwd,
           encoding: 'utf8',
           timeout: 7000,

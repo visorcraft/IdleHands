@@ -1621,7 +1621,7 @@ type ExecWithPtyArgs = {
 async function execWithPty(args: ExecWithPtyArgs): Promise<string> {
   const { pty, command, cwd, timeout, maxBytes, captureLimit, signal, execCwdWarning } = args;
 
-  const proc = pty.spawn(BASH_PATH, ['-lc', command], {
+  const proc = pty.spawn(BASH_PATH, ['-c', command], {
     name: 'xterm-color',
     cwd,
     cols: 120,
@@ -1838,7 +1838,7 @@ async function hasRg() {
   } catch {
     // try PATH
     return await new Promise<boolean>((resolve) => {
-      const c = spawn(BASH_PATH, ['-lc', 'command -v rg >/dev/null 2>&1'], { stdio: 'ignore' });
+      const c = spawn(BASH_PATH, ['-c', 'command -v rg >/dev/null 2>&1'], { stdio: 'ignore' });
       c.on('error', () => resolve(false));
       c.on('close', (code) => resolve(code === 0));
     });

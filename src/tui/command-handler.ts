@@ -123,7 +123,7 @@ export async function runShellCommand(
 
   const { spawn } = await import('node:child_process');
   const cwd = projectDir(config);
-  const child = spawn('bash', ['-lc', command], {
+  const child = spawn('bash', ['-c', command], {
     cwd,
     env: { ...process.env, IDLEHANDS: '1' },
     stdio: ['pipe', 'pipe', 'pipe'],

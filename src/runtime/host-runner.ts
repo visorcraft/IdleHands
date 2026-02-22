@@ -25,7 +25,7 @@ export class HostCommandRunner {
    * Run a command locally (no SSH)
    */
   runLocal(command: string, timeoutSec = 5): HostCommandResult {
-    const p = spawnSync('bash', ['-lc', command], {
+    const p = spawnSync('bash', ['-c', command], {
       encoding: 'utf8',
       timeout: timeoutSec * 1000,
     });

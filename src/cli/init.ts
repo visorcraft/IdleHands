@@ -155,12 +155,12 @@ export function formatInitSummary(summary: InitProjectSummary): string {
 // ── Git helpers ──────────────────────────────────────────────────────
 
 export function getGitSnapshot(cwd: string): { status: string; diffStat: string } {
-  const status = spawnSync('bash', ['-lc', 'git status -s'], {
+  const status = spawnSync('bash', ['-c', 'git status -s'], {
     cwd,
     encoding: 'utf8',
     timeout: 2000,
   });
-  const diffStat = spawnSync('bash', ['-lc', 'git diff --stat'], {
+  const diffStat = spawnSync('bash', ['-c', 'git diff --stat'], {
     cwd,
     encoding: 'utf8',
     timeout: 2000,
@@ -172,7 +172,7 @@ export function getGitSnapshot(cwd: string): { status: string; diffStat: string 
 }
 
 export function getGitShortStat(cwd: string): string {
-  const short = spawnSync('bash', ['-lc', 'git diff --shortstat'], {
+  const short = spawnSync('bash', ['-c', 'git diff --shortstat'], {
     cwd,
     encoding: 'utf8',
     timeout: 2000,
@@ -230,7 +230,7 @@ export async function buildReplayChangeEntries(
 }
 
 export function getGitNumstatMap(cwd: string): Map<string, { adds: number; removes: number }> {
-  const run = spawnSync('bash', ['-lc', 'git diff --numstat'], {
+  const run = spawnSync('bash', ['-c', 'git diff --numstat'], {
     cwd,
     encoding: 'utf8',
     timeout: 2500,
@@ -250,7 +250,7 @@ export function getGitNumstatMap(cwd: string): Map<string, { adds: number; remov
 }
 
 export function getGitPorcelainMap(cwd: string): Map<string, string> {
-  const run = spawnSync('bash', ['-lc', 'git status --porcelain'], {
+  const run = spawnSync('bash', ['-c', 'git status --porcelain'], {
     cwd,
     encoding: 'utf8',
     timeout: 2500,

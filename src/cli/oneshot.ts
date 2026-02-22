@@ -64,7 +64,7 @@ export async function runOneShot(opts: OneShotOpts): Promise<never> {
   let diffOnlyEnabled = false;
 
   const runGit = (command: string, timeoutMs = 10_000) =>
-    spawnSync('bash', ['-lc', command], {
+    spawnSync('bash', ['-c', command], {
       cwd: oneShotCwd,
       encoding: 'utf8',
       timeout: timeoutMs,

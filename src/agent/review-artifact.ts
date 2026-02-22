@@ -126,7 +126,7 @@ export function parseReviewArtifact(raw: string): ReviewArtifact | null {
 }
 
 export function gitHead(cwd: string): string | undefined {
-  const inside = spawnSync(BASH, ['-lc', 'git rev-parse --is-inside-work-tree'], {
+  const inside = spawnSync(BASH, ['-c', 'git rev-parse --is-inside-work-tree'], {
     cwd,
     encoding: 'utf8',
     timeout: 1000,
@@ -139,7 +139,7 @@ export function gitHead(cwd: string): string | undefined {
   )
     return undefined;
 
-  const head = spawnSync(BASH, ['-lc', 'git rev-parse HEAD'], {
+  const head = spawnSync(BASH, ['-c', 'git rev-parse HEAD'], {
     cwd,
     encoding: 'utf8',
     timeout: 1000,
