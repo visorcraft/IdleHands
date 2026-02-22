@@ -1793,9 +1793,8 @@ export async function createSession(opts: {
           }
         }
         messages = compacted;
-        // Reset cumulative usage to match current context after compaction
-        cumulativeUsage.prompt = estimateTokensFromMessages(compacted);
-        cumulativeUsage.completion = 0;
+        // Update current context token count after compaction
+        currentContextTokens = estimateTokensFromMessages(compacted);
         if (dropped.length) {
           messages.push({ role: 'system', content: buildCompactionSystemNote('manual', dropped.length) });
           await injectVaultContext().catch(() => {});
@@ -1817,6 +1816,9 @@ export async function createSession(opts: {
   };
 
   const cumulativeUsage = { prompt: 0, completion: 0 };
+  // Track actual current context token count (can go up/down with compaction)
+  // This is separate from cumulativeUsage which only increases.
+  let currentContextTokens = 0;
   const turnDurationsMs: number[] = [];
   const ttftSamplesMs: number[] = [];
   const ppSamples: number[] = [];
@@ -2646,9 +2648,8 @@ export async function createSession(opts: {
           }
 
           messages = compacted;
-          // Reset cumulative usage to match current context after auto compaction
-          cumulativeUsage.prompt = estimateTokensFromMessages(compacted);
-          cumulativeUsage.completion = 0;
+          // Update current context token count after auto compaction
+          currentContextTokens = estimateTokensFromMessages(compacted);
 
           if (dropped.length) {
             messages.push({ role: 'system', content: buildCompactionSystemNote('auto', dropped.length) } as ChatMessage);
@@ -2748,6 +2749,9 @@ export async function createSession(opts: {
         if (resp.usage) {
           cumulativeUsage.prompt += promptTokensTurn;
           cumulativeUsage.completion += completionTokensTurn;
+          // Update current context estimate: prompt + completion approximates total context
+          // This is more accurate than cumulative which never decreases
+          currentContextTokens = promptTokensTurn + completionTokensTurn;
         }
 
         const ppTps = ttftMs && ttftMs > 0 && promptTokensTurn > 0
