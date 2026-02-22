@@ -94,4 +94,50 @@ describe('tool-loop-detection', () => {
     assert.equal(detected.level, 'critical');
     assert.equal(detected.detector, 'known_poll_no_progress');
   });
+
+  it('ping_pong detector warns on alternating no-progress signatures', () => {
+    const state = createToolLoopState();
+
+    const a1 = { path: 'a.ts' };
+    const b1 = { path: 'b.ts' };
+
+    recordToolCall(state, 'read_file', a1, 'a1');
+    recordToolCallOutcome(state, {
+      toolName: 'read_file',
+      toolParams: a1,
+      toolCallId: 'a1',
+      result: 'A',
+    });
+
+    recordToolCall(state, 'list_dir', b1, 'b1');
+    recordToolCallOutcome(state, {
+      toolName: 'list_dir',
+      toolParams: b1,
+      toolCallId: 'b1',
+      result: 'B',
+    });
+
+    recordToolCall(state, 'read_file', a1, 'a2');
+    recordToolCallOutcome(state, {
+      toolName: 'read_file',
+      toolParams: a1,
+      toolCallId: 'a2',
+      result: 'A',
+    });
+
+    recordToolCall(state, 'list_dir', b1, 'b2');
+    recordToolCallOutcome(state, {
+      toolName: 'list_dir',
+      toolParams: b1,
+      toolCallId: 'b2',
+      result: 'B',
+    });
+
+    const detected = detectToolCallLoop(state, 'list_dir', b1, {
+      detectors: { pingPong: true },
+    });
+
+    assert.equal(detected.level, 'warning');
+    assert.equal(detected.detector, 'ping_pong');
+  });
 });

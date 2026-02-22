@@ -3534,7 +3534,9 @@ export async function createSession(opts: {
               if (canonical == null) continue;
               results.push({
                 id: dupId,
-                content: `${canonical}\n\n[idlehands dedupe] Replayed identical tool result from call ${canonicalId}.`,
+                content:
+                  `[idlehands dedupe] Identical tool call replayed from ${canonicalId}. ` +
+                  'Use that earlier tool result; no new execution was performed.',
               });
             }
           }
