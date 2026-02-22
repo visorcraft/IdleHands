@@ -60,4 +60,36 @@ describe('tool-loop-guard', () => {
       await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
     }
   });
+
+  it('expires read cache entries via ttl', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'idlehands-loop-guard-ttl-'));
+    const filePath = path.join(tmp, 'ttl.txt');
+    try {
+      await fs.writeFile(filePath, 'ttl\n', 'utf8');
+      const guard = new ToolLoopGuard({ readCacheTtlMs: 5 });
+      const args = { path: 'ttl.txt' };
+      await guard.storeReadCache('read_file', args, tmp, 'cached');
+
+      await new Promise((r) => setTimeout(r, 12));
+      const replay = await guard.getReadCacheReplay('read_file', args, tmp);
+      assert.equal(replay, null);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('exposes telemetry counters in stats', async () => {
+    const guard = new ToolLoopGuard();
+    const calls: ToolCall[] = [
+      { id: 'a', type: 'function', function: { name: 'read_file', arguments: JSON.stringify({ path: 'x.ts' }) } },
+      { id: 'b', type: 'function', function: { name: 'read_file', arguments: JSON.stringify({ path: 'x.ts' }) } },
+    ];
+    guard.prepareTurn(calls);
+    guard.registerCall('read_file', { path: 'x.ts' }, 'a');
+    guard.registerOutcome('read_file', { path: 'x.ts' }, { toolCallId: 'a', result: 'ok' });
+    const stats: any = guard.getStats();
+    assert.ok(stats?.telemetry);
+    assert.equal(stats.telemetry.callsRegistered, 1);
+    assert.equal(stats.telemetry.dedupedReplays, 1);
+  });
 });

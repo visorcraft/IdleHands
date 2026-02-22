@@ -140,4 +140,55 @@ describe('tool-loop-detection', () => {
     assert.equal(detected.level, 'warning');
     assert.equal(detected.detector, 'ping_pong');
   });
+
+  it('uses per-tool thresholds when provided', () => {
+    const state = createToolLoopState();
+    const args = { path: 'fast-warn.txt' };
+
+    for (let i = 0; i < 2; i++) {
+      recordToolCall(state, 'read_file', args, `t${i}`);
+      recordToolCallOutcome(state, {
+        toolName: 'read_file',
+        toolParams: args,
+        toolCallId: `t${i}`,
+        result: 'same',
+      });
+    }
+
+    const detected = detectToolCallLoop(state, 'read_file', args, {
+      warningThreshold: 4,
+      criticalThreshold: 8,
+      perTool: {
+        read_file: {
+          warningThreshold: 2,
+          criticalThreshold: 3,
+        },
+      },
+    });
+
+    assert.equal(detected.level, 'warning');
+    assert.equal(detected.detector, 'generic_repeat');
+  });
+
+  it('tracks consecutive streaks instead of non-consecutive aggregate repeats', () => {
+    const state = createToolLoopState();
+    const a = { path: 'a.ts' };
+    const b = { path: 'b.ts' };
+
+    recordToolCall(state, 'read_file', a, 'a1');
+    recordToolCallOutcome(state, { toolName: 'read_file', toolParams: a, toolCallId: 'a1', result: 'A' });
+
+    recordToolCall(state, 'read_file', b, 'b1');
+    recordToolCallOutcome(state, { toolName: 'read_file', toolParams: b, toolCallId: 'b1', result: 'B' });
+
+    recordToolCall(state, 'read_file', a, 'a2');
+    recordToolCallOutcome(state, { toolName: 'read_file', toolParams: a, toolCallId: 'a2', result: 'A' });
+
+    const detected = detectToolCallLoop(state, 'read_file', a, {
+      warningThreshold: 3,
+      criticalThreshold: 4,
+    });
+
+    assert.equal(detected.level, 'none');
+  });
 });

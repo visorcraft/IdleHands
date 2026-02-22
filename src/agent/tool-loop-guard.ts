@@ -18,6 +18,17 @@ type ReadCacheEntry = {
   content: string;
   paths: string[];
   versions: string[];
+  cachedAt: number;
+};
+
+type ToolLoopTelemetry = {
+  callsRegistered: number;
+  dedupedReplays: number;
+  readCacheLookups: number;
+  readCacheHits: number;
+  warnings: number;
+  criticals: number;
+  recoveryRecommended: number;
 };
 
 export type ToolLoopWarning = {
@@ -38,8 +49,17 @@ export type PreparedTurn = {
 export class ToolLoopGuard {
   private readonly loopState = createToolLoopState();
   private readonly readCache = new Map<string, ReadCacheEntry>();
-  private readonly config: Required<ToolLoopConfig>;
+  private readonly config: ToolLoopConfig;
   private readonly recordByCallId = new Map<string, ToolCallRecord>();
+  private readonly telemetry: ToolLoopTelemetry = {
+    callsRegistered: 0,
+    dedupedReplays: 0,
+    readCacheLookups: 0,
+    readCacheHits: 0,
+    warnings: 0,
+    criticals: 0,
+    recoveryRecommended: 0,
+  };
 
   constructor(config?: ToolLoopConfig) {
     this.config = {
@@ -48,11 +68,13 @@ export class ToolLoopGuard {
       warningThreshold: config?.warningThreshold ?? 4,
       criticalThreshold: config?.criticalThreshold ?? 8,
       globalCircuitBreakerThreshold: config?.globalCircuitBreakerThreshold ?? 12,
+      readCacheTtlMs: config?.readCacheTtlMs ?? 15_000,
       detectors: {
         genericRepeat: config?.detectors?.genericRepeat ?? true,
         knownPollNoProgress: config?.detectors?.knownPollNoProgress ?? true,
         pingPong: config?.detectors?.pingPong ?? true,
       },
+      perTool: config?.perTool ?? {},
     };
   }
 
@@ -98,15 +120,20 @@ export class ToolLoopGuard {
       }
     }
 
+    this.telemetry.dedupedReplays += replayByCallId.size;
     return { uniqueCalls, replayByCallId, signatureByCallId, parsedArgsByCallId };
   }
 
   detect(toolName: string, args: Record<string, unknown>): ToolLoopDetectionResult {
-    return detectToolCallLoop(this.loopState, toolName, args, this.config);
+    const detected = detectToolCallLoop(this.loopState, toolName, args, this.config);
+    if (detected.level === 'warning') this.telemetry.warnings += 1;
+    if (detected.level === 'critical') this.telemetry.criticals += 1;
+    return detected;
   }
 
   registerCall(toolName: string, args: Record<string, unknown>, toolCallId?: string): void {
     const rec = recordToolCall(this.loopState, toolName, args, toolCallId, this.config);
+    this.telemetry.callsRegistered += 1;
     if (toolCallId) {
       this.recordByCallId.set(toolCallId, rec);
     }
@@ -128,11 +155,27 @@ export class ToolLoopGuard {
   }
 
   getStats() {
-    return getToolCallStats(this.loopState);
+    const base = getToolCallStats(this.loopState);
+    const readCacheHitRate = this.telemetry.readCacheLookups > 0
+      ? this.telemetry.readCacheHits / this.telemetry.readCacheLookups
+      : 0;
+    const dedupeRate = this.telemetry.callsRegistered > 0
+      ? this.telemetry.dedupedReplays / this.telemetry.callsRegistered
+      : 0;
+    return {
+      ...base,
+      telemetry: {
+        ...this.telemetry,
+        readCacheHitRate,
+        dedupeRate,
+      },
+    };
   }
 
   shouldDisableToolsNextTurn(result: ToolLoopDetectionResult): boolean {
-    return result.level === 'critical';
+    const should = result.level === 'critical';
+    if (should) this.telemetry.recoveryRecommended += 1;
+    return should;
   }
 
   async getReadCacheReplay(
@@ -142,9 +185,17 @@ export class ToolLoopGuard {
   ): Promise<string | null> {
     if (!isReadCacheableTool(toolName)) return null;
 
+    this.telemetry.readCacheLookups += 1;
     const sig = this.computeSignature(toolName, args);
     const cached = this.readCache.get(sig);
     if (!cached) return null;
+
+    if (typeof this.config.readCacheTtlMs === 'number' && this.config.readCacheTtlMs > 0) {
+      if (Date.now() - cached.cachedAt > this.config.readCacheTtlMs) {
+        this.readCache.delete(sig);
+        return null;
+      }
+    }
 
     const { paths } = extractReadPaths(toolName, args, cwd);
     if (!paths.length || paths.length !== cached.paths.length) {
@@ -159,6 +210,7 @@ export class ToolLoopGuard {
       return null;
     }
 
+    this.telemetry.readCacheHits += 1;
     return makeCacheHint(toolName);
   }
 
@@ -182,6 +234,7 @@ export class ToolLoopGuard {
       content,
       paths,
       versions: versions as string[],
+      cachedAt: Date.now(),
     });
   }
 

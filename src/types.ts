@@ -146,9 +146,7 @@ export type HookSystemConfig = {
   allow_capabilities?: Array<'observe' | 'read_prompts' | 'read_responses' | 'read_tool_args' | 'read_tool_results'>;
 };
 
-export type ToolLoopDetectionConfig = {
-  enabled?: boolean;
-  history_size?: number;
+export type ToolLoopPolicyConfig = {
   warning_threshold?: number;
   critical_threshold?: number;
   global_circuit_breaker_threshold?: number;
@@ -157,6 +155,21 @@ export type ToolLoopDetectionConfig = {
     known_poll_no_progress?: boolean;
     ping_pong?: boolean;
   };
+};
+
+export type ToolLoopDetectionConfig = {
+  enabled?: boolean;
+  history_size?: number;
+  warning_threshold?: number;
+  critical_threshold?: number;
+  global_circuit_breaker_threshold?: number;
+  read_cache_ttl_ms?: number;
+  detectors?: {
+    generic_repeat?: boolean;
+    known_poll_no_progress?: boolean;
+    ping_pong?: boolean;
+  };
+  per_tool?: Record<string, ToolLoopPolicyConfig>;
 };
 
 export type IdlehandsConfig = {

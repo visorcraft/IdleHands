@@ -1,8 +1,6 @@
 import crypto from 'node:crypto';
 
-export type ToolLoopConfig = {
-  enabled?: boolean;
-  historySize?: number;
+export type ToolLoopPolicy = {
   warningThreshold?: number;
   criticalThreshold?: number;
   globalCircuitBreakerThreshold?: number;
@@ -11,6 +9,21 @@ export type ToolLoopConfig = {
     knownPollNoProgress?: boolean;
     pingPong?: boolean;
   };
+};
+
+export type ToolLoopConfig = {
+  enabled?: boolean;
+  historySize?: number;
+  warningThreshold?: number;
+  criticalThreshold?: number;
+  globalCircuitBreakerThreshold?: number;
+  readCacheTtlMs?: number;
+  detectors?: {
+    genericRepeat?: boolean;
+    knownPollNoProgress?: boolean;
+    pingPong?: boolean;
+  };
+  perTool?: Record<string, ToolLoopPolicy>;
 };
 
 export type ToolCallRecord = {
@@ -37,17 +50,45 @@ export type ToolLoopDetectionResult = {
   count: number;
 };
 
-const DEFAULTS: Required<ToolLoopConfig> = {
+type DetectorFlags = {
+  genericRepeat: boolean;
+  knownPollNoProgress: boolean;
+  pingPong: boolean;
+};
+
+type NormalizedToolLoopPolicy = {
+  warningThreshold: number;
+  criticalThreshold: number;
+  globalCircuitBreakerThreshold: number;
+  detectors: DetectorFlags;
+};
+
+type NormalizedToolLoopConfig = {
+  enabled: boolean;
+  historySize: number;
+  warningThreshold: number;
+  criticalThreshold: number;
+  globalCircuitBreakerThreshold: number;
+  readCacheTtlMs: number;
+  detectors: DetectorFlags;
+  perTool: Record<string, NormalizedToolLoopPolicy>;
+};
+
+const DEFAULT_DETECTORS: DetectorFlags = {
+  genericRepeat: true,
+  knownPollNoProgress: true,
+  pingPong: true,
+};
+
+const DEFAULTS: NormalizedToolLoopConfig = {
   enabled: true,
   historySize: 30,
   warningThreshold: 4,
   criticalThreshold: 8,
   globalCircuitBreakerThreshold: 12,
-  detectors: {
-    genericRepeat: true,
-    knownPollNoProgress: true,
-    pingPong: true,
-  },
+  readCacheTtlMs: 15_000,
+  detectors: { ...DEFAULT_DETECTORS },
+  perTool: {},
 };
 
 const KNOWN_POLL_TOOLS = new Set(['command_status', 'process.poll', 'process.log']);
@@ -60,14 +101,59 @@ export function createToolLoopState(): ToolLoopState {
   };
 }
 
-function normalizeConfig(config?: ToolLoopConfig): Required<ToolLoopConfig> {
-  return {
-    ...DEFAULTS,
-    ...(config ?? {}),
+function normalizePolicy(base: NormalizedToolLoopPolicy, incoming?: ToolLoopPolicy): NormalizedToolLoopPolicy {
+  const out: NormalizedToolLoopPolicy = {
+    warningThreshold: Number.isFinite(Number(incoming?.warningThreshold)) ? Math.max(2, Math.floor(Number(incoming?.warningThreshold))) : base.warningThreshold,
+    criticalThreshold: Number.isFinite(Number(incoming?.criticalThreshold)) ? Math.max(3, Math.floor(Number(incoming?.criticalThreshold))) : base.criticalThreshold,
+    globalCircuitBreakerThreshold: Number.isFinite(Number(incoming?.globalCircuitBreakerThreshold)) ? Math.max(4, Math.floor(Number(incoming?.globalCircuitBreakerThreshold))) : base.globalCircuitBreakerThreshold,
     detectors: {
-      ...DEFAULTS.detectors,
-      ...(config?.detectors ?? {}),
+      genericRepeat: incoming?.detectors?.genericRepeat ?? base.detectors.genericRepeat,
+      knownPollNoProgress: incoming?.detectors?.knownPollNoProgress ?? base.detectors.knownPollNoProgress,
+      pingPong: incoming?.detectors?.pingPong ?? base.detectors.pingPong,
     },
+  };
+  if (out.warningThreshold >= out.criticalThreshold) out.criticalThreshold = out.warningThreshold + 2;
+  if (out.criticalThreshold >= out.globalCircuitBreakerThreshold) out.globalCircuitBreakerThreshold = out.criticalThreshold + 2;
+  return out;
+}
+
+function normalizeConfig(config?: ToolLoopConfig): NormalizedToolLoopConfig {
+  const basePolicy: NormalizedToolLoopPolicy = {
+    warningThreshold: Number.isFinite(Number(config?.warningThreshold)) ? Math.max(2, Math.floor(Number(config?.warningThreshold))) : DEFAULTS.warningThreshold,
+    criticalThreshold: Number.isFinite(Number(config?.criticalThreshold)) ? Math.max(3, Math.floor(Number(config?.criticalThreshold))) : DEFAULTS.criticalThreshold,
+    globalCircuitBreakerThreshold: Number.isFinite(Number(config?.globalCircuitBreakerThreshold)) ? Math.max(4, Math.floor(Number(config?.globalCircuitBreakerThreshold))) : DEFAULTS.globalCircuitBreakerThreshold,
+    detectors: {
+      genericRepeat: config?.detectors?.genericRepeat ?? DEFAULT_DETECTORS.genericRepeat,
+      knownPollNoProgress: config?.detectors?.knownPollNoProgress ?? DEFAULT_DETECTORS.knownPollNoProgress,
+      pingPong: config?.detectors?.pingPong ?? DEFAULT_DETECTORS.pingPong,
+    },
+  };
+  const normalizedBasePolicy = normalizePolicy(basePolicy);
+  const perTool: Record<string, NormalizedToolLoopPolicy> = {};
+  for (const [tool, policy] of Object.entries(config?.perTool ?? {})) {
+    const key = String(tool || '').trim();
+    if (!key) continue;
+    perTool[key] = normalizePolicy(normalizedBasePolicy, policy);
+  }
+
+  return {
+    enabled: config?.enabled ?? DEFAULTS.enabled,
+    historySize: Number.isFinite(Number(config?.historySize)) ? Math.max(10, Math.floor(Number(config?.historySize))) : DEFAULTS.historySize,
+    warningThreshold: normalizedBasePolicy.warningThreshold,
+    criticalThreshold: normalizedBasePolicy.criticalThreshold,
+    globalCircuitBreakerThreshold: normalizedBasePolicy.globalCircuitBreakerThreshold,
+    readCacheTtlMs: Number.isFinite(Number(config?.readCacheTtlMs)) ? Math.max(0, Math.floor(Number(config?.readCacheTtlMs))) : DEFAULTS.readCacheTtlMs,
+    detectors: normalizedBasePolicy.detectors,
+    perTool,
+  };
+}
+
+function resolvePolicyForTool(cfg: NormalizedToolLoopConfig, toolName: string): NormalizedToolLoopPolicy {
+  return cfg.perTool[toolName] ?? {
+    warningThreshold: cfg.warningThreshold,
+    criticalThreshold: cfg.criticalThreshold,
+    globalCircuitBreakerThreshold: cfg.globalCircuitBreakerThreshold,
+    detectors: cfg.detectors,
   };
 }
 
@@ -195,6 +281,27 @@ export function recordToolCallOutcome(
   state.byOutcomeKey.set(key, (state.byOutcomeKey.get(key) ?? 0) + 1);
 }
 
+function consecutiveSignatureStreak(history: ToolCallRecord[], signature: string): number {
+  let count = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const rec = history[i];
+    if (rec.signature !== signature) break;
+    count++;
+  }
+  return count;
+}
+
+function consecutiveOutcomeStreak(history: ToolCallRecord[], signature: string, outcomeHash: string): number {
+  let count = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const rec = history[i];
+    if (rec.signature !== signature) break;
+    if (rec.resultHash !== outcomeHash) break;
+    count++;
+  }
+  return count;
+}
+
 export function detectToolCallLoop(
   state: ToolLoopState,
   toolName: string,
@@ -202,6 +309,7 @@ export function detectToolCallLoop(
   config?: ToolLoopConfig,
 ): ToolLoopDetectionResult {
   const cfg = normalizeConfig(config);
+  const policy = resolvePolicyForTool(cfg, toolName);
   const { signature, argsHash } = hashToolCall(toolName, params);
 
   if (!cfg.enabled) {
@@ -209,8 +317,9 @@ export function detectToolCallLoop(
   }
 
   const genericCount = state.bySignature.get(signature) ?? 0;
+  const signatureStreak = consecutiveSignatureStreak(state.history, signature);
 
-  if (cfg.detectors.genericRepeat && genericCount >= cfg.globalCircuitBreakerThreshold) {
+  if (policy.detectors.genericRepeat && genericCount >= policy.globalCircuitBreakerThreshold) {
     return {
       level: 'critical',
       detector: 'global_circuit_breaker',
@@ -227,19 +336,27 @@ export function detectToolCallLoop(
 
   const outcomeKey = latestSameOutcome?.resultHash ? `${signature}|${latestSameOutcome.resultHash}` : '';
   const outcomeCount = outcomeKey ? (state.byOutcomeKey.get(outcomeKey) ?? 0) : 0;
+  const outcomeStreak = latestSameOutcome?.resultHash
+    ? consecutiveOutcomeStreak(state.history, signature, latestSameOutcome.resultHash)
+    : 0;
 
-  if (cfg.detectors.knownPollNoProgress && KNOWN_POLL_TOOLS.has(toolName) && outcomeCount >= cfg.criticalThreshold) {
+  if (
+    policy.detectors.knownPollNoProgress &&
+    KNOWN_POLL_TOOLS.has(toolName) &&
+    Math.max(outcomeCount, outcomeStreak) >= policy.criticalThreshold
+  ) {
+    const count = Math.max(outcomeCount, outcomeStreak);
     return {
       level: 'critical',
       detector: 'known_poll_no_progress',
-      message: `${toolName} repeated with no outcome change (${outcomeCount}x)` ,
+      message: `${toolName} repeated with no outcome change (${count}x)` ,
       signature,
       argsHash,
-      count: outcomeCount,
+      count,
     };
   }
 
-  if (cfg.detectors.pingPong && state.history.length >= 4) {
+  if (policy.detectors.pingPong && state.history.length >= 4) {
     const tail = state.history.slice(-4);
     const [a, b, c, d] = tail;
     // Ping-pong: A→B→A→B with same outcomes each time
@@ -269,31 +386,32 @@ export function detectToolCallLoop(
     }
   }
 
-  if (cfg.detectors.genericRepeat) {
-    if (outcomeCount >= cfg.criticalThreshold || genericCount >= cfg.criticalThreshold) {
+  if (policy.detectors.genericRepeat) {
+    const repeatCount = Math.max(outcomeStreak, signatureStreak);
+    if (repeatCount >= policy.criticalThreshold) {
       return {
         level: 'critical',
         detector: 'generic_repeat',
-        message: `Repeated identical tool call with no meaningful change (${Math.max(outcomeCount, genericCount)}x)`,
+        message: `Repeated identical tool call with no meaningful change (${repeatCount}x)`,
         signature,
         argsHash,
-        count: Math.max(outcomeCount, genericCount),
+        count: repeatCount,
       };
     }
 
-    if (outcomeCount >= cfg.warningThreshold || genericCount >= cfg.warningThreshold) {
+    if (repeatCount >= policy.warningThreshold) {
       return {
         level: 'warning',
         detector: 'generic_repeat',
-        message: `Repeated identical tool call detected (${Math.max(outcomeCount, genericCount)}x)`,
+        message: `Repeated identical tool call detected (${repeatCount}x)`,
         signature,
         argsHash,
-        count: Math.max(outcomeCount, genericCount),
+        count: repeatCount,
       };
     }
   }
 
-  return { level: 'none', signature, argsHash, count: Math.max(outcomeCount, genericCount) };
+  return { level: 'none', signature, argsHash, count: Math.max(outcomeStreak, signatureStreak) };
 }
 
 export function getToolCallStats(state: ToolLoopState): {

@@ -710,6 +710,17 @@ export type AgentSession = {
     totalHistory: number;
     signatures: Array<{ signature: string; count: number }>;
     outcomes: Array<{ key: string; count: number }>;
+    telemetry?: {
+      callsRegistered: number;
+      dedupedReplays: number;
+      readCacheLookups: number;
+      readCacheHits: number;
+      warnings: number;
+      criticals: number;
+      recoveryRecommended: number;
+      readCacheHitRate: number;
+      dedupeRate: number;
+    };
   };
   captureOn: (filePath?: string) => Promise<string>;
   captureOff: () => void;
@@ -1686,7 +1697,28 @@ export async function createSession(opts: {
     totalHistory: number;
     signatures: Array<{ signature: string; count: number }>;
     outcomes: Array<{ key: string; count: number }>;
-  } = { totalHistory: 0, signatures: [], outcomes: [] };
+    telemetry?: {
+      callsRegistered: number;
+      dedupedReplays: number;
+      readCacheLookups: number;
+      readCacheHits: number;
+      warnings: number;
+      criticals: number;
+      recoveryRecommended: number;
+      readCacheHitRate: number;
+      dedupeRate: number;
+    };
+  } = { totalHistory: 0, signatures: [], outcomes: [], telemetry: {
+    callsRegistered: 0,
+    dedupedReplays: 0,
+    readCacheLookups: 0,
+    readCacheHits: 0,
+    warnings: 0,
+    criticals: 0,
+    recoveryRecommended: 0,
+    readCacheHitRate: 0,
+    dedupeRate: 0,
+  } };
   let lastModelsProbeMs = 0;
 
   const capturesDir = path.join(stateDir(), 'captures');
@@ -2275,11 +2307,27 @@ export async function createSession(opts: {
       warningThreshold: cfg.tool_loop_detection?.warning_threshold,
       criticalThreshold: cfg.tool_loop_detection?.critical_threshold,
       globalCircuitBreakerThreshold: cfg.tool_loop_detection?.global_circuit_breaker_threshold,
+      readCacheTtlMs: cfg.tool_loop_detection?.read_cache_ttl_ms,
       detectors: {
         genericRepeat: cfg.tool_loop_detection?.detectors?.generic_repeat,
         knownPollNoProgress: cfg.tool_loop_detection?.detectors?.known_poll_no_progress,
         pingPong: cfg.tool_loop_detection?.detectors?.ping_pong,
       },
+      perTool: Object.fromEntries(
+        Object.entries(cfg.tool_loop_detection?.per_tool ?? {}).map(([tool, policy]) => [
+          tool,
+          {
+            warningThreshold: policy?.warning_threshold,
+            criticalThreshold: policy?.critical_threshold,
+            globalCircuitBreakerThreshold: policy?.global_circuit_breaker_threshold,
+            detectors: {
+              genericRepeat: policy?.detectors?.generic_repeat,
+              knownPollNoProgress: policy?.detectors?.known_poll_no_progress,
+              pingPong: policy?.detectors?.ping_pong,
+            },
+          },
+        ]),
+      ),
     });
     const toolLoopWarningKeys = new Set<string>();
     let forceToollessRecoveryTurn = false;

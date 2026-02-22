@@ -68,6 +68,16 @@ export const sessionCommands: SlashCommand[] = [
     async execute(ctx) {
       ctx.lastStatusLine = formatStatusLine(ctx.session, ctx.config, ctx.S);
       console.log(ctx.lastStatusLine);
+      const getter = (ctx.session as any)?.getToolLoopStats;
+      if (typeof getter === 'function') {
+        const stats = getter();
+        const t = stats?.telemetry;
+        if (t) {
+          const cachePct = Number.isFinite(t.readCacheHitRate) ? `${(t.readCacheHitRate * 100).toFixed(1)}%` : '0.0%';
+          const dedupePct = Number.isFinite(t.dedupeRate) ? `${(t.dedupeRate * 100).toFixed(1)}%` : '0.0%';
+          console.log(ctx.S.dim(`tool-loop: warn=${t.warnings} critical=${t.criticals} cache=${t.readCacheHits}/${t.readCacheLookups} (${cachePct}) dedupe=${t.dedupedReplays}/${t.callsRegistered} (${dedupePct})`));
+        }
+      }
       return true;
     },
   },
@@ -84,9 +94,18 @@ export const sessionCommands: SlashCommand[] = [
       const stats = getter();
       const sigs = Array.isArray(stats?.signatures) ? stats.signatures.slice(0, 8) : [];
       const outcomes = Array.isArray(stats?.outcomes) ? stats.outcomes.slice(0, 8) : [];
+      const t = stats?.telemetry;
 
       console.log('Tool Loop Stats');
       console.log(`  History entries: ${Number(stats?.totalHistory ?? 0)}`);
+      if (t) {
+        const cachePct = Number.isFinite(t.readCacheHitRate) ? `${(t.readCacheHitRate * 100).toFixed(1)}%` : '0.0%';
+        const dedupePct = Number.isFinite(t.dedupeRate) ? `${(t.dedupeRate * 100).toFixed(1)}%` : '0.0%';
+        console.log(`  Calls registered: ${t.callsRegistered}`);
+        console.log(`  Dedupe replays: ${t.dedupedReplays} (${dedupePct})`);
+        console.log(`  Read-cache hits: ${t.readCacheHits}/${t.readCacheLookups} (${cachePct})`);
+        console.log(`  Loop detections: warnings=${t.warnings}, critical=${t.criticals}, recovery=${t.recoveryRecommended}`);
+      }
       console.log('  Top signatures:');
       if (!sigs.length) console.log('    (none)');
       else for (const row of sigs) console.log(`    - ${row.count}x ${row.signature}`);

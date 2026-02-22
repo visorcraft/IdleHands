@@ -18,11 +18,13 @@ const DEFAULTS: IdlehandsConfig = {
     warning_threshold: 4,
     critical_threshold: 8,
     global_circuit_breaker_threshold: 12,
+    read_cache_ttl_ms: 15000,
     detectors: {
       generic_repeat: true,
       known_poll_no_progress: true,
       ping_pong: true,
     },
+    per_tool: {},
   },
   response_timeout: 600,
   connection_timeout: 600,
@@ -217,6 +219,7 @@ export async function loadConfig(opts: {
       warning_threshold: parseNum(process.env.IDLEHANDS_TOOL_LOOP_WARNING_THRESHOLD),
       critical_threshold: parseNum(process.env.IDLEHANDS_TOOL_LOOP_CRITICAL_THRESHOLD),
       global_circuit_breaker_threshold: parseNum(process.env.IDLEHANDS_TOOL_LOOP_CIRCUIT_BREAKER_THRESHOLD),
+      read_cache_ttl_ms: parseNum(process.env.IDLEHANDS_TOOL_LOOP_READ_CACHE_TTL_MS),
       detectors: {
         generic_repeat: parseBool(process.env.IDLEHANDS_TOOL_LOOP_DETECTOR_GENERIC_REPEAT),
         known_poll_no_progress: parseBool(process.env.IDLEHANDS_TOOL_LOOP_DETECTOR_KNOWN_POLL),
@@ -405,6 +408,23 @@ export async function loadConfig(opts: {
   const fileToolLoop = (fileCfg as any).tool_loop_detection;
   const envToolLoop = (envCfg as any).tool_loop_detection;
   const cliToolLoop = (cliCfg as any).tool_loop_detection;
+  const defaultPerTool = ((DEFAULTS.tool_loop_detection as any)?.per_tool ?? {}) as Record<string, any>;
+  const mergedPerTool: Record<string, any> = { ...defaultPerTool };
+  for (const src of [fileToolLoop, envToolLoop, cliToolLoop]) {
+    const p = (src ?? {}).per_tool;
+    if (!p || typeof p !== 'object') continue;
+    for (const [tool, policy] of Object.entries(p as Record<string, any>)) {
+      mergedPerTool[tool] = {
+        ...(mergedPerTool[tool] ?? {}),
+        ...stripUndef(policy ?? {}),
+        detectors: {
+          ...((mergedPerTool[tool] ?? {}).detectors ?? {}),
+          ...(stripUndef((policy ?? {}).detectors ?? {}) as any),
+        },
+      };
+    }
+  }
+
   merged.tool_loop_detection = {
     ...(DEFAULTS.tool_loop_detection ?? {}),
     ...stripUndef(fileToolLoop ?? {}),
@@ -416,6 +436,7 @@ export async function loadConfig(opts: {
       ...(stripUndef((envToolLoop ?? {}).detectors ?? {}) as any),
       ...(stripUndef((cliToolLoop ?? {}).detectors ?? {}) as any),
     },
+    per_tool: mergedPerTool,
   };
 
   // merge order: defaults < file < env < cli
@@ -503,6 +524,9 @@ export async function loadConfig(opts: {
   if (typeof merged.tool_loop_detection.global_circuit_breaker_threshold === 'number') {
     merged.tool_loop_detection.global_circuit_breaker_threshold = Math.max(4, Math.floor(merged.tool_loop_detection.global_circuit_breaker_threshold));
   }
+  if (typeof merged.tool_loop_detection.read_cache_ttl_ms === 'number') {
+    merged.tool_loop_detection.read_cache_ttl_ms = Math.max(0, Math.floor(merged.tool_loop_detection.read_cache_ttl_ms));
+  }
   // Ensure threshold ordering: warning < critical < circuit_breaker
   if (typeof merged.tool_loop_detection.warning_threshold === 'number' &&
       typeof merged.tool_loop_detection.critical_threshold === 'number' &&
@@ -524,6 +548,40 @@ export async function loadConfig(opts: {
   if (knownPoll !== undefined) d.known_poll_no_progress = knownPoll;
   const pingPong = parseBoolLike(d.ping_pong);
   if (pingPong !== undefined) d.ping_pong = pingPong;
+
+  const perToolRaw = merged.tool_loop_detection.per_tool;
+  const perTool: Record<string, any> = {};
+  if (perToolRaw && typeof perToolRaw === 'object') {
+    for (const [tool, rawPolicy] of Object.entries(perToolRaw as Record<string, any>)) {
+      const name = String(tool || '').trim();
+      if (!name) continue;
+      const policy = rawPolicy && typeof rawPolicy === 'object' ? { ...rawPolicy } : {};
+      if (typeof policy.warning_threshold === 'number') {
+        policy.warning_threshold = Math.max(2, Math.floor(policy.warning_threshold));
+      }
+      if (typeof policy.critical_threshold === 'number') {
+        policy.critical_threshold = Math.max(3, Math.floor(policy.critical_threshold));
+      }
+      if (typeof policy.global_circuit_breaker_threshold === 'number') {
+        policy.global_circuit_breaker_threshold = Math.max(4, Math.floor(policy.global_circuit_breaker_threshold));
+      }
+      if (typeof policy.warning_threshold === 'number' && typeof policy.critical_threshold === 'number' && policy.warning_threshold >= policy.critical_threshold) {
+        policy.critical_threshold = policy.warning_threshold + 2;
+      }
+      if (typeof policy.critical_threshold === 'number' && typeof policy.global_circuit_breaker_threshold === 'number' && policy.critical_threshold >= policy.global_circuit_breaker_threshold) {
+        policy.global_circuit_breaker_threshold = policy.critical_threshold + 2;
+      }
+      const pd = policy.detectors = policy.detectors && typeof policy.detectors === 'object' ? policy.detectors : {};
+      const pdGen = parseBoolLike(pd.generic_repeat);
+      if (pdGen !== undefined) pd.generic_repeat = pdGen;
+      const pdPoll = parseBoolLike(pd.known_poll_no_progress);
+      if (pdPoll !== undefined) pd.known_poll_no_progress = pdPoll;
+      const pdPp = parseBoolLike(pd.ping_pong);
+      if (pdPp !== undefined) pd.ping_pong = pdPp;
+      perTool[name] = policy;
+    }
+  }
+  merged.tool_loop_detection.per_tool = perTool;
 
   const subAgentsEnabled = parseBoolLike(merged.sub_agents.enabled);
   if (subAgentsEnabled !== undefined) merged.sub_agents.enabled = subAgentsEnabled;
