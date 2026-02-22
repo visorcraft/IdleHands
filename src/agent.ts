@@ -160,6 +160,7 @@ Rules:
 - Never use spawn_task to bypass confirmation/safety restrictions (for example blocked package installs). If a command is blocked, adapt the plan or ask the user for approval mode changes.
 - Read the target file before editing. You need the exact text for search/replace.
 - Use read_file with search=... to jump to relevant code; avoid reading whole files.
+- Never call read_file/read_files/list_dir twice in a row with identical arguments (same path/options). Reuse the previous result instead.
 - Prefer apply_patch or edit_range for code edits (token-efficient). Use edit_file only when exact old_text replacement is necessary.
 - Use insert_file for insertions (prepend/append/line).
 - Use exec to run commands, tests, builds; check results before reporting success.
@@ -191,6 +192,7 @@ const APPROVAL_MODE_SET = new Set<ApprovalMode>(['plan', 'reject', 'default', 'a
 const LSP_TOOL_NAMES = ['lsp_diagnostics', 'lsp_symbols', 'lsp_hover', 'lsp_definition', 'lsp_references'] as const;
 const LSP_TOOL_NAME_SET = new Set<string>(LSP_TOOL_NAMES);
 const FILE_MUTATION_TOOL_SET = new Set(['edit_file', 'edit_range', 'apply_patch', 'write_file', 'insert_file']);
+const NO_CONSECUTIVE_IDENTICAL_READ_CALLS = new Set(['read_file', 'read_files', 'list_dir', 'list_dirs']);
 
 function normalizeApprovalMode(value: unknown): ApprovalMode | undefined {
   if (typeof value !== 'string') return undefined;
@@ -317,7 +319,7 @@ function buildToolsSchema(opts?: {
       type: 'function',
       function: {
         name: 'read_file',
-        description: 'Read a bounded slice of a file.',
+        description: 'Read a bounded slice of a file. Never repeat an identical call consecutively; reuse the prior result.',
         parameters: obj(
           {
             path: str(),
@@ -336,7 +338,7 @@ function buildToolsSchema(opts?: {
       type: 'function',
       function: {
         name: 'read_files',
-        description: 'Batch read bounded file slices.',
+        description: 'Batch read bounded file slices. Never repeat an identical call consecutively; reuse the prior result.',
         parameters: obj(
           {
             requests: {
@@ -429,7 +431,7 @@ function buildToolsSchema(opts?: {
       type: 'function',
       function: {
         name: 'list_dir',
-        description: 'List directory entries.',
+        description: 'List directory entries. Never repeat an identical call consecutively for the same path/options; reuse the prior result.',
         parameters: obj(
           { path: str(), recursive: bool(), max_entries: int(1, 500) },
           ['path']
@@ -2739,6 +2741,15 @@ export async function createSession(opts: {
                 consecutiveCounts.set(sig, 1);
               }
               const consec = consecutiveCounts.get(sig) ?? 1;
+
+              // Stricter no-repeat policy for common scan tools.
+              if (NO_CONSECUTIVE_IDENTICAL_READ_CALLS.has(toolName) && consec >= 2) {
+                throw new Error(
+                  `tool ${toolName}: identical read/list call repeated ${consec}x consecutively; blocked. ` +
+                  `Do NOT call ${toolName} again with the same path/options back-to-back. Reuse the previous result or refine arguments.`
+                );
+              }
+
               if (consec >= 3) {
                 await injectVaultContext().catch(() => {});
               }

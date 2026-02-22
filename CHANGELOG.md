@@ -105,6 +105,7 @@ All notable changes to Idle Hands are documented in this file.
 
 ### Changed
 
+- `read_file`/`read_files`/`list_dir` tool guidance now explicitly tells models not to repeat identical back-to-back calls; runtime loop handling now blocks these duplicate consecutive calls on the second attempt (also guarding `list_dirs` alias).
 - `read_file` now uses safe bounded defaults when arguments are omitted:
   - default `limit=200`
   - default `max_bytes=20000` (validated range `256..262144`)
