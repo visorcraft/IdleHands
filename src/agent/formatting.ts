@@ -283,9 +283,52 @@ export function looksLikePlanningNarration(text: string, finishReason?: string):
   if (/(^|\n)\s*(done|completed|finished|final answer|summary:)\b/.test(s)) return false;
 
   // Typical "thinking out loud"/plan chatter that should continue with tools.
-  return /\b(let me|i(?:'|’)ll|i will|i'm going to|i am going to|next i(?:'|’)ll|first i(?:'|’)ll|i need to|i should|checking|reviewing|exploring|starting by)\b/.test(
+  if (/\b(let me|i(?:'|’)ll|i will|i'm going to|i am going to|next i(?:'|’)ll|first i(?:'|’)ll|i need to|i should|checking|reviewing|exploring|starting by)\b/.test(
     s
-  );
+  )) {
+    return true;
+  }
+
+  // Handle entire response wrapped in a single markdown block
+  let contentToInspect = s;
+  if (contentToInspect.startsWith('```') && contentToInspect.endsWith('```')) {
+    const codeLines = contentToInspect.split('\n');
+    if (codeLines.length >= 3) {
+      contentToInspect = codeLines.slice(1, -1).join('\n').trim();
+    }
+  }
+
+  // Hallucinated naked shell commands (common when models forget the exec tool envelope).
+  // E.g. "grep -rn foo" or "npm install" on a single line with no context.
+  const lines = contentToInspect.split('\n').filter((l) => l.trim().length > 0);
+  if (lines.length > 0 && lines.length <= 5) {
+    const firstLine = lines[0].trim();
+    const firstWord = firstLine.split(/\s+/)[0];
+    const nakedCommands = new Set([
+      'grep', 'ls', 'cat', 'npm', 'yarn', 'pnpm', 'git', 'node', 'python',
+      'cargo', 'go', 'find', 'awk', 'sed', 'rg', 'cd', 'mkdir', 'touch',
+      'rm', 'mv', 'cp', 'curl', 'wget', 'docker', 'pytest', 'tsc', 'npx'
+    ]);
+    if (nakedCommands.has(firstWord)) {
+      // If it has flags or paths, treat as a broken tool call
+      if (
+        firstLine.includes(' -') ||
+        firstLine.includes(' --') ||
+        firstLine.includes('/') ||
+        firstLine.includes('./') ||
+        firstLine === firstWord
+      ) {
+        return true;
+      }
+    }
+
+    // Also catch bare hallucinated file paths
+    if (firstLine.startsWith('/') || firstLine.startsWith('./') || firstLine.startsWith('src/')) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function approxTokenCharCap(maxTokens: number): number {
