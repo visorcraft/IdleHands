@@ -128,7 +128,9 @@ export const modelCommands: SlashCommand[] = [
       const completionTokens = ctx.session.usage.completion;
       const totalTokens = promptTokens + completionTokens;
       const ctxW = ctx.session.contextWindow || 0;
-      const ctxPct = ctxW > 0 ? ((totalTokens / ctxW) * 100).toFixed(1) : '?';
+      const ctxPct = ctxW > 0
+        ? Math.min(100, (totalTokens / ctxW) * 100).toFixed(1)
+        : '?';
 
       const turns = Math.max(0, ctx.session.messages.filter((m: any) => m.role === 'user').length);
       const toolCalls = ctx.session.messages.reduce((sum: number, m: any) => {

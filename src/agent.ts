@@ -1793,6 +1793,9 @@ export async function createSession(opts: {
           }
         }
         messages = compacted;
+        // Reset cumulative usage to match current context after compaction
+        cumulativeUsage.prompt = estimateTokensFromMessages(compacted);
+        cumulativeUsage.completion = 0;
         if (dropped.length) {
           messages.push({ role: 'system', content: buildCompactionSystemNote('manual', dropped.length) });
           await injectVaultContext().catch(() => {});
@@ -2643,6 +2646,9 @@ export async function createSession(opts: {
           }
 
           messages = compacted;
+          // Reset cumulative usage to match current context after auto compaction
+          cumulativeUsage.prompt = estimateTokensFromMessages(compacted);
+          cumulativeUsage.completion = 0;
 
           if (dropped.length) {
             messages.push({ role: 'system', content: buildCompactionSystemNote('auto', dropped.length) } as ChatMessage);

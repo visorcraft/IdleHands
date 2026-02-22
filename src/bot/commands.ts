@@ -124,7 +124,7 @@ export async function handleStatus({ ctx, sessions }: CommandContext): Promise<v
   const s = managed.session;
   const contextPct =
     s.contextWindow > 0
-      ? (((s.usage.prompt + s.usage.completion) / s.contextWindow) * 100).toFixed(1)
+      ? Math.min(100, ((s.usage.prompt + s.usage.completion) / s.contextWindow) * 100).toFixed(1)
       : '?';
   const lines = [
     '<b>Session Status</b>',
