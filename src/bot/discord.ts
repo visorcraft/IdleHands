@@ -1373,7 +1373,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       return;
     }
 
-    if (content === '/rtmodels') {
+    if (content === '/models' || content === '/rtmodels') {
       try {
         const { loadRuntimes } = await import('../runtime/store.js');
         const config = await loadRuntimes();

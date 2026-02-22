@@ -503,7 +503,7 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
     }
   });
 
-  bot.command('rtmodels', async (ctx) => {
+  const handleRuntimeModels = async (ctx: any) => {
     try {
       const { loadRuntimes } = await import('../runtime/store.js');
       const config = await loadRuntimes();
@@ -511,14 +511,18 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
         await ctx.reply('No runtime models configured.');
         return;
       }
-      const lines = config.models.map((m) =>
+      const lines = config.models.map((m: any) =>
         `${m.enabled ? '🟢' : '🔴'} *${m.display_name}* (\`${m.id}\`)\n  Source: \`${m.source}\``,
       );
       await ctx.reply(lines.join('\n\n'), { parse_mode: 'Markdown' });
     } catch (e: any) {
       await ctx.reply(`❌ Failed to load runtime models: ${e?.message ?? String(e)}`);
     }
-  });
+  };
+
+  // Preferred name: /models (keep /rtmodels as backward-compatible alias)
+  bot.command('models', handleRuntimeModels);
+  bot.command('rtmodels', handleRuntimeModels);
 
   bot.command('rtstatus', async (ctx) => {
     try {
@@ -748,7 +752,7 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
     { command: 'vault', description: 'Search vault entries' },
     { command: 'hosts', description: 'List runtime hosts' },
     { command: 'backends', description: 'List runtime backends' },
-    { command: 'rtmodels', description: 'List runtime models' },
+    { command: 'models', description: 'List runtime models' },
     { command: 'rtstatus', description: 'Show active runtime status' },
     { command: 'switch', description: 'Switch runtime model' },
     { command: 'anton', description: 'Autonomous task runner' },

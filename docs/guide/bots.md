@@ -30,7 +30,7 @@ Common commands:
 - `/new`, `/cancel`, `/status`, `/watchdog [status]`
 - `/dir <path>`, `/model`, `/approval <mode>`, `/mode <mode>`
 - `/changes`, `/undo`, `/vault <query>`, `/compact`
-- `/hosts`, `/backends`, `/rtmodels`, `/rtstatus`, `/switch <model-id>`
+- `/hosts`, `/backends`, `/models`, `/rtstatus`, `/switch <model-id>`
 
 ## Discord
 
@@ -51,7 +51,7 @@ Common commands:
 - `/new`, `/cancel`, `/status`, `/watchdog [status]`
 - `/dir <path>`, `/model`, `/approval <mode>`, `/mode <mode>`
 - `/changes`, `/undo`, `/vault <query>`, `/compact`
-- `/hosts`, `/backends`, `/rtmodels`, `/rtstatus`, `/switch <model-id>`
+- `/hosts`, `/backends`, `/models`, `/rtstatus`, `/switch <model-id>`
 
 Set `allow_guilds: true` to enable guild channels.
 
