@@ -146,7 +146,8 @@ describe('agent failure persistence', () => {
       setProjectDir() {},
       async note(key: string, value: string) {
         notes.push({ key, value });
-      }
+      },
+      async upsertNote() {}
     };
 
     const fakeClient: any = {
@@ -207,7 +208,8 @@ describe('agent failure persistence', () => {
       setProjectDir() {},
       async note(key: string, value: string) {
         notes.push({ key, value });
-      }
+      },
+      async upsertNote() {}
     };
 
     const fakeClient: any = {
@@ -471,6 +473,9 @@ describe('agent vault + replay synergy', () => {
       async archiveToolMessages(msgs: any[]) {
         archived.push(...msgs);
         return msgs.length;
+      },
+      async upsertNote() {
+        // Mock for preserving user prompt before compaction
       }
     };
 
@@ -575,7 +580,8 @@ describe('trifecta vault passive injection', () => {
       },
       async archiveToolMessages() {
         return 0;
-      }
+      },
+      async upsertNote() {}
     };
 
     const fakeClient: any = {

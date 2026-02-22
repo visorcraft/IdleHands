@@ -359,6 +359,7 @@ describe('sub-agent context and vault inheritance', () => {
     const fakeVault: any = {
       setProjectDir() {},
       async note(key: string, value: string) { notes.push({ key, value }); },
+      async upsertNote() {},
       async search() { return []; },
       async archiveToolMessages() { return 0; },
       async close() {},
