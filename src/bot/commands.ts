@@ -107,6 +107,7 @@ export async function handleStatus({ ctx, sessions }: CommandContext): Promise<v
     `<b>Model:</b> <code>${escapeHtml(s.model)}</code>`,
     `<b>Harness:</b> <code>${escapeHtml(s.harness)}</code>`,
     `<b>Dir:</b> <code>${escapeHtml(managed.workingDir)}</code>`,
+    `<b>Dir pinned:</b> ${managed.dirPinned ? 'yes' : 'no'}`,
     `<b>Context:</b> ~${(s.usage.prompt + s.usage.completion).toLocaleString()} / ${s.contextWindow.toLocaleString()} (${contextPct}%)`,
     `<b>Tokens:</b> prompt=${s.usage.prompt.toLocaleString()}, completion=${s.usage.completion.toLocaleString()}`,
     `<b>In-flight:</b> ${managed.inFlight ? 'yes' : 'no'}`,
@@ -168,18 +169,29 @@ export async function handleDir({ ctx, sessions }: CommandContext): Promise<void
   const managed = sessions.get(chatId);
 
   if (!arg) {
-    // Show current dir
+    // Show current dir + pin state
     const dir = managed?.workingDir ?? '(no session)';
-    await ctx.reply(`<b>Working directory:</b> <code>${escapeHtml(dir)}</code>`, { parse_mode: 'HTML' });
+    const lines = [`<b>Working directory:</b> <code>${escapeHtml(dir)}</code>`];
+    if (managed) {
+      lines.push(`<b>Directory pinned:</b> ${managed.dirPinned ? 'yes' : 'no'}`);
+      if (!managed.dirPinned && managed.repoCandidates.length > 1) {
+        lines.push('<b>Action required:</b> run <code>/dir &lt;repo-root&gt;</code> before file edits.');
+        const preview = managed.repoCandidates.slice(0, 5).map((p) => `<code>${escapeHtml(p)}</code>`).join(', ');
+        lines.push(`<b>Detected repos:</b> ${preview}`);
+      }
+    }
+    await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
     return;
   }
 
   // Set new dir
   const ok = await sessions.setDir(chatId, arg);
   if (ok) {
-    await ctx.reply(`✅ Working directory set to <code>${escapeHtml(arg)}</code>`, { parse_mode: 'HTML' });
+    const updated = sessions.get(chatId);
+    const resolved = updated?.workingDir ?? arg;
+    await ctx.reply(`✅ Working directory pinned to <code>${escapeHtml(resolved)}</code>`, { parse_mode: 'HTML' });
   } else {
-    await ctx.reply('❌ Directory not allowed or session error. Check bot.telegram.allowed_dirs config.');
+    await ctx.reply('❌ Directory not allowed or session error. Check bot.telegram.allowed_dirs / persona.allowed_dirs.');
   }
 }
 

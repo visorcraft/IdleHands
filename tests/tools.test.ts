@@ -112,6 +112,32 @@ describe('write_file', () => {
       /outside the working directory/i,
     );
   });
+
+  it('requires explicit dir pin before mutations when configured', async () => {
+    const guardedCtx = {
+      ...ctx,
+      requireDirPinForMutations: true,
+      dirPinned: false,
+      repoCandidates: ['/home/sitoryp/repos/citadel', '/home/sitoryp/cerby-workspace/citadel-app'],
+    } as any;
+    await assert.rejects(
+      () => write_file(guardedCtx, { path: 'pinned.txt', content: 'x' }),
+      /multiple repository candidates detected/i,
+    );
+  });
+
+  it('allows filesystem-wide writes when allowed root is / and dir is pinned', async () => {
+    const globalCtx = {
+      ...ctx,
+      allowedWriteRoots: ['/'],
+      requireDirPinForMutations: true,
+      dirPinned: true,
+    } as any;
+    const outside = '/tmp/idlehands-any-root-write.txt';
+    await write_file(globalCtx, { path: outside, content: 'ok' });
+    const got = await fs.readFile(outside, 'utf8');
+    assert.equal(got, 'ok');
+  });
 });
 
 describe('edit_file', () => {

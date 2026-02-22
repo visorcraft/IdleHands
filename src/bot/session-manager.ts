@@ -6,6 +6,12 @@
 import { createSession, type AgentSession } from '../agent.js';
 import type { IdlehandsConfig, BotTelegramConfig, ConfirmationProvider, AgentPersona } from '../types.js';
 import type { AntonRunResult, AntonProgress } from '../anton/types.js';
+import path from 'node:path';
+import { detectRepoCandidates, expandHome, isPathAllowed, normalizeAllowedDirs } from './dir-guard.js';
+
+function pathResolveHome(input: string): string {
+  return path.resolve(expandHome(input));
+}
 
 export type SessionState = 'idle' | 'running' | 'canceling' | 'resetting';
 
@@ -18,6 +24,9 @@ export type ManagedSession = {
   createdAt: number;
   lastActivity: number;
   workingDir: string;
+  allowedDirs: string[];
+  dirPinned: boolean;
+  repoCandidates: string[];
   approvalMode: string;
   inFlight: boolean;
   pendingQueue: string[];
@@ -150,8 +159,14 @@ export class SessionManager {
     // Resolve which agent should handle this chat
     const { agentId, persona } = this.resolveAgent(chatId, userId);
 
-    const workingDir = persona?.default_dir || persona?.allowed_dirs?.[0] || this.botConfig.default_dir || this.baseConfig.dir || process.cwd();
+    const rawAllowedDirs = persona?.allowed_dirs ?? this.botConfig.allowed_dirs;
+    const allowedDirs = normalizeAllowedDirs(rawAllowedDirs);
+    const workingDir = pathResolveHome(persona?.default_dir || persona?.allowed_dirs?.[0] || this.botConfig.default_dir || this.baseConfig.dir || process.cwd());
     const approvalMode = persona?.approval_mode || (this.botConfig.approval_mode as any) || this.baseConfig.approval_mode || 'auto-edit';
+
+    const repoCandidates = await detectRepoCandidates(workingDir, allowedDirs).catch(() => [] as string[]);
+    const requireDirPinForMutations = repoCandidates.length > 1;
+    const dirPinned = !requireDirPinForMutations;
     
     // Build system prompt with escalation instructions if configured
     let systemPrompt = persona?.system_prompt;
@@ -181,6 +196,10 @@ When you escalate, your request will be re-run on a more capable model.`;
       dir: workingDir,
       approval_mode: approvalMode,
       no_confirm: approvalMode === 'yolo',
+      allowed_write_roots: allowedDirs,
+      require_dir_pin_for_mutations: requireDirPinForMutations,
+      dir_pinned: dirPinned,
+      repo_candidates: repoCandidates,
       // Agent-specific overrides
       ...(persona?.model && { model: persona.model }),
       ...(persona?.endpoint && { endpoint: persona.endpoint }),
@@ -202,6 +221,9 @@ When you escalate, your request will be re-run on a more capable model.`;
       createdAt: Date.now(),
       lastActivity: Date.now(),
       workingDir,
+      allowedDirs,
+      dirPinned,
+      repoCandidates,
       approvalMode: config.approval_mode ?? 'auto-edit',
       inFlight: false,
       pendingQueue: [],
@@ -391,15 +413,12 @@ When you escalate, your request will be re-run on a more capable model.`;
     const managed = this.sessions.get(chatId);
     if (!managed) return false;
 
-    // Validate against allowed_dirs
-    const allowedDirs = this.botConfig.allowed_dirs ?? ['~'];
-    const homeDir = process.env.HOME || '/home';
-    const resolvedDir = dir.replace(/^~/, homeDir);
-    const allowed = allowedDirs.some((d) => {
-      const resolved = d.replace(/^~/, homeDir);
-      return resolvedDir.startsWith(resolved);
-    });
-    if (!allowed) return false;
+    const allowedDirs = managed.allowedDirs.length ? managed.allowedDirs : normalizeAllowedDirs(this.botConfig.allowed_dirs);
+    const resolvedDir = pathResolveHome(dir);
+    if (!isPathAllowed(resolvedDir, allowedDirs)) return false;
+
+    // User explicitly pinned directory via /dir.
+    const repoCandidates = await detectRepoCandidates(resolvedDir, allowedDirs).catch(() => managed.repoCandidates);
 
     // Destroy and recreate with new dir
     this.destroy(chatId);
@@ -408,6 +427,10 @@ When you escalate, your request will be re-run on a more capable model.`;
       dir: resolvedDir,
       no_confirm: managed.approvalMode === 'yolo',
       approval_mode: managed.approvalMode as any,
+      allowed_write_roots: allowedDirs,
+      require_dir_pin_for_mutations: managed.config.require_dir_pin_for_mutations ?? false,
+      dir_pinned: true,
+      repo_candidates: repoCandidates,
     };
     const confirmProvider = this.makeConfirmProvider?.(chatId, managed.userId);
     const session = await createSession({ config, confirmProvider });
@@ -421,6 +444,9 @@ When you escalate, your request will be re-run on a more capable model.`;
       createdAt: Date.now(),
       lastActivity: Date.now(),
       workingDir: resolvedDir,
+      allowedDirs,
+      dirPinned: true,
+      repoCandidates,
       approvalMode: managed.approvalMode,
       inFlight: false,
       pendingQueue: [],

@@ -27,6 +27,7 @@ import { projectDir } from '../utils.js';
 import { WATCHDOG_RECOMMENDED_TUNING_TEXT, formatWatchdogCancelMessage, resolveWatchdogSettings, shouldRecommendWatchdogTuning } from '../watchdog.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { detectRepoCandidates, expandHome, isPathAllowed, normalizeAllowedDirs } from './dir-guard.js';
 import { runAnton } from '../anton/controller.js';
 import { parseTaskFile } from '../anton/parser.js';
 import { formatRunSummary, formatProgressBar, formatTaskStart, formatTaskEnd, formatTaskSkip } from '../anton/reporter.js';
@@ -45,6 +46,9 @@ type ManagedSession = {
   session: AgentSession;
   confirmProvider: DiscordConfirmProvider;
   config: IdlehandsConfig;
+  allowedDirs: string[];
+  dirPinned: boolean;
+  repoCandidates: string[];
   inFlight: boolean;
   pendingQueue: Message[];
   state: SessionState;
@@ -153,10 +157,15 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
     }
 
     // Build config with agent-specific overrides
-    const agentDir = persona?.default_dir || persona?.allowed_dirs?.[0] || defaultDir;
+    const allowedDirs = normalizeAllowedDirs(persona?.allowed_dirs ?? botConfig.allowed_dirs);
+    const agentDir = path.resolve(expandHome(persona?.default_dir || persona?.allowed_dirs?.[0] || defaultDir));
     const agentApproval = persona?.approval_mode 
       ? normalizeApprovalMode(persona.approval_mode, approvalMode)
       : approvalMode;
+
+    const repoCandidates = await detectRepoCandidates(agentDir, allowedDirs).catch(() => [] as string[]);
+    const requireDirPinForMutations = repoCandidates.length > 1;
+    const dirPinned = !requireDirPinForMutations;
 
     // Build system prompt with escalation instructions if configured
     let systemPrompt = persona?.system_prompt;
@@ -186,6 +195,10 @@ When you escalate, your request will be re-run on a more capable model.`;
       dir: agentDir,
       approval_mode: agentApproval,
       no_confirm: agentApproval === 'yolo',
+      allowed_write_roots: allowedDirs,
+      require_dir_pin_for_mutations: requireDirPinForMutations,
+      dir_pinned: dirPinned,
+      repo_candidates: repoCandidates,
       // Agent-specific overrides
       ...(persona?.model && { model: persona.model }),
       ...(persona?.endpoint && { endpoint: persona.endpoint }),
@@ -216,6 +229,9 @@ When you escalate, your request will be re-run on a more capable model.`;
       session,
       confirmProvider,
       config: cfg,
+      allowedDirs,
+      dirPinned,
+      repoCandidates,
       inFlight: false,
       pendingQueue: [],
       state: 'idle',
@@ -998,23 +1014,36 @@ When you escalate, your request will be re-run on a more capable model.`;
     if (content === '/dir' || content.startsWith('/dir ')) {
       const arg = content.slice('/dir'.length).trim();
       if (!arg) {
-        await sendUserVisible(msg, `Working directory: \`${managed.config.dir || defaultDir}\``).catch(() => {});
+        const lines = [
+          `Working directory: \`${managed.config.dir || defaultDir}\``,
+          `Directory pinned: ${managed.dirPinned ? 'yes' : 'no'}`,
+        ];
+        if (!managed.dirPinned && managed.repoCandidates.length > 1) {
+          lines.push('Action required: run `/dir <repo-root>` before file edits.');
+          lines.push(`Detected repos: ${managed.repoCandidates.slice(0, 5).map((p) => `\`${p}\``).join(', ')}`);
+        }
+        await sendUserVisible(msg, lines.join('\n')).catch(() => {});
         return;
       }
-      const allowedDirs = botConfig.allowed_dirs ?? ['~'];
-      const homeDir = process.env.HOME || '/home';
-      const resolvedDir = arg.replace(/^~/, homeDir);
-      const allowed = allowedDirs.some((d) => resolvedDir.startsWith(d.replace(/^~/, homeDir)));
-      if (!allowed) {
-        await sendUserVisible(msg, '❌ Directory not allowed. Check bot.discord.allowed_dirs.').catch(() => {});
+
+      const resolvedDir = path.resolve(expandHome(arg));
+      if (!isPathAllowed(resolvedDir, managed.allowedDirs)) {
+        await sendUserVisible(msg, `❌ Directory not allowed. Allowed roots: ${managed.allowedDirs.map((d) => `\`${d}\``).join(', ')}`).catch(() => {});
         return;
       }
+
+      const repoCandidates = await detectRepoCandidates(resolvedDir, managed.allowedDirs).catch(() => managed.repoCandidates);
       const cfg: IdlehandsConfig = {
         ...managed.config,
         dir: resolvedDir,
+        allowed_write_roots: managed.allowedDirs,
+        dir_pinned: true,
+        repo_candidates: repoCandidates,
       };
       await recreateSession(managed, cfg);
-      await sendUserVisible(msg, `✅ Working directory set to \`${resolvedDir}\``).catch(() => {});
+      managed.dirPinned = true;
+      managed.repoCandidates = repoCandidates;
+      await sendUserVisible(msg, `✅ Working directory pinned to \`${resolvedDir}\``).catch(() => {});
       return;
     }
 
@@ -1154,6 +1183,8 @@ When you escalate, your request will be re-run on a more capable model.`;
           `Approval: ${managed.config.approval_mode}`,
           `Model: ${managed.session.model}`,
           `Harness: ${managed.session.harness}`,
+          `Dir: ${managed.config.dir ?? defaultDir}`,
+          `Dir pinned: ${managed.dirPinned ? 'yes' : 'no'}`,
           `Context: ~${used}/${managed.session.contextWindow} (${pct}%)`,
           `State: ${managed.state}`,
           `Queue: ${managed.pendingQueue.length}/${maxQueue}`,

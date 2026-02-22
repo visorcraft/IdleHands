@@ -19,6 +19,10 @@ export type ToolContext = {
   noConfirm: boolean;
   dryRun: boolean;
   mode?: 'code' | 'sys';
+  allowedWriteRoots?: string[];
+  requireDirPinForMutations?: boolean;
+  dirPinned?: boolean;
+  repoCandidates?: string[];
   backupDir?: string; // defaults to ~/.local/state/idlehands/backups
   maxExecBytes?: number; // max bytes returned per stream (after processing)
   maxExecCaptureBytes?: number; // max bytes buffered per stream before processing (to prevent OOM)
@@ -1000,6 +1004,9 @@ export async function apply_patch(ctx: ToolContext, args: any) {
   }
 
   const absPaths = touched.paths.map((rel) => resolvePath(ctx, rel));
+  for (const abs of absPaths) {
+    enforceMutationWithinCwd('apply_patch', abs, ctx);
+  }
 
   // Path safety check (Phase 9)
   const verdicts = absPaths.map((p) => ({ p, v: checkPathSafety(p) }));
@@ -1724,9 +1731,33 @@ function checkCwdWarning(tool: string, resolvedPath: string, ctx: ToolContext): 
  */
 function enforceMutationWithinCwd(tool: string, resolvedPath: string, ctx: ToolContext): void {
   if (ctx.mode === 'sys') return;
+
+  const absTarget = path.resolve(resolvedPath);
   const absCwd = path.resolve(ctx.cwd);
-  if (!isWithinDir(resolvedPath, absCwd)) {
-    throw new Error(`${tool}: BLOCKED — path "${resolvedPath}" is outside the working directory "${absCwd}". Run /dir <project-root> first, then retry with relative paths.`);
+  const roots = (ctx.allowedWriteRoots ?? []).map((r) => path.resolve(r));
+  const allowAny = roots.includes('/');
+
+  // If session requires explicit /dir pinning, block all mutations until pinned.
+  if (ctx.requireDirPinForMutations && !ctx.dirPinned) {
+    const candidates = (ctx.repoCandidates ?? []).slice(0, 8).join(', ');
+    const hint = candidates ? ` Candidates: ${candidates}` : '';
+    throw new Error(`${tool}: BLOCKED — multiple repository candidates detected. Set repo root explicitly with /dir <path> before editing files.${hint}`);
+  }
+
+  // Respect allowed roots first.
+  if (roots.length > 0 && !allowAny) {
+    const inAllowed = roots.some((root) => isWithinDir(absTarget, root));
+    if (!inAllowed) {
+      throw new Error(`${tool}: BLOCKED — path "${absTarget}" is outside allowed directories: ${roots.join(', ')}`);
+    }
+  }
+
+  // If / is explicitly allowed, permit filesystem-wide writes after pin policy above.
+  if (allowAny) return;
+
+  // In code mode, keep edits scoped to current working directory unless explicitly sys mode.
+  if (!isWithinDir(absTarget, absCwd)) {
+    throw new Error(`${tool}: BLOCKED — path "${absTarget}" is outside the working directory "${absCwd}". Run /dir <project-root> first, then retry with relative paths.`);
   }
 }
 

@@ -180,6 +180,12 @@ export type IdlehandsConfig = {
   mode?: 'code' | 'sys';
   sys_eager?: boolean;
 
+  // bot dir-guard controls (session-scoped)
+  allowed_write_roots?: string[];
+  require_dir_pin_for_mutations?: boolean;
+  dir_pinned?: boolean;
+  repo_candidates?: string[];
+
   // local-server / perf
   context_window?: number;
   cache_prompt?: boolean;
