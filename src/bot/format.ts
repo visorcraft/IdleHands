@@ -55,8 +55,40 @@ export function escapeHtml(text: string): string {
 }
 
 /**
+ * Check if a line looks like it should be in a code block.
+ * Detects JSON objects/arrays, key:value pairs, and code-like patterns.
+ */
+function looksLikeCodeContent(line: string): boolean {
+  const trimmed = line.trim();
+
+  // Empty lines don't count
+  if (!trimmed) return false;
+
+  // JSON object/array boundaries
+  if (/^\s*[\{\[]/.test(trimmed) || /[\}\]]\s*[,]?\s*$/.test(trimmed)) return true;
+
+  // JSON key-value pairs: "key": value
+  if (/^\s*"[^"]+"\s*:\s*/.test(trimmed)) return true;
+
+  // Multi-line JSON values ending with comma
+  if (/\s*,\s*$/.test(trimmed) && /[:\[\{]/.test(trimmed)) return true;
+
+  // Lines that are only a comma (JSON continuation)
+  if (/^\s*,\s*$/.test(trimmed)) return true;
+
+  // Path-like strings or URLs
+  if (/^["']?(\/[\w\/.-]+|https?:\/\/|file:\/\/)/.test(trimmed)) return true;
+
+  // Shell commands or code with special chars
+  if (/\b(if|then|else|fi|for|while|do|done|function|return|import|export|const|let|var)\b/.test(trimmed)) return true;
+
+  return false;
+}
+
+/**
  * Convert markdown to Telegram HTML.
  * Handles: code blocks, inline code, bold, italic, strikethrough, links, headings, lists.
+ * Auto-detects JSON-like content and wraps in code blocks.
  * Passes everything else through as escaped plain text.
  */
 export function markdownToTelegramHtml(md: string): string {
@@ -93,6 +125,23 @@ export function markdownToTelegramHtml(md: string): string {
     if (inCodeBlock) {
       codeLines.push(line);
       continue;
+    }
+
+    // Auto-detect JSON/code content without fences
+    if (looksLikeCodeContent(line)) {
+      // Collect consecutive code-like lines
+      const autoCodeLines: string[] = [line];
+      let j = i + 1;
+      while (j < lines.length && (looksLikeCodeContent(lines[j]!) || lines[j]!.trim() === '')) {
+        autoCodeLines.push(lines[j]!);
+        j++;
+      }
+      // Only wrap if we have 2+ lines that look like code
+      if (autoCodeLines.filter(l => l.trim()).length >= 2) {
+        out.push(`<pre><code>${escapeHtml(autoCodeLines.join('\n'))}</code></pre>`);
+        i = j - 1;
+        continue;
+      }
     }
 
     // Empty line → paragraph break
