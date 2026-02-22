@@ -37,6 +37,7 @@ import {
   handleAgents,
   handleEscalate,
   handleDeescalate,
+  handleRestartBot,
 } from './commands.js';
 import { TelegramConfirmProvider } from './confirm-telegram.js';
 import {
@@ -532,6 +533,7 @@ export async function startTelegramBot(
   bot.command('agents', (ctx) => handleAgents(cmdCtx(ctx)));
   bot.command('escalate', (ctx) => handleEscalate(cmdCtx(ctx)));
   bot.command('deescalate', (ctx) => handleDeescalate(cmdCtx(ctx)));
+  bot.command('restart-bot', (ctx) => handleRestartBot(cmdCtx(ctx)));
 
   bot.command('hosts', async (ctx) => {
     try {

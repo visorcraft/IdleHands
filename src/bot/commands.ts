@@ -93,6 +93,7 @@ export async function handleHelp({ ctx }: CommandContext): Promise<void> {
     '/anton status — Show task runner progress',
     '/anton stop — Stop task runner',
     '/anton last — Show last run results',
+    '/restart-bot — Restart the bot service',
     '',
     'Or just send any text as a coding task.',
   ];
@@ -871,4 +872,14 @@ export async function handleDeescalate({
   } catch (e: any) {
     await ctx.reply(`❌ Failed to deescalate: ${e?.message ?? e}`);
   }
+}
+
+export async function handleRestartBot({ ctx }: CommandContext): Promise<void> {
+  const { spawn } = await import('node:child_process');
+  await ctx.reply('🔄 Restarting idlehands-bot service...');
+  // Spawn detached process to restart after we return
+  spawn('systemctl', ['--user', 'restart', 'idlehands-bot'], {
+    detached: true,
+    stdio: 'ignore',
+  }).unref();
 }

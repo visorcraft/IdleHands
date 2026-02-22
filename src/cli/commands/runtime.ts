@@ -64,4 +64,17 @@ export const runtimeCommands: SlashCommand[] = [
       return true;
     },
   },
+  {
+    name: '/restart-bot',
+    description: 'Restart the idlehands-bot service',
+    async execute() {
+      const { spawn } = await import('node:child_process');
+      console.log('🔄 Restarting idlehands-bot service...');
+      spawn('systemctl', ['--user', 'restart', 'idlehands-bot'], {
+        detached: true,
+        stdio: 'ignore',
+      }).unref();
+      return true;
+    },
+  },
 ];
