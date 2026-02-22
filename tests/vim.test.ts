@@ -1,5 +1,6 @@
-import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { describe, it, beforeEach } from 'node:test';
+
 import { createVimState, handleVimKeypress, type VimState } from '../dist/vim.js';
 
 // Minimal readline stub for testing cursor/line manipulation

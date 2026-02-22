@@ -3,16 +3,16 @@
  * /approve, /reject, /vim, /theme, /quiet, /verbose, /normal.
  */
 
-import type { SlashCommand } from '../command-registry.js';
-import { runAgentTurnWithSpinner } from '../agent-turn.js';
-import { formatStatusLine } from '../status.js';
-import { openEditorPrompt } from '../shell.js';
-import { expandAtFileRefs, expandPromptImages } from '../input.js';
 import { estimateTokensFromMessages } from '../../history.js';
+import { setSafetyLogging } from '../../safety.js';
 import { makeStyler, err as errFmt } from '../../term.js';
 import { resolveTheme, listThemes } from '../../themes.js';
-import { setSafetyLogging } from '../../safety.js';
 import { projectDir } from '../../utils.js';
+import { runAgentTurnWithSpinner } from '../agent-turn.js';
+import type { SlashCommand } from '../command-registry.js';
+import { expandAtFileRefs, expandPromptImages } from '../input.js';
+import { openEditorPrompt } from '../shell.js';
+import { formatStatusLine } from '../status.js';
 
 export const editingCommands: SlashCommand[] = [
   {
@@ -24,11 +24,21 @@ export const editingCommands: SlashCommand[] = [
         console.log(editRes.reason || 'Editor cancelled.');
         return true;
       }
-      const expandedRes = await expandAtFileRefs(editRes.text || '', projectDir(ctx.config), ctx.config.context_max_tokens ?? 8192);
+      const expandedRes = await expandAtFileRefs(
+        editRes.text || '',
+        projectDir(ctx.config),
+        ctx.config.context_max_tokens ?? 8192
+      );
       for (const w of expandedRes.warnings) console.log(ctx.S.dim(w));
-      const promptText = ctx.pendingTemplate ? `${ctx.pendingTemplate}\n\n${expandedRes.text}` : expandedRes.text;
+      const promptText = ctx.pendingTemplate
+        ? `${ctx.pendingTemplate}\n\n${expandedRes.text}`
+        : expandedRes.text;
       ctx.pendingTemplate = null;
-      const imageExpanded = await expandPromptImages(promptText, projectDir(ctx.config), ctx.session.supportsVision);
+      const imageExpanded = await expandPromptImages(
+        promptText,
+        projectDir(ctx.config),
+        ctx.session.supportsVision
+      );
       for (const w of imageExpanded.warnings) console.log(ctx.S.dim(w));
       ctx.lastRunnableInput = imageExpanded.content;
       try {
@@ -147,7 +157,9 @@ export const editingCommands: SlashCommand[] = [
         console.log('Plan mode: off (approval_mode=auto-edit)');
       } else if (!arg || arg === 'toggle') {
         ctx.config.approval_mode = ctx.config.approval_mode === 'plan' ? 'auto-edit' : 'plan';
-        console.log(`Plan mode: ${ctx.config.approval_mode === 'plan' ? 'on' : 'off'} (approval_mode=${ctx.config.approval_mode})`);
+        console.log(
+          `Plan mode: ${ctx.config.approval_mode === 'plan' ? 'on' : 'off'} (approval_mode=${ctx.config.approval_mode})`
+        );
       }
       if (['show', '', 'toggle', 'on', 'off', 'enable', 'disable'].includes(arg)) {
         const steps = ctx.session.planSteps;
@@ -156,13 +168,29 @@ export const editingCommands: SlashCommand[] = [
         } else {
           console.log(ctx.S.bold(`Plan (${steps.length} steps):`));
           for (const step of steps) {
-            const icon = step.executed ? ctx.S.green('[✓]') : step.blocked ? ctx.S.yellow('[▸]') : '[ ]';
-            const result = step.executed && step.result ? ctx.S.dim(` → ${step.result.slice(0, 80)}`) : '';
+            const icon = step.executed
+              ? ctx.S.green('[✓]')
+              : step.blocked
+                ? ctx.S.yellow('[▸]')
+                : '[ ]';
+            const result =
+              step.executed && step.result ? ctx.S.dim(` → ${step.result.slice(0, 80)}`) : '';
             console.log(`  ${icon} #${step.index} ${step.summary}${result}`);
           }
-          console.log(ctx.S.dim(`\nUse /approve to execute all, /approve <N> for a specific step, /reject to discard.`));
+          console.log(
+            ctx.S.dim(
+              `\nUse /approve to execute all, /approve <N> for a specific step, /reject to discard.`
+            )
+          );
         }
-      } else if (arg !== 'on' && arg !== 'off' && arg !== 'enable' && arg !== 'disable' && arg !== 'toggle' && arg !== 'show') {
+      } else if (
+        arg !== 'on' &&
+        arg !== 'off' &&
+        arg !== 'enable' &&
+        arg !== 'disable' &&
+        arg !== 'toggle' &&
+        arg !== 'show'
+      ) {
         console.log('Usage: /plan [on|off|toggle|show]');
       }
       return true;
@@ -173,10 +201,16 @@ export const editingCommands: SlashCommand[] = [
     description: 'Toggle step-by-step mode',
     async execute(ctx, args) {
       const arg = args.toLowerCase();
-      if (arg === 'on' || arg === 'enable') { ctx.config.step_mode = true; }
-      else if (arg === 'off' || arg === 'disable') { ctx.config.step_mode = false; }
-      else if (!arg || arg === 'toggle') { ctx.config.step_mode = !ctx.config.step_mode; }
-      else { console.log('Usage: /step [on|off|toggle]'); return true; }
+      if (arg === 'on' || arg === 'enable') {
+        ctx.config.step_mode = true;
+      } else if (arg === 'off' || arg === 'disable') {
+        ctx.config.step_mode = false;
+      } else if (!arg || arg === 'toggle') {
+        ctx.config.step_mode = !ctx.config.step_mode;
+      } else {
+        console.log('Usage: /step [on|off|toggle]');
+        return true;
+      }
       console.log(`Step mode: ${ctx.config.step_mode ? 'on' : 'off'}`);
       return true;
     },
@@ -186,13 +220,20 @@ export const editingCommands: SlashCommand[] = [
     description: 'Approve plan step(s)',
     async execute(ctx, args) {
       const steps = ctx.session.planSteps;
-      if (!steps.length) { console.log(ctx.S.dim('No plan steps to approve.')); return true; }
+      if (!steps.length) {
+        console.log(ctx.S.dim('No plan steps to approve.'));
+        return true;
+      }
       const idx = args ? parseInt(args, 10) : undefined;
       if (args && (isNaN(idx!) || idx! < 1 || idx! > steps.length)) {
         console.log(`Invalid step number. Range: 1–${steps.length}`);
         return true;
       }
-      console.log(ctx.S.dim(`Executing ${idx != null ? `step #${idx}` : `all ${steps.filter((s: any) => s.blocked && !s.executed).length} blocked steps`}...`));
+      console.log(
+        ctx.S.dim(
+          `Executing ${idx != null ? `step #${idx}` : `all ${steps.filter((s: any) => s.blocked && !s.executed).length} blocked steps`}...`
+        )
+      );
       try {
         const results = await ctx.session.executePlanStep(idx);
         for (const r of results) console.log(`  ${r}`);
@@ -257,9 +298,13 @@ export const editingCommands: SlashCommand[] = [
         const available = await listThemes();
         const current = ctx.config.theme ?? 'default';
         console.log(`Current theme: ${ctx.S.bold(current)}`);
-        console.log(`Built-in: ${available.builtin.map((t: string) => t === current ? ctx.S.bold(ctx.S.cyan(t)) : t).join(', ')}`);
+        console.log(
+          `Built-in: ${available.builtin.map((t: string) => (t === current ? ctx.S.bold(ctx.S.cyan(t)) : t)).join(', ')}`
+        );
         if (available.custom.length) {
-          console.log(`Custom:   ${available.custom.map((t: string) => t === current ? ctx.S.bold(ctx.S.cyan(t)) : t).join(', ')}`);
+          console.log(
+            `Custom:   ${available.custom.map((t: string) => (t === current ? ctx.S.bold(ctx.S.cyan(t)) : t)).join(', ')}`
+          );
         }
       } else {
         const fns = await resolveTheme(arg);
@@ -284,13 +329,19 @@ export const editingCommands: SlashCommand[] = [
         ctx.vimState.pendingKey = '';
         const vimTag = ctx.S.dim('[N] ');
         const runModeTag = ctx.config.mode === 'sys' ? ctx.S.dim('[sys] ') : '';
-        const approvalTag = ctx.config.approval_mode !== 'auto-edit' ? ctx.S.dim(`[${ctx.config.approval_mode}] `) : '';
+        const approvalTag =
+          ctx.config.approval_mode !== 'auto-edit'
+            ? ctx.S.dim(`[${ctx.config.approval_mode}] `)
+            : '';
         ctx.rl.setPrompt(vimTag + runModeTag + approvalTag + ctx.S.bold(ctx.S.cyan('> ')));
         console.log('Vim mode: on (Escape → normal, i → insert)');
       } else {
         ctx.vimState.mode = 'insert';
         const runModeTag = ctx.config.mode === 'sys' ? ctx.S.dim('[sys] ') : '';
-        const approvalTag = ctx.config.approval_mode !== 'auto-edit' ? ctx.S.dim(`[${ctx.config.approval_mode}] `) : '';
+        const approvalTag =
+          ctx.config.approval_mode !== 'auto-edit'
+            ? ctx.S.dim(`[${ctx.config.approval_mode}] `)
+            : '';
         ctx.rl.setPrompt(runModeTag + approvalTag + ctx.S.bold(ctx.S.cyan('> ')));
         console.log('Vim mode: off');
       }

@@ -1,8 +1,8 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { describe, it } from 'node:test';
 
 import {
   writeAutosave,
@@ -14,7 +14,7 @@ import {
   releaseLock,
   forceAcquireLock,
   isPidAlive,
-  type AutosaveData
+  type AutosaveData,
 } from '../dist/recovery.js';
 
 // Override state dir for testing by writing directly to temp paths
@@ -27,7 +27,7 @@ describe('recovery: autosave', () => {
       messages: [
         { role: 'system', content: 'You are a coding agent.' },
         { role: 'user', content: 'Fix the bug' },
-        { role: 'assistant', content: 'Done.' }
+        { role: 'assistant', content: 'Done.' },
       ],
       model: 'test-model',
       harness: 'generic',
@@ -35,7 +35,7 @@ describe('recovery: autosave', () => {
       turns: 3,
       toolCalls: 1,
       savedAt: new Date().toISOString(),
-      pid: process.pid
+      pid: process.pid,
     };
 
     await writeAutosave(data);
@@ -70,11 +70,20 @@ describe('recovery: autosave', () => {
     const autosavePath = path.join(stateDir, 'autosave.json');
     await fs.mkdir(stateDir, { recursive: true });
     // messages[0].role is 'user' instead of 'system'
-    await fs.writeFile(autosavePath, JSON.stringify({
-      messages: [{ role: 'user', content: 'hello' }],
-      model: 'x', harness: 'x', cwd: '/tmp', turns: 1, toolCalls: 0,
-      savedAt: new Date().toISOString(), pid: process.pid
-    }), 'utf8');
+    await fs.writeFile(
+      autosavePath,
+      JSON.stringify({
+        messages: [{ role: 'user', content: 'hello' }],
+        model: 'x',
+        harness: 'x',
+        cwd: '/tmp',
+        turns: 1,
+        toolCalls: 0,
+        savedAt: new Date().toISOString(),
+        pid: process.pid,
+      }),
+      'utf8'
+    );
 
     const loaded = await readAutosave();
     assert.equal(loaded, null);
@@ -84,14 +93,17 @@ describe('recovery: autosave', () => {
 
   it('formatRecoveryPrompt produces human-readable message', () => {
     const data: AutosaveData = {
-      messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'hi' }],
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'hi' },
+      ],
       model: 'test',
       harness: 'generic',
       cwd: '/tmp',
       turns: 8,
       toolCalls: 3,
       savedAt: new Date(Date.now() - 2 * 60_000).toISOString(), // 2 min ago
-      pid: process.pid
+      pid: process.pid,
     };
 
     const prompt = formatRecoveryPrompt(data);
@@ -103,14 +115,17 @@ describe('recovery: autosave', () => {
 
   it('formatRecoveryPrompt says "just now" for recent saves', () => {
     const data: AutosaveData = {
-      messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'hi' }],
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'hi' },
+      ],
       model: 'test',
       harness: 'generic',
       cwd: '/tmp',
       turns: 1,
       toolCalls: 0,
       savedAt: new Date().toISOString(),
-      pid: process.pid
+      pid: process.pid,
     };
 
     const prompt = formatRecoveryPrompt(data);
@@ -124,7 +139,7 @@ describe('recovery: autosave controller', () => {
 
     const msgs = [
       { role: 'system' as const, content: 'sys' },
-      { role: 'user' as const, content: 'hi' }
+      { role: 'user' as const, content: 'hi' },
     ];
     const meta = { model: 'test', harness: 'generic', cwd: '/tmp', turns: 0, toolCalls: 0 };
 
@@ -151,7 +166,7 @@ describe('recovery: autosave controller', () => {
 
     const msgs = [
       { role: 'system' as const, content: 'sys' },
-      { role: 'user' as const, content: 'test' }
+      { role: 'user' as const, content: 'test' },
     ];
     const meta = { model: 'test', harness: 'generic', cwd: '/tmp', turns: 1, toolCalls: 0 };
 

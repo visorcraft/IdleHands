@@ -1,10 +1,10 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import os from 'node:os';
-import http from 'node:http';
 import { execFile } from 'node:child_process';
+import fs from 'node:fs/promises';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it } from 'node:test';
 
 /**
  * Bench harness tests — validates:
@@ -38,7 +38,7 @@ function createMockServer(): http.Server {
       res.writeHead(200, {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache',
-        connection: 'keep-alive'
+        connection: 'keep-alive',
       });
 
       const sse = mkSse([
@@ -48,11 +48,11 @@ function createMockServer(): http.Server {
             {
               index: 0,
               delta: { content: 'OK' },
-              finish_reason: 'stop'
-            }
+              finish_reason: 'stop',
+            },
           ],
-          usage: { prompt_tokens: 10, completion_tokens: 1 }
-        }
+          usage: { prompt_tokens: 10, completion_tokens: 1 },
+        },
       ]);
       res.end(sse);
       return;
@@ -91,7 +91,7 @@ describe('bench harness', () => {
       success: { type: 'equals', value: 'OK' },
       repetitions: 2,
       max_tokens: 64,
-      model: 'mock-bench-model'
+      model: 'mock-bench-model',
     };
     const casePath = path.join(tmpDir, 'case.json');
     await fs.writeFile(casePath, JSON.stringify(benchCase), 'utf8');
@@ -103,35 +103,39 @@ describe('bench harness', () => {
 
     try {
       // Run the bench runner via node
-      const result = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
-        execFile(
-          process.execPath,
-          ['./dist/bench/runner.js', casePath],
-          {
-            cwd: process.cwd(),
-            env: {
-              ...process.env,
-              IDLEHANDS_ENDPOINT: `http://127.0.0.1:${port}/v1`,
-              IDLEHANDS_MODEL: 'mock-bench-model'
+      const result = await new Promise<{ code: number; stdout: string; stderr: string }>(
+        (resolve, reject) => {
+          execFile(
+            process.execPath,
+            ['./dist/bench/runner.js', casePath],
+            {
+              cwd: process.cwd(),
+              env: {
+                ...process.env,
+                IDLEHANDS_ENDPOINT: `http://127.0.0.1:${port}/v1`,
+                IDLEHANDS_MODEL: 'mock-bench-model',
+              },
+              timeout: 30_000,
             },
-            timeout: 30_000
-          },
-          (err, stdout, stderr) => {
-            resolve({
-              code: err && 'code' in err ? (err as any).code : 0,
-              stdout: stdout ?? '',
-              stderr: stderr ?? ''
-            });
-          }
-        );
-      });
+            (err, stdout, stderr) => {
+              resolve({
+                code: err && 'code' in err ? (err as any).code : 0,
+                stdout: stdout ?? '',
+                stderr: stderr ?? '',
+              });
+            }
+          );
+        }
+      );
 
       assert.equal(result.code, 0, `runner exited non-zero: ${result.stderr}`);
       assert.ok(result.stdout.includes('Wrote:'), 'runner should print output path');
 
       // Find the new JSONL file
       const afterFiles = await fs.readdir(resultsDir);
-      const newFiles = afterFiles.filter((f) => !beforeFiles.has(f) && f.startsWith('bench_test_smoke'));
+      const newFiles = afterFiles.filter(
+        (f) => !beforeFiles.has(f) && f.startsWith('bench_test_smoke')
+      );
       assert.ok(newFiles.length >= 1, 'should produce at least one JSONL file');
 
       const jsonlPath = path.join(resultsDir, newFiles[0]);
@@ -177,7 +181,7 @@ describe('bench harness', () => {
       success: { type: 'equals', value: 'OK' },
       repetitions: 1,
       max_tokens: 64,
-      model: 'mock-bench-model'
+      model: 'mock-bench-model',
     };
     const casePath = path.join(tmpDir, 'case.json');
     await fs.writeFile(casePath, JSON.stringify(benchCase), 'utf8');
@@ -186,28 +190,30 @@ describe('bench harness', () => {
     const beforeFiles = new Set(await fs.readdir(resultsDir));
 
     try {
-      const result = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
-        execFile(
-          process.execPath,
-          ['./dist/bench/compare.js', casePath],
-          {
-            cwd: process.cwd(),
-            env: {
-              ...process.env,
-              IDLEHANDS_ENDPOINT: `http://127.0.0.1:${port}/v1`,
-              IDLEHANDS_MODEL: 'mock-bench-model'
+      const result = await new Promise<{ code: number; stdout: string; stderr: string }>(
+        (resolve, reject) => {
+          execFile(
+            process.execPath,
+            ['./dist/bench/compare.js', casePath],
+            {
+              cwd: process.cwd(),
+              env: {
+                ...process.env,
+                IDLEHANDS_ENDPOINT: `http://127.0.0.1:${port}/v1`,
+                IDLEHANDS_MODEL: 'mock-bench-model',
+              },
+              timeout: 30_000,
             },
-            timeout: 30_000
-          },
-          (err, stdout, stderr) => {
-            resolve({
-              code: err && 'code' in err ? (err as any).code : 0,
-              stdout: stdout ?? '',
-              stderr: stderr ?? ''
-            });
-          }
-        );
-      });
+            (err, stdout, stderr) => {
+              resolve({
+                code: err && 'code' in err ? (err as any).code : 0,
+                stdout: stdout ?? '',
+                stderr: stderr ?? '',
+              });
+            }
+          );
+        }
+      );
 
       assert.equal(result.code, 0, `compare exited non-zero: ${result.stderr}`);
       assert.ok(result.stdout.includes('Wrote:'), 'compare should print output path');

@@ -48,10 +48,7 @@ export function sanitizeBotOutputText(text: string): string {
 
 /** Escape HTML special characters for Telegram. */
 export function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /**
@@ -80,7 +77,12 @@ function looksLikeCodeContent(line: string): boolean {
   if (/^["']?(\/[\w\/.-]+|https?:\/\/|file:\/\/)/.test(trimmed)) return true;
 
   // Shell commands or code with special chars
-  if (/\b(if|then|else|fi|for|while|do|done|function|return|import|export|const|let|var)\b/.test(trimmed)) return true;
+  if (
+    /\b(if|then|else|fi|for|while|do|done|function|return|import|export|const|let|var)\b/.test(
+      trimmed
+    )
+  )
+    return true;
 
   return false;
 }
@@ -105,9 +107,18 @@ function isSingleLineJson(line: string): boolean {
     let inString = false;
     let escape = false;
     for (const ch of trimmed) {
-      if (escape) { escape = false; continue; }
-      if (ch === '\\') { escape = true; continue; }
-      if (ch === '"') { inString = !inString; continue; }
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escape = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
       if (!inString) {
         if (ch === '{' || ch === '[') depth++;
         if (ch === '}' || ch === ']') depth--;
@@ -171,7 +182,7 @@ export function markdownToTelegramHtml(md: string): string {
         j++;
       }
       // Wrap if we have 2+ code-like lines OR single-line JSON
-      if (autoCodeLines.filter(l => l.trim()).length >= 2 || isSingleLineJson(line)) {
+      if (autoCodeLines.filter((l) => l.trim()).length >= 2 || isSingleLineJson(line)) {
         out.push(`<pre><code>${escapeHtml(autoCodeLines.join('\n'))}</code></pre>`);
         i = j - 1;
         continue;
@@ -304,6 +315,9 @@ export function splitMessage(text: string, maxLen = 4096): string[] {
 }
 
 /** Format a tool call into a one-line summary for display. */
-export function formatToolCallSummary(call: { name: string; args: Record<string, unknown> }): string {
+export function formatToolCallSummary(call: {
+  name: string;
+  args: Record<string, unknown>;
+}): string {
   return formatSharedToolCallSummary(call as any);
 }

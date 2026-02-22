@@ -105,7 +105,7 @@ export type LspConfig = {
   servers?: LspServerEntry[];
   auto_detect?: boolean;
   proactive_diagnostics?: boolean;
-  diagnostic_severity_threshold?: number;  // 1=Error, 2=Warning, 3=Info, 4=Hint
+  diagnostic_severity_threshold?: number; // 1=Error, 2=Warning, 3=Info, 4=Hint
 };
 
 export type SubAgentConfig = {
@@ -143,7 +143,9 @@ export type HookSystemConfig = {
   strict?: boolean;
   plugin_paths?: string[];
   warn_ms?: number;
-  allow_capabilities?: Array<'observe' | 'read_prompts' | 'read_responses' | 'read_tool_args' | 'read_tool_results'>;
+  allow_capabilities?: Array<
+    'observe' | 'read_prompts' | 'read_responses' | 'read_tool_args' | 'read_tool_results'
+  >;
 };
 
 export type ToolLoopPolicyConfig = {
@@ -188,14 +190,14 @@ export type IdlehandsConfig = {
   tool_loop_detection?: ToolLoopDetectionConfig;
 
   // network
-  response_timeout: number;    // seconds to wait for model server responses (default 600)
+  response_timeout: number; // seconds to wait for model server responses (default 600)
   connection_timeout?: number; // seconds to wait for initial HTTP connection/headers (default follows response_timeout)
   initial_connection_check?: boolean; // run one-time fast probe before first ask (default true)
   initial_connection_timeout?: number; // seconds for initial probe timeout (default 10)
 
   // safety + UX
   approval_mode: ApprovalMode;
-  no_confirm: boolean;       // legacy — maps to approval_mode 'yolo' when true
+  no_confirm: boolean; // legacy — maps to approval_mode 'yolo' when true
   verbose: boolean;
   quiet?: boolean;
   dry_run: boolean;
@@ -317,14 +319,14 @@ export interface ConfirmationProvider {
 export type ConfirmRequest = {
   tool: string;
   args: Record<string, unknown>;
-  summary: string;         // human-readable one-liner
-  diff?: string;           // for edit_file: unified diff preview
+  summary: string; // human-readable one-liner
+  diff?: string; // for edit_file: unified diff preview
   mode: ApprovalMode;
 };
 
 export type ConfirmPlanRequest = {
   steps: ConfirmRequest[];
-  summary: string;         // overall plan summary
+  summary: string; // overall plan summary
 };
 
 export type PlanDecision = {
@@ -345,9 +347,9 @@ export type PlanStep = {
   tool: string;
   args: Record<string, unknown>;
   blocked: boolean;
-  summary: string;       // human-readable description
-  executed?: boolean;     // set after /approve executes it
-  result?: string;        // tool result after execution
+  summary: string; // human-readable description
+  executed?: boolean; // set after /approve executes it
+  result?: string; // tool result after execution
 };
 
 export type ExecResult = {
@@ -371,7 +373,7 @@ export type ExecResult = {
  * Each tier maps to the corresponding model in the escalation chain.
  */
 export type KeywordTier = {
-  /** 
+  /**
    * Keyword patterns for this tier.
    * Can be strings (case-insensitive word match) or regex patterns (prefix with "re:").
    */
@@ -396,7 +398,7 @@ export type ModelEscalation = {
   auto?: boolean;
   /** Maximum escalations per request to prevent loops (default: 1) */
   max_escalations?: number;
-  /** 
+  /**
    * Keyword patterns that trigger automatic escalation before the base model runs.
    * Can be strings (case-insensitive word match) or regex patterns (prefix with "re:").
    * Examples: ["build", "implement", "re:\\b(create|design)\\s+\\w+\\s+(app|system)"]
@@ -416,7 +418,7 @@ export type ModelEscalation = {
    * Tiered keyword escalation. Each tier maps to the corresponding model in `models`.
    * Tier 0 keywords → models[0], Tier 1 → models[1], etc.
    * Highest matching tier wins. If defined, overrides root-level keywords/keyword_presets.
-   * 
+   *
    * Example:
    * ```json
    * "tiers": [
@@ -606,9 +608,9 @@ export type ToolLoopEvent = {
 export type TurnEndEvent = {
   turn: number;
   toolCalls: number;
-  promptTokens: number;          // cumulative
-  completionTokens: number;      // cumulative
-  promptTokensTurn?: number;     // per-response delta
+  promptTokens: number; // cumulative
+  completionTokens: number; // cumulative
+  promptTokensTurn?: number; // per-response delta
   completionTokensTurn?: number; // per-response delta
   ttftMs?: number;
   ttcMs?: number;

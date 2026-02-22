@@ -1,11 +1,24 @@
-import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import os from 'node:os';
-import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { read_file, read_files, write_file, edit_file, edit_range, apply_patch, insert_file, list_dir, search_files, exec, undo_path } from '../dist/tools.js';
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it, before, after } from 'node:test';
+
+import {
+  read_file,
+  read_files,
+  write_file,
+  edit_file,
+  edit_range,
+  apply_patch,
+  insert_file,
+  list_dir,
+  search_files,
+  exec,
+  undo_path,
+} from '../dist/tools.js';
 
 let tmpDir: string;
 let ctx: any;
@@ -35,7 +48,10 @@ describe('read_file', () => {
   });
 
   it('returns descriptive message for binary files with MIME type', async () => {
-    await fs.writeFile(path.join(tmpDir, 'bin.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00]));
+    await fs.writeFile(
+      path.join(tmpDir, 'bin.png'),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00])
+    );
     const r = await read_file(ctx, { path: 'bin.png' });
     assert.ok(r.includes('[binary file'));
     assert.ok(r.includes('6 bytes'));
@@ -101,7 +117,11 @@ describe('write_file', () => {
     const p = path.join(tmpDir, 'exec.sh');
     await fs.writeFile(p, '#!/bin/bash\necho hi');
     await fs.chmod(p, 0o755);
-    await write_file(ctx, { path: 'exec.sh', content: '#!/bin/bash\necho updated', overwrite: true });
+    await write_file(ctx, {
+      path: 'exec.sh',
+      content: '#!/bin/bash\necho updated',
+      overwrite: true,
+    });
     const st = await fs.stat(p);
     assert.equal(st.mode & 0o777, 0o755);
   });
@@ -110,7 +130,7 @@ describe('write_file', () => {
     await fs.writeFile(path.join(tmpDir, 'existing.txt'), 'hello\n', 'utf8');
     await assert.rejects(
       () => write_file(ctx, { path: 'existing.txt', content: 'new text' }),
-      /without explicit overwrite=true/i,
+      /without explicit overwrite=true/i
     );
   });
 
@@ -124,7 +144,7 @@ describe('write_file', () => {
   it('blocks writes outside cwd in code mode', async () => {
     await assert.rejects(
       () => write_file(ctx, { path: '/tmp/idlehands-outside-write.txt', content: 'x' }),
-      /outside the working directory/i,
+      /outside the working directory/i
     );
   });
 
@@ -137,7 +157,7 @@ describe('write_file', () => {
     } as any;
     await assert.rejects(
       () => write_file(guardedCtx, { path: 'pinned.txt', content: 'x' }),
-      /multiple repository candidates detected/i,
+      /multiple repository candidates detected/i
     );
   });
 
@@ -196,7 +216,12 @@ describe('edit_file', () => {
 
   it('replace_all replaces all occurrences', async () => {
     await fs.writeFile(path.join(tmpDir, 'edit3.txt'), 'aaa bbb aaa');
-    await edit_file(ctx, { path: 'edit3.txt', old_text: 'aaa', new_text: 'ccc', replace_all: true });
+    await edit_file(ctx, {
+      path: 'edit3.txt',
+      old_text: 'aaa',
+      new_text: 'ccc',
+      replace_all: true,
+    });
     const content = await fs.readFile(path.join(tmpDir, 'edit3.txt'), 'utf8');
     assert.equal(content, 'ccc bbb ccc');
   });
@@ -219,7 +244,11 @@ describe('edit_file', () => {
     );
 
     const after = await fs.readFile(p);
-    assert.equal(Buffer.compare(after, original), 0, 'binary file should not be modified on failure');
+    assert.equal(
+      Buffer.compare(after, original),
+      0,
+      'binary file should not be modified on failure'
+    );
   });
 
   it('blocks edits outside cwd in code mode', async () => {
@@ -227,7 +256,7 @@ describe('edit_file', () => {
     await fs.writeFile(outside, 'hello world', 'utf8');
     await assert.rejects(
       () => edit_file(ctx, { path: outside, old_text: 'hello', new_text: 'bye' }),
-      /outside the working directory/i,
+      /outside the working directory/i
     );
   });
 });
@@ -239,7 +268,7 @@ describe('edit_range', () => {
       path: 'range.txt',
       start_line: 2,
       end_line: 3,
-      replacement: 'X\nY'
+      replacement: 'X\nY',
     });
     const content = await fs.readFile(path.join(tmpDir, 'range.txt'), 'utf8');
     assert.equal(content, 'a\nX\nY\nd\n');
@@ -248,7 +277,8 @@ describe('edit_range', () => {
   it('rejects invalid ranges', async () => {
     await fs.writeFile(path.join(tmpDir, 'range-bad.txt'), 'one\ntwo\n');
     await assert.rejects(
-      () => edit_range(ctx, { path: 'range-bad.txt', start_line: 3, end_line: 2, replacement: 'x' }),
+      () =>
+        edit_range(ctx, { path: 'range-bad.txt', start_line: 3, end_line: 2, replacement: 'x' }),
       /invalid end_line/i
     );
   });
@@ -256,8 +286,14 @@ describe('edit_range', () => {
   it('rejects double-escaped replacement payloads and asks for real newlines', async () => {
     await fs.writeFile(path.join(tmpDir, 'range-escaped.txt'), 'one\ntwo\nthree\n', 'utf8');
     await assert.rejects(
-      () => edit_range(ctx, { path: 'range-escaped.txt', start_line: 2, end_line: 2, replacement: 'alpha\\nbeta' }),
-      /double-escaped|real newline/i,
+      () =>
+        edit_range(ctx, {
+          path: 'range-escaped.txt',
+          start_line: 2,
+          end_line: 2,
+          replacement: 'alpha\\nbeta',
+        }),
+      /double-escaped|real newline/i
     );
   });
 
@@ -266,7 +302,7 @@ describe('edit_range', () => {
     await fs.writeFile(outside, 'a\nb\nc\n', 'utf8');
     await assert.rejects(
       () => edit_range(ctx, { path: outside, start_line: 1, end_line: 1, replacement: 'z' }),
-      /outside the working directory/i,
+      /outside the working directory/i
     );
   });
 });
@@ -284,7 +320,7 @@ describe('apply_patch', () => {
       '-hello',
       '+hola',
       ' world',
-      ''
+      '',
     ].join('\n');
 
     const out = await apply_patch(ctx, {
@@ -334,7 +370,10 @@ describe('insert_file', () => {
     await insert_file(ctx, { path: 'trailing-nl.txt', line: -1, text: 'line3' });
     const content = await fs.readFile(path.join(tmpDir, 'trailing-nl.txt'), 'utf8');
     // Should be "line1\nline2\nline3\n" — NOT "line1\nline2\n\nline3"
-    assert.ok(!content.includes('\n\n'), `Should not have double newline, got: ${JSON.stringify(content)}`);
+    assert.ok(
+      !content.includes('\n\n'),
+      `Should not have double newline, got: ${JSON.stringify(content)}`
+    );
     assert.ok(content.includes('line3'), 'Should contain appended text');
     assert.equal(content, 'line1\nline2\nline3\n');
   });
@@ -344,12 +383,10 @@ describe('insert_file', () => {
     await fs.writeFile(outside, 'base\n', 'utf8');
     await assert.rejects(
       () => insert_file(ctx, { path: outside, line: -1, text: 'x' }),
-      /outside the working directory/i,
+      /outside the working directory/i
     );
   });
 });
-
-
 
 describe('undo_path', () => {
   it('restores last edited file when path omitted', async () => {
@@ -358,7 +395,7 @@ describe('undo_path', () => {
       cwd: tmpDir,
       noConfirm: true,
       dryRun: false,
-      backupDir
+      backupDir,
     };
 
     await write_file(ctxBase as any, { path: 'undo.txt', content: 'original' });
@@ -367,7 +404,7 @@ describe('undo_path', () => {
     const restored = await undo_path(
       {
         ...ctxBase,
-        lastEditedPath: path.join(tmpDir, 'undo.txt')
+        lastEditedPath: path.join(tmpDir, 'undo.txt'),
       } as any,
       {}
     );
@@ -379,10 +416,14 @@ describe('undo_path', () => {
     const key = crypto.createHash('sha256').update(path.join(tmpDir, 'undo.txt')).digest('hex');
     const stateDir = path.join(backupDir, key);
     const entries = await fs.readdir(stateDir);
-    assert.ok(entries.some((e) => e.endsWith('.bak')),
-      'expected .bak backup file in per-file backup dir');
-    assert.ok(entries.some((e) => e.endsWith('.meta.json')),
-      'expected metadata sidecar file in per-file backup dir');
+    assert.ok(
+      entries.some((e) => e.endsWith('.bak')),
+      'expected .bak backup file in per-file backup dir'
+    );
+    assert.ok(
+      entries.some((e) => e.endsWith('.meta.json')),
+      'expected metadata sidecar file in per-file backup dir'
+    );
   });
 });
 
@@ -398,7 +439,10 @@ describe('list_dir', () => {
 
 describe('search_files', () => {
   it('returns file:line:content format (not JSON)', async () => {
-    await fs.writeFile(path.join(tmpDir, 'searchme.ts'), 'const a = 1;\nfunction hello() {\n  return a;\n}\n');
+    await fs.writeFile(
+      path.join(tmpDir, 'searchme.ts'),
+      'const a = 1;\nfunction hello() {\n  return a;\n}\n'
+    );
     const r = await search_files(ctx, { pattern: 'function', path: '.' });
     // Must NOT be JSON — should be plain grep-style output
     assert.ok(!r.startsWith('{'), 'search_files should not return raw JSON');
@@ -424,7 +468,10 @@ describe('search_files', () => {
   });
 
   it('throws on malformed regex with invalid_args hint', async () => {
-    await assert.rejects(() => search_files(ctx, { pattern: '([a-z', path: '.' }), /invalid regex pattern/i);
+    await assert.rejects(
+      () => search_files(ctx, { pattern: '([a-z', path: '.' }),
+      /invalid regex pattern/i
+    );
   });
 });
 
@@ -464,7 +511,7 @@ describe('exec', () => {
     const outside = `/tmp/idlehands-outside-default-${Date.now()}.txt`;
     await assert.rejects(
       () => exec({ ...ctx, approvalMode: 'default' }, { command: `touch ${outside}` }),
-      /outside the working directory/i,
+      /outside the working directory/i
     );
   });
 
@@ -472,7 +519,10 @@ describe('exec', () => {
     const outsideAuto = `/tmp/idlehands-outside-auto-${Date.now()}.txt`;
     const outsideYolo = `/tmp/idlehands-outside-yolo-${Date.now()}.txt`;
 
-    const rAuto = await exec({ ...ctx, approvalMode: 'auto-edit' }, { command: `touch ${outsideAuto}` });
+    const rAuto = await exec(
+      { ...ctx, approvalMode: 'auto-edit' },
+      { command: `touch ${outsideAuto}` }
+    );
     const pAuto = JSON.parse(rAuto);
     assert.equal(pAuto.rc, 0);
     await fs.access(outsideAuto);
@@ -506,7 +556,8 @@ describe('exec', () => {
     assert.equal(parsed.rc, 0);
     assert.equal(parsed.truncated, true);
     assert.ok(
-      String(parsed.out).includes('capture truncated') || String(parsed.out).includes('[truncated,'),
+      String(parsed.out).includes('capture truncated') ||
+        String(parsed.out).includes('[truncated,'),
       `expected truncation marker, got out=${JSON.stringify(parsed.out).slice(0, 200)}`
     );
   });

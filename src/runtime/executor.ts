@@ -1,6 +1,10 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+
+import { stateDir, shellEscape } from '../utils.js';
+import { SecretsStore, resolveSecretRef } from './secrets.js';
+
 import type {
   PlanResult,
   PlanStep,
@@ -9,7 +13,6 @@ import type {
   StepOutcome,
   ActiveRuntime,
 } from './types.js';
-import { stateDir, shellEscape } from '../utils.js';
 
 /**
  * Derive the API endpoint URL from the plan's host connection + model port.
@@ -19,9 +22,7 @@ function deriveEndpoint(plan: PlanResult): string {
   const port = plan.model.runtime_defaults?.port ?? 8080;
   const host = plan.hosts[0];
   if (!host) return `http://127.0.0.1:${port}/v1`;
-  const addr = host.transport === 'local'
-    ? '127.0.0.1'
-    : (host.connection.host ?? '127.0.0.1');
+  const addr = host.transport === 'local' ? '127.0.0.1' : (host.connection.host ?? '127.0.0.1');
   return `http://${addr}:${port}/v1`;
 }
 
@@ -97,7 +98,10 @@ async function releaseLock(): Promise<void> {
   }
 }
 
-async function acquireRuntimeLock(plan: PlanResult, opts: ExecuteOpts): Promise<{ ok: true } | { ok: false; error: string }> {
+async function acquireRuntimeLock(
+  plan: PlanResult,
+  opts: ExecuteOpts
+): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     await writeLock(plan.model.id);
     return { ok: true };
@@ -113,7 +117,9 @@ async function acquireRuntimeLock(plan: PlanResult, opts: ExecuteOpts): Promise<
     const age = lockAgeMs(existing);
     const ageMin = age == null ? 'unknown' : Math.floor(age / 60000);
     if (opts.force) {
-      console.error(`[runtime] stale lock detected (${ageMin}m old). --force set; reclaiming runtime lock.`);
+      console.error(
+        `[runtime] stale lock detected (${ageMin}m old). --force set; reclaiming runtime lock.`
+      );
     } else {
       console.error(`[runtime] stale lock detected (${ageMin}m old). Reclaiming runtime lock.`);
     }
@@ -130,7 +136,10 @@ async function acquireRuntimeLock(plan: PlanResult, opts: ExecuteOpts): Promise<
   }
 
   if (!lockPid) {
-    return { ok: false, error: 'Runtime lock exists and could not be parsed. Remove runtime.lock and retry.' };
+    return {
+      ok: false,
+      error: 'Runtime lock exists and could not be parsed. Remove runtime.lock and retry.',
+    };
   }
 
   const approved = await opts.confirm?.(`Runtime lock held by PID ${lockPid}. Force takeover?`);
@@ -147,7 +156,10 @@ async function acquireRuntimeLock(plan: PlanResult, opts: ExecuteOpts): Promise<
   }
 }
 
-export async function runCommand(cmd: string, timeoutMs: number): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+export async function runCommand(
+  cmd: string,
+  timeoutMs: number
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn('bash', ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
@@ -158,11 +170,19 @@ export async function runCommand(cmd: string, timeoutMs: number): Promise<{ exit
       if (settled) return;
       settled = true;
       child.kill('SIGTERM');
-      resolve({ exitCode: 124, stdout, stderr: `${stderr}\nCommand timed out after ${timeoutMs}ms`.trim() });
+      resolve({
+        exitCode: 124,
+        stdout,
+        stderr: `${stderr}\nCommand timed out after ${timeoutMs}ms`.trim(),
+      });
     }, timeoutMs);
 
-    child.stdout.on('data', (chunk) => { stdout += String(chunk); });
-    child.stderr.on('data', (chunk) => { stderr += String(chunk); });
+    child.stdout.on('data', (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
 
     child.on('error', (err) => {
       if (settled) return;
@@ -185,15 +205,33 @@ export async function runCommand(cmd: string, timeoutMs: number): Promise<{ exit
  */
 export async function runOnHost(
   command: string,
-  host: { transport: string; connection: { host?: string; port?: number; user?: string; key_path?: string } },
-  timeoutMs = 10000,
+  host: {
+    transport: string;
+    connection: { host?: string; port?: number; user?: string; key_path?: string };
+  },
+  timeoutMs = 10000
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const step: PlanStep = { kind: 'probe_health', host_id: 'health-check', command, timeout_sec: Math.ceil(timeoutMs / 1000), description: '' };
-  const resolved = { id: 'health-check', display_name: '', transport: host.transport as any, connection: host.connection };
+  const step: PlanStep = {
+    kind: 'probe_health',
+    host_id: 'health-check',
+    command,
+    timeout_sec: Math.ceil(timeoutMs / 1000),
+    description: '',
+  };
+  const resolved = {
+    id: 'health-check',
+    display_name: '',
+    transport: host.transport as any,
+    connection: host.connection,
+  };
   return runPlanStep(step, resolved, timeoutMs);
 }
 
-async function runPlanStep(step: PlanStep, host: PlanResult['hosts'][number], timeoutMs: number): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+async function runPlanStep(
+  step: PlanStep,
+  host: PlanResult['hosts'][number],
+  timeoutMs: number
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   if (host.transport === 'local') {
     return runCommand(step.command, timeoutMs);
   }
@@ -205,11 +243,25 @@ async function runPlanStep(step: PlanStep, host: PlanResult['hosts'][number], ti
   const target = host.connection.user ? `${host.connection.user}@${targetHost}` : targetHost;
 
   const sshArgs: string[] = [
-    '-o', 'BatchMode=yes',
-    '-o', `ConnectTimeout=${Math.max(1, Math.ceil(timeoutMs / 1000))}`,
+    '-o',
+    'BatchMode=yes',
+    '-o',
+    `ConnectTimeout=${Math.max(1, Math.ceil(timeoutMs / 1000))}`,
   ];
-  if (host.connection.key_path) sshArgs.push('-i', host.connection.key_path);
-  if (host.connection.port && host.connection.port !== 22) sshArgs.push('-p', String(host.connection.port));
+  // Resolve secret references for key_path at use-time
+  let resolvedKeyPath: string | undefined;
+  if (host.connection.key_path) {
+    const store = new SecretsStore(process.env.IDLEHANDS_SECRETS_PASSPHRASE || null);
+    try {
+      await store.load();
+      resolvedKeyPath = resolveSecretRef(host.connection.key_path, store);
+    } catch {
+      resolvedKeyPath = host.connection.key_path;
+    }
+  }
+  if (resolvedKeyPath) sshArgs.push('-i', resolvedKeyPath);
+  if (host.connection.port && host.connection.port !== 22)
+    sshArgs.push('-p', String(host.connection.port));
   // Use login-shell behavior for parity with manual SSH sessions.
   sshArgs.push(target, 'bash', '-lc', shellEscape(step.command));
 
@@ -223,11 +275,19 @@ async function runPlanStep(step: PlanStep, host: PlanResult['hosts'][number], ti
       if (settled) return;
       settled = true;
       child.kill('SIGTERM');
-      resolve({ exitCode: 124, stdout, stderr: `${stderr}\nCommand timed out after ${timeoutMs}ms`.trim() });
+      resolve({
+        exitCode: 124,
+        stdout,
+        stderr: `${stderr}\nCommand timed out after ${timeoutMs}ms`.trim(),
+      });
     }, timeoutMs);
 
-    child.stdout.on('data', (chunk) => { stdout += String(chunk); });
-    child.stderr.on('data', (chunk) => { stderr += String(chunk); });
+    child.stdout.on('data', (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
 
     child.on('error', (err) => {
       if (settled) return;
@@ -245,7 +305,10 @@ async function runPlanStep(step: PlanStep, host: PlanResult['hosts'][number], ti
   });
 }
 
-async function runStepWithRetry(step: PlanStep, host: PlanResult['hosts'][number]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+async function runStepWithRetry(
+  step: PlanStep,
+  host: PlanResult['hosts'][number]
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const started = Date.now();
   const timeoutMs = Math.max(1, step.timeout_sec * 1000);
 
@@ -300,7 +363,9 @@ async function clearActiveRuntime(): Promise<void> {
 
 async function teardownPartialStart(plan: PlanResult, outcomes: StepOutcome[]): Promise<void> {
   const startedHosts = new Set(
-    outcomes.filter((o) => o.status === 'ok' && o.step.kind === 'start_model').map((o) => o.step.host_id),
+    outcomes
+      .filter((o) => o.status === 'ok' && o.step.kind === 'start_model')
+      .map((o) => o.step.host_id)
   );
   if (startedHosts.size === 0) return;
 
@@ -455,7 +520,7 @@ export async function execute(plan: PlanResult, opts: ExecuteOpts = {}): Promise
         const logCheck = await runPlanStep(
           { ...step, command: 'cat /tmp/llama-server.log 2>/dev/null | tail -5' },
           host,
-          5000,
+          5000
         );
         if (logCheck.exitCode === 0 && logCheck.stdout.trim()) {
           startLog = logCheck.stdout.trim();
@@ -466,18 +531,24 @@ export async function execute(plan: PlanResult, opts: ExecuteOpts = {}): Promise
       let detail = errorParts.join('\n').trim();
 
       // Friendly rewrite for common errors
-      const notFoundMatch = detail.match(/failed to run command '([^']+)': No such file or directory/);
+      const notFoundMatch = detail.match(
+        /failed to run command '([^']+)': No such file or directory/
+      );
       if (notFoundMatch) {
         const cmd = notFoundMatch[1];
-        detail = `${host.id} doesn't have '${cmd}' in PATH for non-interactive SSH.\n`
-          + `Either add it to PATH in ~/.bashrc on ${host.id}, or use the full path in your start command.\n`
-          + `Find it with: ssh ${host.connection.user ? host.connection.user + '@' : ''}${host.connection.host ?? host.id} 'which ${cmd} || find /usr -name ${cmd} 2>/dev/null'`;
+        detail =
+          `${host.id} doesn't have '${cmd}' in PATH for non-interactive SSH.\n` +
+          `Either add it to PATH in ~/.bashrc on ${host.id}, or use the full path in your start command.\n` +
+          `Find it with: ssh ${host.connection.user ? host.connection.user + '@' : ''}${host.connection.host ?? host.id} 'which ${cmd} || find /usr -name ${cmd} 2>/dev/null'`;
       }
 
       opts.onStep?.(step, 'error', detail || undefined);
       let rollbackDetails = '';
       if (step.rollback_cmd) {
-        const rollbackResult = await runCommand(step.rollback_cmd, Math.max(1000, step.timeout_sec * 1000));
+        const rollbackResult = await runCommand(
+          step.rollback_cmd,
+          Math.max(1000, step.timeout_sec * 1000)
+        );
         rollbackDetails = `\nRollback attempted: exit=${rollbackResult.exitCode}; stderr=${rollbackResult.stderr ?? ''}`;
       }
 

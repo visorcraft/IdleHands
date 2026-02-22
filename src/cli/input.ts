@@ -3,15 +3,17 @@
  * clipboard, reverse-search, stdin pipe reading.
  */
 
-import readline from 'node:readline/promises';
-import path from 'node:path';
-import os from 'node:os';
-import fs from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import type readline from 'node:readline/promises';
+
+import type { makeStyler } from '../term.js';
 import type { UserContent } from '../types.js';
 import { escapeRegex } from '../utils.js';
+
 import { splitTokens } from './command-utils.js';
-import type { makeStyler } from '../term.js';
 
 // ── Multi-line continuation ──────────────────────────────────────────
 
@@ -90,7 +92,10 @@ export async function readStdinIfPiped(): Promise<string> {
 
 // ── Reverse search ───────────────────────────────────────────────────
 
-export async function reverseSearchHistory(rl: readline.Interface, styler: ReturnType<typeof makeStyler>): Promise<void> {
+export async function reverseSearchHistory(
+  rl: readline.Interface,
+  styler: ReturnType<typeof makeStyler>
+): Promise<void> {
   const q = (await rl.question('\n(reverse-i-search) query: ')).trim();
   if (!q) {
     rl.prompt(true);
@@ -119,8 +124,20 @@ export function isPathCompletionContext(line: string): boolean {
   if (words.length < 2) return false;
   const first = words[0].toLowerCase();
   const pathish = new Set([
-    'read_file', 'write_file', 'edit_file', 'insert_file', 'list_dir', 'search_files',
-    'cat', 'less', 'more', 'vim', 'nano', 'code', 'cd', 'ls',
+    'read_file',
+    'write_file',
+    'edit_file',
+    'insert_file',
+    'list_dir',
+    'search_files',
+    'cat',
+    'less',
+    'more',
+    'vim',
+    'nano',
+    'code',
+    'cd',
+    'ls',
   ]);
   return pathish.has(first);
 }
@@ -184,7 +201,11 @@ export async function collectDirectoryFiles(
   }
 }
 
-async function resolveAtRefToFiles(ref: string, cwd: string, patterns: string[]): Promise<string[]> {
+async function resolveAtRefToFiles(
+  ref: string,
+  cwd: string,
+  patterns: string[]
+): Promise<string[]> {
   const hasGlob = /[*?[]/.test(ref);
 
   if (hasGlob) {
@@ -254,7 +275,9 @@ export async function expandAtFileRefs(
       const block = `[Contents of ${relFile}]\n${buf.toString('utf8')}\n[End ${relFile}]\n`;
       const blockTokens = Math.ceil(block.length / 4);
       if (usedTokens + blockTokens > contextMaxTokens) {
-        warnings.push(`[at-ref] context_max_tokens (${contextMaxTokens}) reached while expanding @${ref}; remaining refs truncated`);
+        warnings.push(
+          `[at-ref] context_max_tokens (${contextMaxTokens}) reached while expanding @${ref}; remaining refs truncated`
+        );
         injection += `[truncated @${ref}: context_max_tokens reached]`;
         break;
       }
@@ -266,7 +289,6 @@ export async function expandAtFileRefs(
     if (!injection.trim()) continue;
     expanded = expanded.replace(`@${ref}`, injection.trimEnd());
   }
-
 
   return { text: expanded, warnings };
 }
@@ -300,7 +322,8 @@ export function extractImageRefs(text: string): string[] {
   }
 
   // Plain URLs and path-like image tokens
-  const tokenRe = /https?:\/\/[^\s)]+\.(?:png|jpe?g|webp|gif|bmp|tiff?)(?:\?[^\s)]*)?|(?:\.\.\/|\.\/|\/|~\/)?[^\s)]+\.(?:png|jpe?g|webp|gif|bmp|tiff?)/gi;
+  const tokenRe =
+    /https?:\/\/[^\s)]+\.(?:png|jpe?g|webp|gif|bmp|tiff?)(?:\?[^\s)]*)?|(?:\.\.\/|\.\/|\/|~\/)?[^\s)]+\.(?:png|jpe?g|webp|gif|bmp|tiff?)/gi;
   let m: RegExpExecArray | null;
   while ((m = tokenRe.exec(text)) !== null) {
     refs.add(m[0].trim());
@@ -318,7 +341,11 @@ function readClipboardImageDataUrl(): string | null {
     { cmd: 'wl-paste', args: ['--type', 'image/png'], mime: 'image/png' },
     { cmd: 'wl-paste', args: ['--type', 'image/jpeg'], mime: 'image/jpeg' },
     { cmd: 'xclip', args: ['-selection', 'clipboard', '-t', 'image/png', '-o'], mime: 'image/png' },
-    { cmd: 'xclip', args: ['-selection', 'clipboard', '-t', 'image/jpeg', '-o'], mime: 'image/jpeg' },
+    {
+      cmd: 'xclip',
+      args: ['-selection', 'clipboard', '-t', 'image/jpeg', '-o'],
+      mime: 'image/jpeg',
+    },
   ];
 
   for (const a of attempts) {
@@ -343,7 +370,9 @@ export async function expandPromptImages(
     const detected = refs.length + (wantsClipboard ? 1 : 0);
     return {
       content: text,
-      warnings: [`[vision] detected ${detected} image reference(s), but current model does not advertise vision input support.`],
+      warnings: [
+        `[vision] detected ${detected} image reference(s), but current model does not advertise vision input support.`,
+      ],
       imageCount: 0,
     };
   }
@@ -393,7 +422,9 @@ export async function expandPromptImages(
       parts.push({ type: 'image_url', image_url: { url: clip } });
       imageCount++;
     } else {
-      warnings.push('[vision] clipboard image token detected, but no image was available from clipboard (tried wl-paste/xclip).');
+      warnings.push(
+        '[vision] clipboard image token detected, but no image was available from clipboard (tried wl-paste/xclip).'
+      );
     }
   }
 

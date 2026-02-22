@@ -51,7 +51,7 @@ function pushLimited(list: string[], value: string, max = 25): void {
 function redactPayload<E extends HookEventName>(
   event: E,
   payload: HookEventMap[E],
-  caps: Set<HookCapability>,
+  caps: Set<HookCapability>
 ): HookEventMap[E] {
   const out: any = JSON.parse(JSON.stringify(payload));
 
@@ -145,7 +145,7 @@ export class HookManager {
     event: E,
     handler: HookHandler<E>,
     source = 'runtime',
-    capabilities?: HookCapability[],
+    capabilities?: HookCapability[]
   ): void {
     if (!this.enabled) return;
     const list = this.handlers.get(event) ?? [];
@@ -183,7 +183,9 @@ export class HookManager {
     });
 
     if (plugin.hooks && typeof plugin.hooks === 'object') {
-      for (const [event, value] of Object.entries(plugin.hooks) as Array<[HookEventName, HookHandler<any> | HookHandler<any>[]]>) {
+      for (const [event, value] of Object.entries(plugin.hooks) as Array<
+        [HookEventName, HookHandler<any> | HookHandler<any>[]]
+      >) {
         const list = Array.isArray(value) ? value : [value];
         for (const fn of list) {
           if (typeof fn === 'function') {

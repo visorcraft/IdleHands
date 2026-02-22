@@ -7,17 +7,18 @@
  * Returns 'run' if the user chose to launch Idle Hands, 'exit' otherwise.
  */
 
-import readline from 'node:readline/promises';
-import { stdin as input, stdout as output } from 'node:process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { stdin as input, stdout as output } from 'node:process';
+import readline from 'node:readline/promises';
+
 import { defaultConfigPath, ensureConfigDir } from '../config.js';
-import type { RuntimesConfig, RuntimeHost, RuntimeBackend, RuntimeModel } from '../runtime/types.js';
-import {
-  parseUserIds, validateBotConfig, maskToken,
-  serviceState, hasSystemd, migrateOldServices, installBotService, checkLingerEnabled,
-  type BotSetupConfig,
-} from './bot.js';
+import type {
+  RuntimesConfig,
+  RuntimeHost,
+  RuntimeBackend,
+  RuntimeModel,
+} from '../runtime/types.js';
 import {
   HIDE_CURSOR,
   SHOW_CURSOR,
@@ -26,6 +27,18 @@ import {
   leaveFullScreen as leaveFullScreenBase,
   clearScreen,
 } from '../tui/screen.js';
+
+import {
+  parseUserIds,
+  validateBotConfig,
+  maskToken,
+  serviceState,
+  hasSystemd,
+  migrateOldServices,
+  installBotService,
+  checkLingerEnabled,
+  type BotSetupConfig,
+} from './bot.js';
 import { splitTokens } from './command-utils.js';
 
 // ── ANSI codes ───────────────────────────────────────────────────────
@@ -37,7 +50,6 @@ const YELLOW = '\x1b[33m';
 const RED = '\x1b[31m';
 const CYAN = '\x1b[36m';
 const RESET = '\x1b[0m';
-
 
 // ── ASCII art ────────────────────────────────────────────────────────
 
@@ -52,9 +64,7 @@ const LOGO_WIDE = [
 ];
 
 // Compact fallback for narrow terminals
-const LOGO_NARROW = [
-  `  ${CYAN}${BOLD}I D L E${RESET}   ${BOLD}H A N D S${RESET}`,
-];
+const LOGO_NARROW = [`  ${CYAN}${BOLD}I D L E${RESET}   ${BOLD}H A N D S${RESET}`];
 
 // ── Screen helpers ───────────────────────────────────────────────────
 
@@ -69,7 +79,6 @@ function leaveFullScreen(): void {
   leaveFullScreenBase();
   inAltScreen = false;
 }
-
 
 function drawHeader(stepLabel?: string): void {
   clearScreen();
@@ -148,9 +157,12 @@ function MOVE_UP(n: number): string {
 
 async function selectChoice(
   choices: { value: string; desc?: string }[],
-  defaultValue: string,
+  defaultValue: string
 ): Promise<string> {
-  const defaultIdx = Math.max(0, choices.findIndex((c) => c.value === defaultValue));
+  const defaultIdx = Math.max(
+    0,
+    choices.findIndex((c) => c.value === defaultValue)
+  );
   let selected = defaultIdx;
 
   function render(firstDraw: boolean): void {
@@ -224,7 +236,10 @@ async function getActiveRuntimeEndpoint(): Promise<string | null> {
 
 // ── Fullscreen TUI runtime add forms ─────────────────────────────────
 
-async function addHostTUI(rl: readline.Interface, existing?: RuntimeHost): Promise<RuntimeHost | null> {
+async function addHostTUI(
+  rl: readline.Interface,
+  existing?: RuntimeHost
+): Promise<RuntimeHost | null> {
   const editing = !!existing;
   drawHeader(editing ? `Runtime — Edit Host: ${existing!.id}` : 'Runtime — Add Host');
   info('A host is a machine that runs inference.');
@@ -235,10 +250,13 @@ async function addHostTUI(rl: readline.Interface, existing?: RuntimeHost): Promi
     info('Where is this host?');
   }
   const currentTransport = existing?.transport === 'ssh' ? 'remote' : 'local';
-  const transportLabel = await selectChoice([
-    { value: 'local', desc: 'This machine' },
-    { value: 'remote', desc: 'A remote server on your network' },
-  ], currentTransport);
+  const transportLabel = await selectChoice(
+    [
+      { value: 'local', desc: 'This machine' },
+      { value: 'remote', desc: 'A remote server on your network' },
+    ],
+    currentTransport
+  );
   const transport = (transportLabel === 'remote' ? 'ssh' : 'local') as 'local' | 'ssh';
 
   console.log();
@@ -265,15 +283,33 @@ async function addHostTUI(rl: readline.Interface, existing?: RuntimeHost): Promi
   console.log();
   console.log(`  ${BOLD}Capabilities${RESET}`);
   info('Hardware tags for matching models to hosts.');
-  const gpuRaw = await ask(rl, 'GPU tags, comma-separated (e.g. RTX 4090)', existing?.capabilities?.gpu?.join(', ') ?? '');
-  const gpu = gpuRaw.split(',').map((s) => s.trim()).filter(Boolean);
-  const backendsRaw = await ask(rl, 'Backends, comma-separated (e.g. cuda,rocm,vulkan)', existing?.capabilities?.backends?.join(', ') ?? '');
-  const backends = backendsRaw.split(',').map((s) => s.trim()).filter(Boolean);
+  const gpuRaw = await ask(
+    rl,
+    'GPU tags, comma-separated (e.g. RTX 4090)',
+    existing?.capabilities?.gpu?.join(', ') ?? ''
+  );
+  const gpu = gpuRaw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const backendsRaw = await ask(
+    rl,
+    'Backends, comma-separated (e.g. cuda,rocm,vulkan)',
+    existing?.capabilities?.backends?.join(', ') ?? ''
+  );
+  const backends = backendsRaw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   console.log();
   console.log(`  ${BOLD}Commands${RESET}`);
   info('Shell commands for lifecycle management.');
-  const stopCmd = await ask(rl, 'Stop model command', existing?.model_control?.stop_cmd ?? 'pkill -f llama-server || true');
+  const stopCmd = await ask(
+    rl,
+    'Stop model command',
+    existing?.model_control?.stop_cmd ?? 'pkill -f llama-server || true'
+  );
   const healthCmd = await ask(rl, 'Health check command', existing?.health?.check_cmd ?? 'true');
 
   return {
@@ -288,7 +324,11 @@ async function addHostTUI(rl: readline.Interface, existing?: RuntimeHost): Promi
   };
 }
 
-async function addBackendTUI(rl: readline.Interface, hosts: string[], existing?: RuntimeBackend): Promise<RuntimeBackend | null> {
+async function addBackendTUI(
+  rl: readline.Interface,
+  hosts: string[],
+  existing?: RuntimeBackend
+): Promise<RuntimeBackend | null> {
   const editing = !!existing;
   drawHeader(editing ? `Runtime — Edit Backend: ${existing!.id}` : 'Runtime — Add Backend');
   info('A backend is a GPU compute layer for running inference.');
@@ -303,21 +343,30 @@ async function addBackendTUI(rl: readline.Interface, hosts: string[], existing?:
   console.log();
   console.log(`  ${BOLD}Type${RESET}`);
   info('Which GPU compute layer does this backend use?');
-  const type = await selectChoice([
-    { value: 'vulkan', desc: 'Vulkan (RADV, etc.)' },
-    { value: 'rocm', desc: 'AMD ROCm' },
-    { value: 'cuda', desc: 'NVIDIA CUDA' },
-    { value: 'metal', desc: 'Apple Metal' },
-    { value: 'cpu', desc: 'CPU only' },
-    { value: 'custom', desc: 'Custom backend' },
-  ], existing?.type ?? 'vulkan') as RuntimeBackend['type'];
+  const type = (await selectChoice(
+    [
+      { value: 'vulkan', desc: 'Vulkan (RADV, etc.)' },
+      { value: 'rocm', desc: 'AMD ROCm' },
+      { value: 'cuda', desc: 'NVIDIA CUDA' },
+      { value: 'metal', desc: 'Apple Metal' },
+      { value: 'cpu', desc: 'CPU only' },
+      { value: 'custom', desc: 'Custom backend' },
+    ],
+    existing?.type ?? 'vulkan'
+  )) as RuntimeBackend['type'];
 
   let hostFilters: 'any' | string[] = existing?.host_filters ?? 'any';
   if (hosts.length > 1) {
     console.log();
     const currentFilters = Array.isArray(hostFilters) ? hostFilters.join(', ') : 'any';
     const filtersRaw = await ask(rl, `Host filter (any, or: ${hosts.join(', ')})`, currentFilters);
-    hostFilters = filtersRaw === 'any' ? 'any' : filtersRaw.split(',').map((s) => s.trim()).filter(Boolean);
+    hostFilters =
+      filtersRaw === 'any'
+        ? 'any'
+        : filtersRaw
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
   }
 
   console.log();
@@ -330,7 +379,9 @@ async function addBackendTUI(rl: readline.Interface, hosts: string[], existing?:
   info('Passed to all models on this backend.');
   info(`Example: ${DIM}VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json${RESET}`);
   const existingEnvStr = existing?.env
-    ? Object.entries(existing.env).map(([k, v]) => `${k}=${v}`).join(' ')
+    ? Object.entries(existing.env)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(' ')
     : '';
   const envRaw = await ask(rl, 'KEY=VALUE pairs (space-separated)', existingEnvStr);
   const env: Record<string, string> = {};
@@ -363,7 +414,12 @@ async function addBackendTUI(rl: readline.Interface, hosts: string[], existing?:
   };
 }
 
-async function addModelTUI(rl: readline.Interface, hosts: string[], backends: string[], existing?: RuntimeModel): Promise<RuntimeModel | null> {
+async function addModelTUI(
+  rl: readline.Interface,
+  hosts: string[],
+  backends: string[],
+  existing?: RuntimeModel
+): Promise<RuntimeModel | null> {
   const editing = !!existing;
   drawHeader(editing ? `Runtime — Edit Model: ${existing!.id}` : 'Runtime — Add Model');
   info('A model is a GGUF (or other format) with launch and probe commands.');
@@ -380,10 +436,19 @@ async function addModelTUI(rl: readline.Interface, hosts: string[], backends: st
   console.log();
   console.log(`  ${BOLD}Launch${RESET}`);
   info('Commands to start and health-check the inference server.');
-  const defaultStart = 'nohup {backend_env} llama-server -m {source} --port {port} --ctx-size 131072 {backend_args} --host 0.0.0.0 > /tmp/llama-server.log 2>&1 &';
+  const defaultStart =
+    'nohup {backend_env} llama-server -m {source} --port {port} --ctx-size 131072 {backend_args} --host 0.0.0.0 > /tmp/llama-server.log 2>&1 &';
   const startCmd = await ask(rl, 'Start command', existing?.launch?.start_cmd ?? defaultStart);
-  const probeCmd = await ask(rl, 'Probe command', existing?.launch?.probe_cmd ?? 'curl -fsS http://127.0.0.1:{port}/health');
-  const probeTimeoutStr = await ask(rl, 'Probe timeout (seconds)', String(existing?.launch?.probe_timeout_sec ?? 60));
+  const probeCmd = await ask(
+    rl,
+    'Probe command',
+    existing?.launch?.probe_cmd ?? 'curl -fsS http://127.0.0.1:{port}/health'
+  );
+  const probeTimeoutStr = await ask(
+    rl,
+    'Probe timeout (seconds)',
+    String(existing?.launch?.probe_timeout_sec ?? 60)
+  );
   const probeTimeout = Math.max(5, Number(probeTimeoutStr) || 60);
 
   console.log();
@@ -398,12 +463,24 @@ async function addModelTUI(rl: readline.Interface, hosts: string[], backends: st
     console.log();
     const currentHp = Array.isArray(hostPolicy) ? hostPolicy.join(', ') : 'any';
     const hp = await ask(rl, `Host policy (any, or: ${hosts.join(', ')})`, currentHp);
-    hostPolicy = hp === 'any' ? 'any' : hp.split(',').map((s) => s.trim()).filter(Boolean);
+    hostPolicy =
+      hp === 'any'
+        ? 'any'
+        : hp
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
   }
   if (backends.length > 1) {
     const currentBp = Array.isArray(backendPolicy) ? backendPolicy.join(', ') : 'any';
     const bp = await ask(rl, `Backend policy (any, or: ${backends.join(', ')})`, currentBp);
-    backendPolicy = bp === 'any' ? 'any' : bp.split(',').map((s) => s.trim()).filter(Boolean);
+    backendPolicy =
+      bp === 'any'
+        ? 'any'
+        : bp
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
   }
 
   return {
@@ -429,23 +506,39 @@ async function addModelTUI(rl: readline.Interface, hosts: string[], backends: st
 // ── Bot setup helper (used by Step 5) ────────────────────────────────
 
 async function setupBot(
-  rl: readline.Interface, target: 'Telegram' | 'Discord',
-  defaultDir: string, existing: BotSetupConfig | null,
+  rl: readline.Interface,
+  target: 'Telegram' | 'Discord',
+  defaultDir: string,
+  existing: BotSetupConfig | null
 ): Promise<BotSetupConfig | null> {
   const isTg = target === 'Telegram';
   drawHeader(`Step 7 of 7 — Bot Setup: ${target}`);
 
   console.log(`  ${BOLD}Bot token${RESET}`);
-  info(isTg ? 'Get one from @BotFather on Telegram.' : 'Get one from the Discord Developer Portal.');
+  info(
+    isTg ? 'Get one from @BotFather on Telegram.' : 'Get one from the Discord Developer Portal.'
+  );
   const token = await ask(rl, 'Token', existing?.token ?? '');
-  if (!token.trim()) { warn(`No token provided. Skipping ${target}.`); await pause(); return existing; }
+  if (!token.trim()) {
+    warn(`No token provided. Skipping ${target}.`);
+    await pause();
+    return existing;
+  }
 
   console.log();
   console.log(`  ${BOLD}Allowed users${RESET}`);
   info(`User IDs that can ${isTg ? 'talk to' : 'use'} the bot. Everyone else is ignored.`);
-  const usersStr = await ask(rl, 'IDs (comma-separated)', existing?.allowed_users?.join(', ') ?? '');
+  const usersStr = await ask(
+    rl,
+    'IDs (comma-separated)',
+    existing?.allowed_users?.join(', ') ?? ''
+  );
   const users = parseUserIds(usersStr);
-  if (users.length === 0) { warn(`No valid user IDs. Skipping ${target}.`); await pause(); return existing; }
+  if (users.length === 0) {
+    warn(`No valid user IDs. Skipping ${target}.`);
+    await pause();
+    return existing;
+  }
 
   let guildId: string | undefined;
   if (!isTg) {
@@ -461,11 +554,17 @@ async function setupBot(
   info('Default project directory for bot sessions.');
   const dir = await ask(rl, 'Path', existing?.default_dir ?? defaultDir);
   const cfg: BotSetupConfig = {
-    token: token.trim(), allowed_users: users, default_dir: dir.trim() || defaultDir,
+    token: token.trim(),
+    allowed_users: users,
+    default_dir: dir.trim() || defaultDir,
     ...(guildId ? { guild_id: guildId, allow_guilds: true } : {}),
   };
   const err = validateBotConfig(cfg);
-  if (err) { warn(err); await pause(); return existing; }
+  if (err) {
+    warn(err);
+    await pause();
+    return existing;
+  }
   return cfg;
 }
 
@@ -483,12 +582,16 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
   try {
     const raw = await fs.readFile(configPath, 'utf8');
     existingConfig = JSON.parse(raw);
-  } catch { /* no config yet */ }
+  } catch {
+    /* no config yet */
+  }
 
   const { loadRuntimes, saveRuntimes } = await import('../runtime/store.js');
 
   enterFullScreen();
-  const exitHandler = () => { if (inAltScreen) leaveFullScreen(); };
+  const exitHandler = () => {
+    if (inAltScreen) leaveFullScreen();
+  };
   process.on('exit', exitHandler);
 
   const rl = readline.createInterface({ input, output });
@@ -507,7 +610,6 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
 
     // ── 1a. Hosts ──────────────────────────────────────────────────
 
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       runtimes = await loadRuntimes().catch(() => runtimes);
       drawHeader('Step 1 of 7 — Runtime: Hosts');
@@ -516,9 +618,10 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
         info('No hosts configured yet.');
       } else {
         for (const h of runtimes.hosts) {
-          const loc = h.transport === 'ssh'
-            ? `${h.connection?.user ? h.connection.user + '@' : ''}${h.connection?.host ?? '?'}`
-            : 'local';
+          const loc =
+            h.transport === 'ssh'
+              ? `${h.connection?.user ? h.connection.user + '@' : ''}${h.connection?.host ?? '?'}`
+              : 'local';
           success(`${h.id} ${DIM}(${loc})${RESET}`);
         }
       }
@@ -529,7 +632,10 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
         { value: 'add', desc: 'Add a new host' },
         { value: 'continue', desc: 'Continue →' },
       ];
-      const hostAction = await selectChoice(hostChoices, runtimes.hosts.length > 0 ? 'continue' : 'add');
+      const hostAction = await selectChoice(
+        hostChoices,
+        runtimes.hosts.length > 0 ? 'continue' : 'add'
+      );
 
       if (hostAction === 'continue') break;
       if (hostAction === 'add') {
@@ -552,7 +658,6 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
 
     // ── 1b. Backends ───────────────────────────────────────────────
 
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       runtimes = await loadRuntimes().catch(() => runtimes);
       const hostIds = runtimes.hosts.map((h) => h.id);
@@ -563,19 +668,30 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
       } else {
         for (const b of runtimes.backends) {
           const envCount = b.env ? Object.keys(b.env).length : 0;
-          const extra = [b.type, envCount > 0 ? `${envCount} env` : '', b.args?.length ? `${b.args.length} args` : '']
-            .filter(Boolean).join(', ');
+          const extra = [
+            b.type,
+            envCount > 0 ? `${envCount} env` : '',
+            b.args?.length ? `${b.args.length} args` : '',
+          ]
+            .filter(Boolean)
+            .join(', ');
           success(`${b.id} ${DIM}(${extra})${RESET}`);
         }
       }
       console.log();
 
       const backendChoices = [
-        ...runtimes.backends.map((b) => ({ value: `edit:${b.id}`, desc: `Edit ${b.display_name}` })),
+        ...runtimes.backends.map((b) => ({
+          value: `edit:${b.id}`,
+          desc: `Edit ${b.display_name}`,
+        })),
         { value: 'add', desc: 'Add a new backend' },
         { value: 'continue', desc: 'Continue →' },
       ];
-      const backendAction = await selectChoice(backendChoices, runtimes.backends.length > 0 ? 'continue' : 'add');
+      const backendAction = await selectChoice(
+        backendChoices,
+        runtimes.backends.length > 0 ? 'continue' : 'add'
+      );
 
       if (backendAction === 'continue') break;
       if (backendAction === 'add') {
@@ -598,7 +714,6 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
 
     // ── 1c. Models ─────────────────────────────────────────────────
 
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       runtimes = await loadRuntimes().catch(() => runtimes);
       const hostIds = runtimes.hosts.map((h) => h.id);
@@ -620,7 +735,10 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
         { value: 'add', desc: 'Add a new model' },
         { value: 'continue', desc: 'Continue →' },
       ];
-      const modelAction = await selectChoice(modelChoices, runtimes.models.length > 0 ? 'continue' : 'add');
+      const modelAction = await selectChoice(
+        modelChoices,
+        runtimes.models.length > 0 ? 'continue' : 'add'
+      );
 
       if (modelAction === 'continue') break;
       if (modelAction === 'add') {
@@ -658,7 +776,7 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
         console.log();
         modelId = await selectChoice(
           enabledModels.map((m) => ({ value: m.id, desc: m.display_name })),
-          enabledModels[0].id,
+          enabledModels[0].id
         );
       }
 
@@ -680,7 +798,8 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
         } else {
           const execResult = await execute(planResult, {
             onStep: (step, status, detail) => {
-              if (status === 'start') process.stdout.write(`  ${DIM}${step.description}...${RESET}`);
+              if (status === 'start')
+                process.stdout.write(`  ${DIM}${step.description}...${RESET}`);
               else if (status === 'done') process.stdout.write(` ${GREEN}✓${RESET}\n`);
               else if (status === 'error') {
                 process.stdout.write(` ${RED}✗${RESET}\n`);
@@ -723,7 +842,6 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
     const dir = await ask(rl, 'Path', currentDir);
     const resolvedDir = path.resolve(dir.replace(/^~/, process.env.HOME ?? '~'));
 
-
     // ── 2b. Run-as User (optional) ────────────────────────────────
 
     drawHeader('Step 2b — Run as User (optional)');
@@ -745,12 +863,15 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
     info('Controls how much the agent can do without asking you first.');
     console.log();
     const currentApproval = existingConfig?.approval_mode || 'auto-edit';
-    const approvalMode = await selectChoice([
-      { value: 'plan', desc: 'Read-only. Edits and commands recorded as plans.' },
-      { value: 'default', desc: 'Confirms both file edits and shell commands.' },
-      { value: 'auto-edit', desc: 'File edits automatic. Shell commands need confirmation.' },
-      { value: 'yolo', desc: 'Everything automatic. Trusted codebases only.' },
-    ], currentApproval);
+    const approvalMode = await selectChoice(
+      [
+        { value: 'plan', desc: 'Read-only. Edits and commands recorded as plans.' },
+        { value: 'default', desc: 'Confirms both file edits and shell commands.' },
+        { value: 'auto-edit', desc: 'File edits automatic. Shell commands need confirmation.' },
+        { value: 'yolo', desc: 'Everything automatic. Trusted codebases only.' },
+      ],
+      currentApproval
+    );
 
     // ── 4. Response Timeout ─────────────────────────────────────
 
@@ -773,7 +894,11 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
     console.log(`  ${BOLD}Initial connection check${RESET}`);
     info('Run a fast preflight check before first ask to fail quickly when endpoint is down.');
     const currentInitialConnCheck = existingConfig?.initial_connection_check !== false;
-    const initialConnectionCheck = await askYN(rl, 'Enable initial connection check?', currentInitialConnCheck);
+    const initialConnectionCheck = await askYN(
+      rl,
+      'Enable initial connection check?',
+      currentInitialConnCheck
+    );
 
     console.log();
     console.log(`  ${BOLD}Initial connection timeout${RESET}`);
@@ -843,13 +968,16 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
     info('Pick a theme that matches your terminal.');
     console.log();
     const currentTheme = existingConfig?.theme || 'default';
-    const theme = await selectChoice([
-      { value: 'default', desc: 'Standard colors' },
-      { value: 'dark', desc: 'High contrast for dark terminals' },
-      { value: 'light', desc: 'For light terminal backgrounds' },
-      { value: 'minimal', desc: 'Stripped-down, less color' },
-      { value: 'hacker', desc: 'Green on black' },
-    ], currentTheme);
+    const theme = await selectChoice(
+      [
+        { value: 'default', desc: 'Standard colors' },
+        { value: 'dark', desc: 'High contrast for dark terminals' },
+        { value: 'light', desc: 'For light terminal backgrounds' },
+        { value: 'minimal', desc: 'Stripped-down, less color' },
+        { value: 'hacker', desc: 'Green on black' },
+      ],
+      currentTheme
+    );
 
     // ── 7. Bot Setup ──────────────────────────────────────────────
 
@@ -857,15 +985,24 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
     const existingDc = existingConfig?.bot?.discord;
 
     let botTelegram: BotSetupConfig | null =
-      (existingTg?.token && existingTg?.allowed_users?.length)
-        ? { token: existingTg.token, allowed_users: existingTg.allowed_users, default_dir: existingTg.default_dir ?? '' }
+      existingTg?.token && existingTg?.allowed_users?.length
+        ? {
+            token: existingTg.token,
+            allowed_users: existingTg.allowed_users,
+            default_dir: existingTg.default_dir ?? '',
+          }
         : null;
     let botDiscord: BotSetupConfig | null =
-      (existingDc?.token && existingDc?.allowed_users?.length)
-        ? { token: existingDc.token, allowed_users: existingDc.allowed_users, default_dir: existingDc.default_dir ?? '', guild_id: existingDc.guild_id, allow_guilds: existingDc.allow_guilds }
+      existingDc?.token && existingDc?.allowed_users?.length
+        ? {
+            token: existingDc.token,
+            allowed_users: existingDc.allowed_users,
+            default_dir: existingDc.default_dir ?? '',
+            guild_id: existingDc.guild_id,
+            allow_guilds: existingDc.allow_guilds,
+          }
         : null;
 
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       drawHeader('Step 7 of 7 — Bot Setup');
       info('Configure chat bot frontends (Telegram, Discord).');
@@ -873,16 +1010,25 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
 
       const botChoices: { value: string; desc: string }[] = [];
       if (botTelegram) {
-        botChoices.push({ value: 'edit-tg', desc: `\x1b[32m✓\x1b[0m Telegram (${maskToken(botTelegram.token)}, ${botTelegram.allowed_users.length} user${botTelegram.allowed_users.length === 1 ? '' : 's'}) — Edit` });
+        botChoices.push({
+          value: 'edit-tg',
+          desc: `\x1b[32m✓\x1b[0m Telegram (${maskToken(botTelegram.token)}, ${botTelegram.allowed_users.length} user${botTelegram.allowed_users.length === 1 ? '' : 's'}) — Edit`,
+        });
       } else {
         botChoices.push({ value: 'add-tg', desc: 'Set up Telegram bot' });
       }
       if (botDiscord) {
-        botChoices.push({ value: 'edit-dc', desc: `\x1b[32m✓\x1b[0m Discord (${maskToken(botDiscord.token)}, ${botDiscord.allowed_users.length} user${botDiscord.allowed_users.length === 1 ? '' : 's'}) — Edit` });
+        botChoices.push({
+          value: 'edit-dc',
+          desc: `\x1b[32m✓\x1b[0m Discord (${maskToken(botDiscord.token)}, ${botDiscord.allowed_users.length} user${botDiscord.allowed_users.length === 1 ? '' : 's'}) — Edit`,
+        });
       } else {
         botChoices.push({ value: 'add-dc', desc: 'Set up Discord bot' });
       }
-      botChoices.push({ value: 'continue', desc: (botTelegram || botDiscord) ? 'Continue →' : 'Skip — no bots' });
+      botChoices.push({
+        value: 'continue',
+        desc: botTelegram || botDiscord ? 'Continue →' : 'Skip — no bots',
+      });
 
       const botAction = await selectChoice(botChoices, 'continue');
       if (botAction === 'continue') break;
@@ -910,13 +1056,19 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
       console.log(`  Run as user:   ${CYAN}${resolvedRunAs}${RESET}`);
     }
     console.log(`  Approval mode: ${CYAN}${approvalMode}${RESET}`);
-    console.log(`  Sub-agents:    ${subAgentsEnabled ? `${GREEN}enabled${RESET} ${DIM}(${subMaxIter} iters, ${subTimeoutSec}s timeout, ${subMaxTokens} tokens)${RESET}` : `${YELLOW}disabled${RESET}`}`);
+    console.log(
+      `  Sub-agents:    ${subAgentsEnabled ? `${GREEN}enabled${RESET} ${DIM}(${subMaxIter} iters, ${subTimeoutSec}s timeout, ${subMaxTokens} tokens)${RESET}` : `${YELLOW}disabled${RESET}`}`
+    );
     console.log(`  Theme:         ${CYAN}${theme}${RESET}`);
     if (botTelegram) {
-      console.log(`  Telegram bot:  ${GREEN}✓${RESET} ${DIM}(token: ${maskToken(botTelegram.token)}, ${botTelegram.allowed_users.length} user${botTelegram.allowed_users.length === 1 ? '' : 's'})${RESET}`);
+      console.log(
+        `  Telegram bot:  ${GREEN}✓${RESET} ${DIM}(token: ${maskToken(botTelegram.token)}, ${botTelegram.allowed_users.length} user${botTelegram.allowed_users.length === 1 ? '' : 's'})${RESET}`
+      );
     }
     if (botDiscord) {
-      console.log(`  Discord bot:   ${GREEN}✓${RESET} ${DIM}(token: ${maskToken(botDiscord.token)}, ${botDiscord.allowed_users.length} user${botDiscord.allowed_users.length === 1 ? '' : 's'}${botDiscord.guild_id ? `, guild: ${botDiscord.guild_id}` : ''})${RESET}`);
+      console.log(
+        `  Discord bot:   ${GREEN}✓${RESET} ${DIM}(token: ${maskToken(botDiscord.token)}, ${botDiscord.allowed_users.length} user${botDiscord.allowed_users.length === 1 ? '' : 's'}${botDiscord.guild_id ? `, guild: ${botDiscord.guild_id}` : ''})${RESET}`
+      );
     }
     console.log(`  Config file:   ${DIM}${configPath}${RESET}`);
     console.log();
@@ -991,7 +1143,11 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
       if (st.active) {
         info('Bot service is already running.');
         if (await askYN(rl, 'Restart to apply new config?', true)) {
-          (await import('node:child_process')).spawnSync('systemctl', ['--user', 'restart', st.name], { stdio: 'pipe' });
+          (await import('node:child_process')).spawnSync(
+            'systemctl',
+            ['--user', 'restart', st.name],
+            { stdio: 'pipe' }
+          );
           success('Service restarted.');
         }
       } else {
@@ -1010,16 +1166,20 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
     }
 
     // ── Final action ──────────────────────────────────────────────
-    const defaultAction = (confirmed && runtimeReady) ? 'run' : 'exit';
-    const action = await selectChoice([
-      { value: 'run', desc: 'Start Idle Hands' },
-      { value: 'exit', desc: 'Return to terminal' },
-    ], defaultAction);
+    const defaultAction = confirmed && runtimeReady ? 'run' : 'exit';
+    const action = await selectChoice(
+      [
+        { value: 'run', desc: 'Start Idle Hands' },
+        { value: 'exit', desc: 'Return to terminal' },
+      ],
+      defaultAction
+    );
 
     result = action as SetupResult;
-
   } finally {
-    try { rl.close(); } catch {}
+    try {
+      rl.close();
+    } catch {}
     if (inAltScreen) leaveFullScreen();
     process.removeListener('exit', exitHandler);
   }
@@ -1034,7 +1194,11 @@ export async function guidedRuntimeOnboarding(): Promise<boolean> {
   try {
     const rt = await loadRuntimes();
     if (rt.hosts.length > 0 && rt.backends.length > 0 && rt.models.length > 0) return false;
-  } catch { return false; }
-  console.log(`\n  ${YELLOW}⚠${RESET} No models found. Run ${BOLD}idlehands setup${RESET} for guided configuration.\n`);
+  } catch {
+    return false;
+  }
+  console.log(
+    `\n  ${YELLOW}⚠${RESET} No models found. Run ${BOLD}idlehands setup${RESET} for guided configuration.\n`
+  );
   return false;
 }

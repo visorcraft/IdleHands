@@ -39,7 +39,7 @@ export function irKvItem(
   key: string,
   value: string,
   keyStyle: IRSpan['style'] = 'bold',
-  valueStyle: IRSpan['style'] = 'plain',
+  valueStyle: IRSpan['style'] = 'plain'
 ): IRKvItem {
   return { key: String(key ?? ''), value: String(value ?? ''), keyStyle, valueStyle };
 }

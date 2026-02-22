@@ -13,8 +13,9 @@
 import { execFileSync, execSync } from 'node:child_process';
 import { readFileSync, accessSync, constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+
 import { fetchWithTimeout as fetchWithTimeoutStrict, stateDir } from './utils.js';
 
 const GITHUB_OWNER = 'visorcraft';
@@ -44,7 +45,9 @@ function isUsableCommand(cmd: string): boolean {
 /** Resolve the currently-running idlehands install target (prefix + npm binary). */
 function resolveInstallPaths(): InstallPaths | null {
   try {
-    const binPath = execSync('command -v idlehands 2>/dev/null || echo ""', { encoding: 'utf8' }).trim();
+    const binPath = execSync('command -v idlehands 2>/dev/null || echo ""', {
+      encoding: 'utf8',
+    }).trim();
     if (!binPath) return null;
 
     // npm global prefixes place binaries in <prefix>/bin
@@ -55,7 +58,9 @@ function resolveInstallPaths(): InstallPaths | null {
     const npmByNodeDir = path.join(path.dirname(process.execPath), 'npm');
     const npmBin = isUsableCommand(npmByPrefix)
       ? npmByPrefix
-      : (isUsableCommand(npmByNodeDir) ? npmByNodeDir : 'npm');
+      : isUsableCommand(npmByNodeDir)
+        ? npmByNodeDir
+        : 'npm';
 
     return { binPath, prefix, installDir, npmBin };
   } catch {
@@ -95,10 +100,12 @@ function npmInstallGlobal(spec: string): void {
       if (!hasSudo()) {
         throw new Error(
           `Permission denied: ${target.prefix} requires elevated permissions.\n` +
-          `Re-run as root or install to a user-writable prefix.`
+            `Re-run as root or install to a user-writable prefix.`
         );
       }
-      console.log(`[upgrade] ${target.prefix} requires elevated permissions, re-running with sudo...`);
+      console.log(
+        `[upgrade] ${target.prefix} requires elevated permissions, re-running with sudo...`
+      );
       execFileSync('sudo', [target.npmBin, ...args], {
         stdio: 'inherit',
         timeout: 120_000,
@@ -134,7 +141,10 @@ function resolveGitHubToken(): string | null {
     const lines = raw.split('\n');
     let inGithub = false;
     for (const line of lines) {
-      if (line.match(/^github\.com:/)) { inGithub = true; continue; }
+      if (line.match(/^github\.com:/)) {
+        inGithub = true;
+        continue;
+      }
       if (inGithub && line.match(/^\S/)) break; // next top-level key
       if (inGithub) {
         const m = line.match(/oauth_token:\s*(.+)/);
@@ -160,7 +170,11 @@ type UpdateCheckOpts = {
   offline?: boolean;
 };
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response | null> {
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<Response | null> {
   try {
     return await fetchWithTimeoutStrict(url, init, timeoutMs);
   } catch {
@@ -195,14 +209,20 @@ export function detectInstallSource(): InstallSource {
 async function getLatestGitHub(timeoutMs = 3000): Promise<string | null> {
   try {
     const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
-    const headers: Record<string, string> = { 'Accept': 'application/vnd.github+json', 'User-Agent': 'idlehands-cli' };
+    const headers: Record<string, string> = {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'idlehands-cli',
+    };
     const token = resolveGitHubToken();
     if (token) headers['Authorization'] = `token ${token}`;
     const res = await fetchWithTimeout(url, { headers }, timeoutMs);
     if (!res) return null;
-    if (res.status === 404) { console.log('[github] No releases published yet.'); return null; }
+    if (res.status === 404) {
+      console.log('[github] No releases published yet.');
+      return null;
+    }
     if (!res.ok) return null;
-    const data = await res.json() as any;
+    const data = (await res.json()) as any;
     return data?.tag_name?.replace(/^v/, '') ?? null;
   } catch {
     return null;
@@ -213,13 +233,20 @@ async function getLatestGitHub(timeoutMs = 3000): Promise<string | null> {
 async function getLatestNpm(timeoutMs = 3000): Promise<string | null> {
   try {
     const pkg = encodeURIComponent(NPM_SCOPED_PACKAGE);
-    const res = await fetchWithTimeout(`https://registry.npmjs.org/${pkg}/latest`, {
-      headers: { 'Accept': 'application/json', 'User-Agent': 'idlehands-cli' }
-    }, timeoutMs);
+    const res = await fetchWithTimeout(
+      `https://registry.npmjs.org/${pkg}/latest`,
+      {
+        headers: { Accept: 'application/json', 'User-Agent': 'idlehands-cli' },
+      },
+      timeoutMs
+    );
     if (!res) return null;
-    if (res.status === 404) { console.log('[npm] Package not published yet.'); return null; }
+    if (res.status === 404) {
+      console.log('[npm] Package not published yet.');
+      return null;
+    }
     if (!res.ok) return null;
-    const data = await res.json() as any;
+    const data = (await res.json()) as any;
     return data?.version ?? null;
   } catch {
     return null;
@@ -227,7 +254,10 @@ async function getLatestNpm(timeoutMs = 3000): Promise<string | null> {
 }
 
 /** Get the latest version, trying the preferred source first, then fallback. */
-async function getLatestVersion(source: InstallSource, opts: UpdateCheckOpts = {}): Promise<{ version: string; source: InstallSource } | null> {
+async function getLatestVersion(
+  source: InstallSource,
+  opts: UpdateCheckOpts = {}
+): Promise<{ version: string; source: InstallSource } | null> {
   if (opts.offline) return null;
   const timeoutMs = opts.timeoutMs ?? 3000;
   const tryGithub = async () => {
@@ -247,19 +277,27 @@ async function getLatestVersion(source: InstallSource, opts: UpdateCheckOpts = {
 }
 
 /** Check if an update is available. */
-async function checkForUpdate(currentVersion: string, source: InstallSource, opts: UpdateCheckOpts = {}): Promise<VersionInfo | null> {
+async function checkForUpdate(
+  currentVersion: string,
+  source: InstallSource,
+  opts: UpdateCheckOpts = {}
+): Promise<VersionInfo | null> {
   const result = await getLatestVersion(source, opts);
   if (!result) return null;
   return {
     current: currentVersion,
     latest: result.version,
     source: result.source,
-    updateAvailable: compareSemver(currentVersion, result.version) < 0
+    updateAvailable: compareSemver(currentVersion, result.version) < 0,
   };
 }
 
 /** Daily update check — returns update info if check is due and update available. */
-export async function dailyUpdateCheck(currentVersion: string, source: InstallSource, opts: UpdateCheckOpts = {}): Promise<VersionInfo | null> {
+export async function dailyUpdateCheck(
+  currentVersion: string,
+  source: InstallSource,
+  opts: UpdateCheckOpts = {}
+): Promise<VersionInfo | null> {
   if (opts.offline) return null;
   try {
     await fs.mkdir(STATE_DIR, { recursive: true });
@@ -277,7 +315,7 @@ export async function dailyUpdateCheck(currentVersion: string, source: InstallSo
             current: currentVersion,
             latest: data.latest,
             source: data.source ?? source,
-            updateAvailable: true
+            updateAvailable: true,
           };
         }
         return null;
@@ -287,12 +325,20 @@ export async function dailyUpdateCheck(currentVersion: string, source: InstallSo
     const info = await checkForUpdate(currentVersion, source, opts);
 
     // Cache the result
-    await fs.writeFile(UPDATE_CHECK_FILE, JSON.stringify({
-      timestamp: new Date().toISOString(),
-      latest: info?.latest ?? currentVersion,
-      source: info?.source ?? source,
-      updateAvailable: info?.updateAvailable ?? false
-    }, null, 2), 'utf8');
+    await fs.writeFile(
+      UPDATE_CHECK_FILE,
+      JSON.stringify(
+        {
+          timestamp: new Date().toISOString(),
+          latest: info?.latest ?? currentVersion,
+          source: info?.source ?? source,
+          updateAvailable: info?.updateAvailable ?? false,
+        },
+        null,
+        2
+      ),
+      'utf8'
+    );
 
     return info?.updateAvailable ? info : null;
   } catch {
@@ -318,7 +364,10 @@ function getNpmGlobalDir(): string | null {
  * Backup the current installation before upgrade.
  * Only 1 rollback version is retained.
  */
-async function backupForRollback(currentVersion: string, source: InstallSource): Promise<RollbackInfo | null> {
+async function backupForRollback(
+  currentVersion: string,
+  source: InstallSource
+): Promise<RollbackInfo | null> {
   try {
     const installDir = getNpmGlobalDir();
     if (!installDir) {
@@ -346,7 +395,7 @@ async function backupForRollback(currentVersion: string, source: InstallSource):
     execSync(`npm pack --pack-destination "${ROLLBACK_DIR}" 2>/dev/null`, {
       cwd: installDir,
       encoding: 'utf8',
-      timeout: 30_000
+      timeout: 30_000,
     });
 
     // npm pack outputs the filename; find it
@@ -365,9 +414,13 @@ async function backupForRollback(currentVersion: string, source: InstallSource):
       version: currentVersion,
       source,
       backupPath: tgzPath,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
-    await fs.writeFile(path.join(ROLLBACK_DIR, 'rollback.json'), JSON.stringify(info, null, 2), 'utf8');
+    await fs.writeFile(
+      path.join(ROLLBACK_DIR, 'rollback.json'),
+      JSON.stringify(info, null, 2),
+      'utf8'
+    );
 
     console.log(`[rollback] backed up v${currentVersion} to ${tgzPath}`);
     return info;
@@ -449,12 +502,16 @@ export async function performUpgrade(currentVersion: string, source: InstallSour
 
       // Find the asset download URL from the release
       const releaseUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/v${info.latest}`;
-      const headers: Record<string, string> = { 'Accept': 'application/vnd.github+json', 'User-Agent': 'idlehands-cli' };
+      const headers: Record<string, string> = {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'idlehands-cli',
+      };
       if (token) headers['Authorization'] = `token ${token}`;
 
       const releaseRes = await fetch(releaseUrl, { headers });
-      if (!releaseRes.ok) throw new Error(`Failed to fetch release v${info.latest}: HTTP ${releaseRes.status}`);
-      const releaseData = await releaseRes.json() as any;
+      if (!releaseRes.ok)
+        throw new Error(`Failed to fetch release v${info.latest}: HTTP ${releaseRes.status}`);
+      const releaseData = (await releaseRes.json()) as any;
 
       const tgzName = `${RELEASE_ASSET_BASENAME}-${info.latest}.tgz`;
       const asset = (releaseData.assets ?? []).find((a: any) => a.name === tgzName);
@@ -463,7 +520,10 @@ export async function performUpgrade(currentVersion: string, source: InstallSour
       console.log(`Downloading: ${tgzName} (${(asset.size / 1024).toFixed(0)} KB)`);
 
       // Download the asset binary
-      const dlHeaders: Record<string, string> = { 'Accept': 'application/octet-stream', 'User-Agent': 'idlehands-cli' };
+      const dlHeaders: Record<string, string> = {
+        Accept: 'application/octet-stream',
+        'User-Agent': 'idlehands-cli',
+      };
       if (token) dlHeaders['Authorization'] = `token ${token}`;
       const dlRes = await fetch(asset.url, { headers: dlHeaders });
       if (!dlRes.ok) throw new Error(`Failed to download asset: HTTP ${dlRes.status}`);
@@ -482,7 +542,9 @@ export async function performUpgrade(currentVersion: string, source: InstallSour
     console.log(`\n✓ Upgraded to ${info.latest}`);
 
     // Clear the update check cache so we don't nag
-    try { await fs.unlink(UPDATE_CHECK_FILE); } catch {}
+    try {
+      await fs.unlink(UPDATE_CHECK_FILE);
+    } catch {}
   } catch (e: any) {
     console.error(`\n✗ Upgrade failed: ${e?.message ?? String(e)}`);
 
@@ -502,7 +564,9 @@ export async function performUpgrade(currentVersion: string, source: InstallSour
       if (info.source === 'npm') {
         console.error(`  npm install -g ${NPM_SCOPED_PACKAGE}@latest`);
       } else {
-        console.error(`  npm install -g https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/v${info.latest}/${RELEASE_ASSET_BASENAME}-${info.latest}.tgz`);
+        console.error(
+          `  npm install -g https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/v${info.latest}/${RELEASE_ASSET_BASENAME}-${info.latest}.tgz`
+        );
       }
     }
     process.exit(1);

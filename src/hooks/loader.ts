@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+
 import type { HookPlugin } from './types.js';
 
 export type LoadedHookPlugin = {
@@ -35,11 +36,13 @@ export async function loadHookPlugins(opts: {
   logger?: (message: string) => void;
 }): Promise<LoadedHookPlugin[]> {
   const strict = opts.strict === true;
-  const logger = opts.logger ?? ((message: string) => {
-    if (!process.env.IDLEHANDS_QUIET_WARNINGS) {
-      console.warn(message);
-    }
-  });
+  const logger =
+    opts.logger ??
+    ((message: string) => {
+      if (!process.env.IDLEHANDS_QUIET_WARNINGS) {
+        console.warn(message);
+      }
+    });
 
   const loaded: LoadedHookPlugin[] = [];
 

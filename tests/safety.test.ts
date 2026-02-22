@@ -1,8 +1,9 @@
-import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { describe, it, beforeEach } from 'node:test';
+
 import {
   checkExecSafety,
   checkPathSafety,
@@ -300,7 +301,9 @@ describe('checkPathTraversal', () => {
   });
 
   it('allows paths in allowedDirs', async () => {
-    const result = await checkPathTraversal('/opt/allowed/file.txt', '/home/user/project', ['/opt/allowed']);
+    const result = await checkPathTraversal('/opt/allowed/file.txt', '/home/user/project', [
+      '/opt/allowed',
+    ]);
     assert.equal(result, null);
   });
 });
@@ -455,9 +458,12 @@ describe('safety config loading', () => {
 
   it('loads user forbidden patterns from file', async () => {
     const cfgPath = path.join(tmpDir, 'safety.json');
-    await fs.writeFile(cfgPath, JSON.stringify({
-      forbidden_patterns: ['\\bmy-dangerous-cmd\\b'],
-    }));
+    await fs.writeFile(
+      cfgPath,
+      JSON.stringify({
+        forbidden_patterns: ['\\bmy-dangerous-cmd\\b'],
+      })
+    );
     await loadSafetyConfig(cfgPath);
 
     const v = checkExecSafety('my-dangerous-cmd --flag');
@@ -467,9 +473,12 @@ describe('safety config loading', () => {
 
   it('loads user cautious patterns from file', async () => {
     const cfgPath = path.join(tmpDir, 'safety.json');
-    await fs.writeFile(cfgPath, JSON.stringify({
-      cautious_patterns: ['\\bmy-risky-cmd\\b'],
-    }));
+    await fs.writeFile(
+      cfgPath,
+      JSON.stringify({
+        cautious_patterns: ['\\bmy-risky-cmd\\b'],
+      })
+    );
     await loadSafetyConfig(cfgPath);
 
     const v = checkExecSafety('my-risky-cmd --flag');
@@ -479,9 +488,12 @@ describe('safety config loading', () => {
 
   it('loads allow patterns that bypass cautious', async () => {
     const cfgPath = path.join(tmpDir, 'safety.json');
-    await fs.writeFile(cfgPath, JSON.stringify({
-      allow_patterns: ['^npm install\\b'],
-    }));
+    await fs.writeFile(
+      cfgPath,
+      JSON.stringify({
+        allow_patterns: ['^npm install\\b'],
+      })
+    );
     await loadSafetyConfig(cfgPath);
 
     // npm install is normally cautious
@@ -491,9 +503,12 @@ describe('safety config loading', () => {
 
   it('allow patterns do not bypass forbidden', async () => {
     const cfgPath = path.join(tmpDir, 'safety.json');
-    await fs.writeFile(cfgPath, JSON.stringify({
-      allow_patterns: ['rm -rf /'],
-    }));
+    await fs.writeFile(
+      cfgPath,
+      JSON.stringify({
+        allow_patterns: ['rm -rf /'],
+      })
+    );
     await loadSafetyConfig(cfgPath);
 
     const v = checkExecSafety('rm -rf /');
@@ -502,9 +517,12 @@ describe('safety config loading', () => {
 
   it('loads user protected paths', async () => {
     const cfgPath = path.join(tmpDir, 'safety.json');
-    await fs.writeFile(cfgPath, JSON.stringify({
-      protected_paths: ['/my/secret/dir'],
-    }));
+    await fs.writeFile(
+      cfgPath,
+      JSON.stringify({
+        protected_paths: ['/my/secret/dir'],
+      })
+    );
     await loadSafetyConfig(cfgPath);
 
     const v = checkPathSafety('/my/secret/dir/file.txt');
@@ -514,9 +532,12 @@ describe('safety config loading', () => {
 
   it('loads user protected delete roots', async () => {
     const cfgPath = path.join(tmpDir, 'safety.json');
-    await fs.writeFile(cfgPath, JSON.stringify({
-      protected_delete_roots: ['/data'],
-    }));
+    await fs.writeFile(
+      cfgPath,
+      JSON.stringify({
+        protected_delete_roots: ['/data'],
+      })
+    );
     await loadSafetyConfig(cfgPath);
 
     assert.ok(isProtectedDeleteTarget('rm -rf /data'));
@@ -541,9 +562,12 @@ describe('safety config loading', () => {
 
   it('skips invalid regex patterns with warning', async () => {
     const cfgPath = path.join(tmpDir, 'safety.json');
-    await fs.writeFile(cfgPath, JSON.stringify({
-      forbidden_patterns: ['[invalid regex', '\\bvalid\\b'],
-    }));
+    await fs.writeFile(
+      cfgPath,
+      JSON.stringify({
+        forbidden_patterns: ['[invalid regex', '\\bvalid\\b'],
+      })
+    );
     await loadSafetyConfig(cfgPath);
 
     // Valid pattern still works
@@ -553,9 +577,12 @@ describe('safety config loading', () => {
 
   it('resetSafetyState clears all overrides', async () => {
     const cfgPath = path.join(tmpDir, 'safety.json');
-    await fs.writeFile(cfgPath, JSON.stringify({
-      forbidden_patterns: ['\\bmy-cmd\\b'],
-    }));
+    await fs.writeFile(
+      cfgPath,
+      JSON.stringify({
+        forbidden_patterns: ['\\bmy-cmd\\b'],
+      })
+    );
     await loadSafetyConfig(cfgPath);
     setLockdown(true);
 

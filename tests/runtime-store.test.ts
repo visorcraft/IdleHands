@@ -1,37 +1,74 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { describe, it } from 'node:test';
 
-import { loadRuntimes, saveRuntimes, validateRuntimes, redactConfig, interpolateTemplate } from '../dist/runtime/store.js';
-import { shellEscape } from '../dist/utils.js';
+import {
+  loadRuntimes,
+  saveRuntimes,
+  validateRuntimes,
+  redactConfig,
+  interpolateTemplate,
+} from '../dist/runtime/store.js';
 import type { RuntimesConfig } from '../dist/runtime/types.js';
+import { shellEscape } from '../dist/utils.js';
 
 function baseConfig(): RuntimesConfig {
   return {
     schema_version: 1,
-    hosts: [{
-      id: 'host-1', display_name: 'Host 1', enabled: true, transport: 'local', connection: {},
-      capabilities: { gpu: [], backends: ['vulkan'] }, health: { check_cmd: 'echo ok' },
-      model_control: { stop_cmd: 'pkill -f llama || true', cleanup_cmd: null },
-    }],
-    backends: [{
-      id: 'vulkan', display_name: 'Vulkan', enabled: true, type: 'vulkan', host_filters: 'any',
-      apply_cmd: null, verify_cmd: 'echo ok', rollback_cmd: null, env: { GGML_VK_DEVICE: '0' }, args: ['--foo', 'bar'],
-    }],
-    models: [{
-      id: 'model-1', display_name: 'Model 1', enabled: true, source: '/models/m.gguf',
-      host_policy: ['host-1'], backend_policy: ['vulkan'],
-      launch: { start_cmd: 'llama-server --model {source} --port {port} {backend_args}', probe_cmd: 'curl -sf http://{host}:{port}/health' },
-      runtime_defaults: { port: 8080, context_window: 8192, max_tokens: 1024 }, split_policy: null,
-    }],
+    hosts: [
+      {
+        id: 'host-1',
+        display_name: 'Host 1',
+        enabled: true,
+        transport: 'local',
+        connection: {},
+        capabilities: { gpu: [], backends: ['vulkan'] },
+        health: { check_cmd: 'echo ok' },
+        model_control: { stop_cmd: 'pkill -f llama || true', cleanup_cmd: null },
+      },
+    ],
+    backends: [
+      {
+        id: 'vulkan',
+        display_name: 'Vulkan',
+        enabled: true,
+        type: 'vulkan',
+        host_filters: 'any',
+        apply_cmd: null,
+        verify_cmd: 'echo ok',
+        rollback_cmd: null,
+        env: { GGML_VK_DEVICE: '0' },
+        args: ['--foo', 'bar'],
+      },
+    ],
+    models: [
+      {
+        id: 'model-1',
+        display_name: 'Model 1',
+        enabled: true,
+        source: '/models/m.gguf',
+        host_policy: ['host-1'],
+        backend_policy: ['vulkan'],
+        launch: {
+          start_cmd: 'llama-server --model {source} --port {port} {backend_args}',
+          probe_cmd: 'curl -sf http://{host}:{port}/health',
+        },
+        runtime_defaults: { port: 8080, context_window: 8192, max_tokens: 1024 },
+        split_policy: null,
+      },
+    ],
   };
 }
 
 async function withTmpDir(fn: (dir: string) => Promise<void>) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'idlehands-runtime-store-'));
-  try { await fn(dir); } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  try {
+    await fn(dir);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 }
 
 describe('runtime store', () => {
@@ -45,7 +82,10 @@ describe('runtime store', () => {
   it('loadRuntimes() rejects invalid schema_version', async () => {
     await withTmpDir(async (dir) => {
       const file = path.join(dir, 'runtimes.json');
-      await fs.writeFile(file, JSON.stringify({ schema_version: 2, hosts: [], backends: [], models: [] }));
+      await fs.writeFile(
+        file,
+        JSON.stringify({ schema_version: 2, hosts: [], backends: [], models: [] })
+      );
       await assert.rejects(() => loadRuntimes(file), /schema_version/i);
     });
   });
@@ -138,7 +178,10 @@ describe('runtime store', () => {
 
   it('Template interpolation with shellEscape() produces safe output', () => {
     const dangerous = `x'; rm -rf / #`;
-    const out = interpolateTemplate('run --model {source} --args {backend_args}', { source: dangerous, backend_args: '--threads 4' });
+    const out = interpolateTemplate('run --model {source} --args {backend_args}', {
+      source: dangerous,
+      backend_args: '--threads 4',
+    });
     assert.equal(out.includes(shellEscape(dangerous)), true);
     assert.equal(out.includes("'\\''"), true);
   });

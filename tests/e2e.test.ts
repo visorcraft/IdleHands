@@ -1,9 +1,9 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
-import os from 'node:os';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it } from 'node:test';
 
 import { createSession } from '../dist/agent.js';
 
@@ -54,7 +54,7 @@ describe('end-to-end (mock server)', () => {
         res.writeHead(200, {
           'content-type': 'text/event-stream',
           'cache-control': 'no-cache',
-          connection: 'keep-alive'
+          connection: 'keep-alive',
         });
 
         if (chatCalls === 1) {
@@ -73,15 +73,15 @@ describe('end-to-end (mock server)', () => {
                         type: 'function',
                         function: {
                           name: 'list_dir',
-                          arguments: JSON.stringify({ path: '.' })
-                        }
-                      }
-                    ]
+                          arguments: JSON.stringify({ path: '.' }),
+                        },
+                      },
+                    ],
                   },
-                  finish_reason: 'tool_calls'
-                }
-              ]
-            }
+                  finish_reason: 'tool_calls',
+                },
+              ],
+            },
           ]);
           res.end(sse);
           return;
@@ -95,11 +95,11 @@ describe('end-to-end (mock server)', () => {
               {
                 index: 0,
                 delta: { content: 'done' },
-                finish_reason: 'stop'
-              }
+                finish_reason: 'stop',
+              },
             ],
-            usage: { prompt_tokens: 10, completion_tokens: 2 }
-          }
+            usage: { prompt_tokens: 10, completion_tokens: 2 },
+          },
         ]);
         res.end(sse);
         return;
@@ -138,8 +138,8 @@ describe('end-to-end (mock server)', () => {
         enabled: false,
         vault: { enabled: false, mode: 'off' },
         lens: { enabled: false },
-        replay: { enabled: false }
-      }
+        replay: { enabled: false },
+      },
     };
 
     try {

@@ -21,9 +21,9 @@ const MAGENTA = `${ESC}35m`;
 const BG_GRAY = `${ESC}48;5;236m`;
 
 type RenderOptions = {
-  color?: boolean;      // default: auto-detect from isTTY
-  verbose?: boolean;    // show full think blocks
-  width?: number;       // terminal width for wrapping
+  color?: boolean; // default: auto-detect from isTTY
+  verbose?: boolean; // show full think blocks
+  width?: number; // terminal width for wrapping
 };
 
 /**
@@ -95,11 +95,20 @@ export function renderMarkdown(text: string, opts: RenderOptions = {}): string {
 
     // Headings
     const h3 = line.match(/^### (.+)/);
-    if (h3) { out.push(`${BOLD}${h3[1]}${RESET}`); continue; }
+    if (h3) {
+      out.push(`${BOLD}${h3[1]}${RESET}`);
+      continue;
+    }
     const h2 = line.match(/^## (.+)/);
-    if (h2) { out.push(`${BOLD}${UNDERLINE}${h2[1]}${RESET}`); continue; }
+    if (h2) {
+      out.push(`${BOLD}${UNDERLINE}${h2[1]}${RESET}`);
+      continue;
+    }
     const h1 = line.match(/^# (.+)/);
-    if (h1) { out.push(`\n${BOLD}${UNDERLINE}${h1[1]}${RESET}\n`); continue; }
+    if (h1) {
+      out.push(`\n${BOLD}${UNDERLINE}${h1[1]}${RESET}\n`);
+      continue;
+    }
 
     // Horizontal rules
     if (/^---+$/.test(line.trim())) {
@@ -231,14 +240,14 @@ function isTableSeparator(line: string): boolean {
 
 function splitTableRow(line: string): string[] {
   const t = line.trim().replace(/^\|/, '').replace(/\|$/, '');
-  return t.split('|').map(c => c.trim());
+  return t.split('|').map((c) => c.trim());
 }
 
 function renderTable(rows: string[]): string[] {
   const cells = rows.map(splitTableRow);
-  const cols = Math.max(...cells.map(r => r.length));
+  const cols = Math.max(...cells.map((r) => r.length));
   const widths = Array.from({ length: cols }, (_, i) =>
-    Math.max(...cells.map(r => (r[i] ?? '').length))
+    Math.max(...cells.map((r) => (r[i] ?? '').length))
   );
 
   const renderRow = (row: string[]) => {
@@ -252,9 +261,9 @@ function renderTable(rows: string[]): string[] {
     return `${DIM}│${RESET}${padded.join(`${DIM}│${RESET}`)}${DIM}│${RESET}`;
   };
 
-  const border = `${DIM}├${widths.map(w => '─'.repeat(w + 2)).join('┼')}┤${RESET}`;
-  const top = `${DIM}┌${widths.map(w => '─'.repeat(w + 2)).join('┬')}┐${RESET}`;
-  const bottom = `${DIM}└${widths.map(w => '─'.repeat(w + 2)).join('┴')}┘${RESET}`;
+  const border = `${DIM}├${widths.map((w) => '─'.repeat(w + 2)).join('┼')}┤${RESET}`;
+  const top = `${DIM}┌${widths.map((w) => '─'.repeat(w + 2)).join('┬')}┐${RESET}`;
+  const bottom = `${DIM}└${widths.map((w) => '─'.repeat(w + 2)).join('┴')}┘${RESET}`;
 
   const out: string[] = [top];
   if (cells.length > 0) out.push(renderRow(cells[0]));
@@ -269,7 +278,10 @@ function highlightCodeLine(line: string, lang: string): string {
   let s = line;
 
   // Strings
-  s = s.replace(/("[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*')/g, `${GREEN}$1${RESET}${BG_GRAY}`);
+  s = s.replace(
+    /("[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*')/g,
+    `${GREEN}$1${RESET}${BG_GRAY}`
+  );
   // Numbers
   s = s.replace(/\b(\d+(?:\.\d+)?)\b/g, `${YELLOW}$1${RESET}${BG_GRAY}`);
 
@@ -278,17 +290,27 @@ function highlightCodeLine(line: string, lang: string): string {
   };
 
   if (['js', 'ts', 'javascript', 'typescript'].includes(l)) {
-    applyKeywords(/\b(const|let|var|function|return|if|else|for|while|class|import|export|async|await|try|catch|throw|new)\b/g);
+    applyKeywords(
+      /\b(const|let|var|function|return|if|else|for|while|class|import|export|async|await|try|catch|throw|new)\b/g
+    );
   } else if (['py', 'python'].includes(l)) {
-    applyKeywords(/\b(def|class|return|if|elif|else|for|while|import|from|as|try|except|raise|with|yield|async|await|lambda)\b/g);
+    applyKeywords(
+      /\b(def|class|return|if|elif|else|for|while|import|from|as|try|except|raise|with|yield|async|await|lambda)\b/g
+    );
   } else if (['bash', 'sh', 'zsh'].includes(l)) {
     applyKeywords(/\b(if|then|else|fi|for|do|done|while|case|esac|function|export|local)\b/g);
   } else if (['rust', 'rs'].includes(l)) {
-    applyKeywords(/\b(fn|let|mut|pub|impl|struct|enum|trait|use|mod|match|if|else|for|while|loop|return|async|await)\b/g);
+    applyKeywords(
+      /\b(fn|let|mut|pub|impl|struct|enum|trait|use|mod|match|if|else|for|while|loop|return|async|await)\b/g
+    );
   } else if (['go', 'golang'].includes(l)) {
-    applyKeywords(/\b(func|var|const|type|struct|interface|package|import|return|if|else|for|range|go|defer|switch|case)\b/g);
+    applyKeywords(
+      /\b(func|var|const|type|struct|interface|package|import|return|if|else|for|range|go|defer|switch|case)\b/g
+    );
   } else if (['c', 'cpp', 'c++', 'h', 'hpp'].includes(l)) {
-    applyKeywords(/\b(int|char|void|float|double|struct|class|if|else|for|while|return|include|typedef|static|const)\b/g);
+    applyKeywords(
+      /\b(int|char|void|float|double|struct|class|if|else|for|while|return|include|typedef|static|const)\b/g
+    );
   } else if (['json', 'yaml', 'yml'].includes(l)) {
     // keys before ':'
     s = s.replace(/^\s*([\w"'-]+)\s*:/g, `${CYAN}$1${RESET}${BG_GRAY}:`);

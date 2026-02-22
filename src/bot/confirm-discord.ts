@@ -6,6 +6,7 @@ import {
   type Message,
   type TextBasedChannel,
 } from 'discord.js';
+
 import type {
   ConfirmationProvider,
   ConfirmRequest,
@@ -22,7 +23,7 @@ export class DiscordConfirmProvider implements ConfirmationProvider {
   constructor(
     private channel: TextBasedChannel,
     private userId: string,
-    private timeoutSec: number = 300,
+    private timeoutSec: number = 300
   ) {}
 
   private async send(payload: string | { content: string; components?: any[] }): Promise<Message> {
@@ -32,11 +33,22 @@ export class DiscordConfirmProvider implements ConfirmationProvider {
   async confirm(opts: ConfirmRequest): Promise<boolean> {
     const id = this.nextId('c');
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`${id}:approve`).setLabel('✅ Approve').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`${id}:reject`).setLabel('❌ Reject').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId(`${id}:approve`)
+        .setLabel('✅ Approve')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`${id}:reject`)
+        .setLabel('❌ Reject')
+        .setStyle(ButtonStyle.Danger),
       ...(opts.diff
-        ? [new ButtonBuilder().setCustomId(`${id}:diff`).setLabel('📋 Diff').setStyle(ButtonStyle.Secondary)]
-        : []),
+        ? [
+            new ButtonBuilder()
+              .setCustomId(`${id}:diff`)
+              .setLabel('📋 Diff')
+              .setStyle(ButtonStyle.Secondary),
+          ]
+        : [])
     );
 
     const message = await this.send({
@@ -71,18 +83,22 @@ export class DiscordConfirmProvider implements ConfirmationProvider {
 
         if (action === 'diff') {
           const diff = opts.diff?.slice(0, MAX_DIFF_CHARS) ?? '(no diff)';
-          await interaction.reply({
-            content: `\`\`\`diff\n${diff}\n\`\`\``,
-            ephemeral: true,
-          }).catch(() => {});
+          await interaction
+            .reply({
+              content: `\`\`\`diff\n${diff}\n\`\`\``,
+              ephemeral: true,
+            })
+            .catch(() => {});
           continue;
         }
 
         const approved = action === 'approve';
-        await interaction.update({
-          content: `🔧 **Action ${approved ? 'approved' : 'rejected'}**\n${opts.summary}`,
-          components: [],
-        }).catch(() => {});
+        await interaction
+          .update({
+            content: `🔧 **Action ${approved ? 'approved' : 'rejected'}**\n${opts.summary}`,
+            components: [],
+          })
+          .catch(() => {});
         return approved;
       } catch {
         await this.safeEdit(message, {
@@ -103,15 +119,21 @@ export class DiscordConfirmProvider implements ConfirmationProvider {
     ];
 
     const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`${id}:all-approve`).setLabel('✅ Approve All').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`${id}:all-reject`).setLabel('❌ Reject All').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId(`${id}:all-approve`)
+        .setLabel('✅ Approve All')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`${id}:all-reject`)
+        .setLabel('❌ Reject All')
+        .setStyle(ButtonStyle.Danger)
     );
 
     const stepButtons = opts.steps.slice(0, 5).map((_, i) =>
       new ButtonBuilder()
         .setCustomId(`${id}:step-${i}`)
         .setLabel(`▶ #${i + 1}`)
-        .setStyle(ButtonStyle.Secondary),
+        .setStyle(ButtonStyle.Secondary)
     );
 
     const rows = [row1] as ActionRowBuilder<ButtonBuilder>[];
@@ -142,10 +164,12 @@ export class DiscordConfirmProvider implements ConfirmationProvider {
       }
 
       const approvedCount = decisions.filter((d) => d.approved).length;
-      await interaction.update({
-        content: `📋 **Plan resolved** — approved ${approvedCount}/${opts.steps.length} step(s).`,
-        components: [],
-      }).catch(() => {});
+      await interaction
+        .update({
+          content: `📋 **Plan resolved** — approved ${approvedCount}/${opts.steps.length} step(s).`,
+          components: [],
+        })
+        .catch(() => {});
 
       return decisions;
     } catch {
@@ -166,7 +190,10 @@ export class DiscordConfirmProvider implements ConfirmationProvider {
     return `${prefix}${this.seq.toString(16).padStart(4, '0')}`;
   }
 
-  private async safeEdit(message: Message, payload: { content: string; components: [] }): Promise<void> {
+  private async safeEdit(
+    message: Message,
+    payload: { content: string; components: [] }
+  ): Promise<void> {
     await message.edit(payload).catch(() => {});
   }
 }

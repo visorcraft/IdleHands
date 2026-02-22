@@ -51,7 +51,9 @@ export function formatToolCallSummary(call: { name: string; args: AnyArgs }): st
       return `search_files "${truncate(args.pattern || '?', 48)}" in ${args.path || '.'}`;
 
     case 'exec': {
-      const cmd = String(args.command || '?').replace(/\s+/g, ' ').trim();
+      const cmd = String(args.command || '?')
+        .replace(/\s+/g, ' ')
+        .trim();
       return `exec: ${truncate(cmd, 90)}`;
     }
 

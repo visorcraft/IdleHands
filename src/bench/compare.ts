@@ -2,15 +2,17 @@
 // NOTE: These utilities are intentionally duplicated from src/ to keep the
 // benchmark harness self-contained and free of production import dependencies.
 
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import os from 'node:os';
-import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { BenchCase, BenchEngine, BenchResult } from './types.js';
-import { loadConfig } from '../config.js';
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
 import { createSession } from '../agent.js';
+import { loadConfig } from '../config.js';
+
 import { runOpenclaw } from './openclaw.js';
+import type { BenchCase, BenchEngine, BenchResult } from './types.js';
 
 function nowMs() {
   return performance.now();
@@ -32,7 +34,11 @@ async function runShell(command: string, cwd: string, timeoutSec: number) {
     child.on('error', reject);
     child.on('close', (code) => {
       clearTimeout(t);
-      resolve({ rc: code ?? 0, out: Buffer.concat(out).toString('utf8'), err: Buffer.concat(err).toString('utf8') });
+      resolve({
+        rc: code ?? 0,
+        out: Buffer.concat(out).toString('utf8'),
+        err: Buffer.concat(err).toString('utf8'),
+      });
     });
   });
 }
@@ -60,7 +66,10 @@ async function checkSuccess(c: BenchCase, workDir: string, agentOutput: string) 
   if (c.success.type === 'equals') {
     const out = agentOutput.trim();
     const ok = out === c.success.value;
-    return { ok, reason: ok ? 'ok' : `expected ${JSON.stringify(c.success.value)}, got ${JSON.stringify(out)}` };
+    return {
+      ok,
+      reason: ok ? 'ok' : `expected ${JSON.stringify(c.success.value)}, got ${JSON.stringify(out)}`,
+    };
   }
 
   if (c.success.type === 'exec') {
@@ -89,21 +98,32 @@ async function runIdlehandsOnce(opts: {
   maxTokens: number;
   model?: string;
   cachedConfig?: any;
-}): Promise<{ initMs: number; ttfrMs: number | null; ttftMs: number | null; ttcMs: number; exitCode: number; out: string; turns: number; toolCalls: number }> {
+}): Promise<{
+  initMs: number;
+  ttfrMs: number | null;
+  ttftMs: number | null;
+  ttcMs: number;
+  exitCode: number;
+  out: string;
+  turns: number;
+  toolCalls: number;
+}> {
   const config = opts.cachedConfig
     ? { ...opts.cachedConfig, dir: opts.workDir }
-    : (await loadConfig({
-        configPath: path.join(os.tmpdir(), 'idlehands-bench-config-does-not-exist.json'),
-        cli: {
-          endpoint: opts.endpoint,
-          dir: opts.workDir,
-          model: opts.model ?? '',
-          max_tokens: opts.maxTokens,
-          no_confirm: true,
-          dry_run: false,
-          verbose: false
-        } as any
-      })).config;
+    : (
+        await loadConfig({
+          configPath: path.join(os.tmpdir(), 'idlehands-bench-config-does-not-exist.json'),
+          cli: {
+            endpoint: opts.endpoint,
+            dir: opts.workDir,
+            model: opts.model ?? '',
+            max_tokens: opts.maxTokens,
+            no_confirm: true,
+            dry_run: false,
+            verbose: false,
+          } as any,
+        })
+      ).config;
 
   const initStart = nowMs();
   const session = await createSession({ config });
@@ -119,14 +139,30 @@ async function runIdlehandsOnce(opts: {
     },
     onToken: () => {
       if (ttft == null) ttft = nowMs() - askStart;
-    }
+    },
   });
 
   const ttc = nowMs() - askStart;
-  return { initMs, ttfrMs: ttfr, ttftMs: ttft, ttcMs: ttc, exitCode: 0, out: res.text ?? '', turns: res.turns, toolCalls: res.toolCalls };
+  return {
+    initMs,
+    ttfrMs: ttfr,
+    ttftMs: ttft,
+    ttcMs: ttc,
+    exitCode: 0,
+    out: res.text ?? '',
+    turns: res.turns,
+    toolCalls: res.toolCalls,
+  };
 }
 
-async function runEngineOnce(engine: BenchEngine, c: BenchCase, workDir: string, endpoint: string, maxTokens: number, cachedConfig?: any) {
+async function runEngineOnce(
+  engine: BenchEngine,
+  c: BenchCase,
+  workDir: string,
+  endpoint: string,
+  maxTokens: number,
+  cachedConfig?: any
+) {
   if (engine === 'idlehands') {
     return await runIdlehandsOnce({
       workDir,
@@ -134,7 +170,7 @@ async function runEngineOnce(engine: BenchEngine, c: BenchCase, workDir: string,
       endpoint,
       maxTokens,
       model: c.model,
-      cachedConfig
+      cachedConfig,
     });
   }
 
@@ -148,7 +184,7 @@ async function runEngineOnce(engine: BenchEngine, c: BenchCase, workDir: string,
     // Use embedded mode to avoid gateway pairing requirements.
     // We still pin the model/provider via OPENCLAW_CONFIG_PATH.
     local: true,
-    profile: 'idlehands-bench'
+    profile: 'idlehands-bench',
   });
   const initMs = 0;
   const ttc = nowMs() - t0;
@@ -163,7 +199,16 @@ async function runEngineOnce(engine: BenchEngine, c: BenchCase, workDir: string,
     out = (r.stdout || r.stderr || '').trim();
   }
 
-  return { initMs, ttfrMs: r.ttfrMs, ttftMs: null, ttcMs: ttc, exitCode: r.exitCode, out, turns: 0, toolCalls: 0 };
+  return {
+    initMs,
+    ttfrMs: r.ttfrMs,
+    ttftMs: null,
+    ttcMs: ttc,
+    exitCode: r.exitCode,
+    out,
+    turns: 0,
+    toolCalls: 0,
+  };
 }
 
 async function main() {
@@ -180,7 +225,12 @@ async function main() {
   const reps = c.repetitions ?? 5;
   const maxTokens = c.max_tokens ?? 512;
 
-  const engines: BenchEngine[] = c.engine === 'openclaw' ? ['openclaw'] : c.engine === 'both' ? ['idlehands', 'openclaw'] : ['idlehands'];
+  const engines: BenchEngine[] =
+    c.engine === 'openclaw'
+      ? ['openclaw']
+      : c.engine === 'both'
+        ? ['idlehands', 'openclaw']
+        : ['idlehands'];
 
   const results: BenchResult[] = [];
 
@@ -196,8 +246,8 @@ async function main() {
         max_tokens: maxTokens,
         no_confirm: true,
         dry_run: false,
-        verbose: false
-      } as any
+        verbose: false,
+      } as any,
     });
     idlehandsCachedConfig = config;
   }
@@ -206,17 +256,32 @@ async function main() {
     for (let i = 0; i < reps; i++) {
       const workDir = await setupWorkspace(c);
       try {
-        console.error(`[bench] case=${c.name} engine=${engine} iter=${i + 1}/${reps} workdir=${workDir}`);
+        console.error(
+          `[bench] case=${c.name} engine=${engine} iter=${i + 1}/${reps} workdir=${workDir}`
+        );
         await applySetup(c, workDir);
 
-        const r = await runEngineOnce(engine, c, workDir, endpoint, maxTokens, engine === 'idlehands' ? idlehandsCachedConfig : undefined);
+        const r = await runEngineOnce(
+          engine,
+          c,
+          workDir,
+          endpoint,
+          maxTokens,
+          engine === 'idlehands' ? idlehandsCachedConfig : undefined
+        );
         const check = await checkSuccess(c, workDir, r.out);
 
         const ok = check.ok && r.exitCode === 0;
-        const reason = check.ok ? (r.exitCode === 0 ? 'ok' : `exitCode=${r.exitCode}`) : check.reason;
+        const reason = check.ok
+          ? r.exitCode === 0
+            ? 'ok'
+            : `exitCode=${r.exitCode}`
+          : check.reason;
         const ttcS = r.ttcMs != null ? (r.ttcMs / 1000).toFixed(2) : '?';
         const ttfrS = r.ttfrMs != null ? (r.ttfrMs / 1000).toFixed(2) : '?';
-        console.error(`[bench] result case=${c.name} engine=${engine} iter=${i + 1}/${reps} ok=${ok} ttc_s=${ttcS} ttfr_s=${ttfrS} reason=${ok ? 'ok' : reason}`);
+        console.error(
+          `[bench] result case=${c.name} engine=${engine} iter=${i + 1}/${reps} ok=${ok} ttc_s=${ttcS} ttfr_s=${ttfrS} reason=${ok ? 'ok' : reason}`
+        );
 
         results.push({
           case: c.name,
@@ -230,11 +295,13 @@ async function main() {
           ttc_ms: r.ttcMs,
           exitCode: r.exitCode,
           turns: r.turns,
-          toolCalls: r.toolCalls
+          toolCalls: r.toolCalls,
         });
       } catch (e: any) {
         const reason = e?.message ?? String(e);
-        console.error(`[bench] result case=${c.name} engine=${engine} iter=${i + 1}/${reps} ok=false ttc_s=0 ttfr_s=? reason=${reason}`);
+        console.error(
+          `[bench] result case=${c.name} engine=${engine} iter=${i + 1}/${reps} ok=false ttc_s=0 ttfr_s=? reason=${reason}`
+        );
 
         results.push({
           case: c.name,
@@ -246,7 +313,7 @@ async function main() {
           ttfr_ms: null,
           ttft_ms: null,
           ttc_ms: 0,
-          exitCode: null
+          exitCode: null,
         });
       } finally {
         if (c.workspace.kind === 'temp') {
@@ -256,7 +323,12 @@ async function main() {
     }
   }
 
-  const outPath = path.join(process.cwd(), 'bench', 'results', `${c.name}.compare.${Date.now()}.jsonl`);
+  const outPath = path.join(
+    process.cwd(),
+    'bench',
+    'results',
+    `${c.name}.compare.${Date.now()}.jsonl`
+  );
   await fs.mkdir(path.dirname(outPath), { recursive: true });
   await fs.writeFile(outPath, results.map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8');
   console.log(`Wrote: ${outPath}`);

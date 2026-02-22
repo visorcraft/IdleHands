@@ -1,6 +1,7 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import crypto from 'node:crypto';
+
 import { stateDir, randomId } from './utils.js';
 
 export type Checkpoint = {
@@ -79,7 +80,7 @@ export class ReplayStore {
       filePath: args.filePath,
       sha256_before: beforeHash,
       sha256_after: afterHash,
-      note: args.note
+      note: args.note,
     };
 
     const blobDir = path.join(this.dir, 'blobs');
@@ -109,7 +110,11 @@ export class ReplayStore {
     return { cp, before, after };
   }
 
-  async rewind(id: string, readCurrent: () => Promise<Buffer>, write: (buf: Buffer) => Promise<void>): Promise<string> {
+  async rewind(
+    id: string,
+    readCurrent: () => Promise<Buffer>,
+    write: (buf: Buffer) => Promise<void>
+  ): Promise<string> {
     const { cp, before } = await this.get(id);
 
     const cur = await readCurrent().catch((e: any) => {
@@ -130,9 +135,17 @@ export class ReplayStore {
 
     const msg = `rewound ${cp.filePath} to checkpoint ${id}`;
     try {
-      await this.checkpoint({ op: 'undo', filePath: cp.filePath, before: cur, after: before, note: `rewind to ${id}` });
+      await this.checkpoint({
+        op: 'undo',
+        filePath: cp.filePath,
+        before: cur,
+        after: before,
+        note: `rewind to ${id}`,
+      });
     } catch (e) {
-      throw new Error(`${msg}${warn}: checkpoint failed: ${e instanceof Error ? e.message : String(e)}`);
+      throw new Error(
+        `${msg}${warn}: checkpoint failed: ${e instanceof Error ? e.message : String(e)}`
+      );
     }
     await write(before);
     return `${msg}${warn}`;
@@ -147,7 +160,11 @@ export class ReplayStore {
 
     // Rewrite index with kept checkpoints in chronological order.
     const kept = cps.slice(0, this.max).reverse();
-    await fs.writeFile(this.indexPath, kept.map((c) => JSON.stringify(c)).join('\n') + '\n', 'utf8');
+    await fs.writeFile(
+      this.indexPath,
+      kept.map((c) => JSON.stringify(c)).join('\n') + '\n',
+      'utf8'
+    );
 
     // best-effort blob cleanup
     const ents = await fs.readdir(blobDir).catch(() => []);

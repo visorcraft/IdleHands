@@ -1,8 +1,8 @@
-import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { describe, it, before, after } from 'node:test';
 
 import { loadConfig } from '../dist/config.js';
 
@@ -49,7 +49,7 @@ describe('config resolution: CLI > env > file > defaults', () => {
     'IDLEHANDS_HOOKS_STRICT',
     'IDLEHANDS_HOOK_PLUGIN_PATHS',
     'IDLEHANDS_HOOK_WARN_MS',
-    'IDLEHANDS_HOOK_ALLOW_CAPABILITIES'
+    'IDLEHANDS_HOOK_ALLOW_CAPABILITIES',
   ];
 
   before(async () => {
@@ -70,7 +70,7 @@ describe('config resolution: CLI > env > file > defaults', () => {
 
   it('uses defaults when no config file, env, or CLI overrides exist', async () => {
     const { config } = await loadConfig({
-      configPath: path.join(tmpDir, 'nonexistent.json')
+      configPath: path.join(tmpDir, 'nonexistent.json'),
     });
 
     assert.equal(config.endpoint, 'http://localhost:8080/v1');
@@ -88,12 +88,16 @@ describe('config resolution: CLI > env > file > defaults', () => {
 
   it('file config overrides defaults', async () => {
     const cfgPath = path.join(tmpDir, 'file-test.json');
-    await fs.writeFile(cfgPath, JSON.stringify({
-      endpoint: 'http://fileserver:9999/v1',
-      max_tokens: 4096,
-      temperature: 0.7,
-      verbose: true
-    }), 'utf8');
+    await fs.writeFile(
+      cfgPath,
+      JSON.stringify({
+        endpoint: 'http://fileserver:9999/v1',
+        max_tokens: 4096,
+        temperature: 0.7,
+        verbose: true,
+      }),
+      'utf8'
+    );
 
     const { config } = await loadConfig({ configPath: cfgPath });
 
@@ -108,11 +112,15 @@ describe('config resolution: CLI > env > file > defaults', () => {
 
   it('env overrides file config', async () => {
     const cfgPath = path.join(tmpDir, 'env-test.json');
-    await fs.writeFile(cfgPath, JSON.stringify({
-      endpoint: 'http://fileserver:9999/v1',
-      max_tokens: 4096,
-      temperature: 0.7
-    }), 'utf8');
+    await fs.writeFile(
+      cfgPath,
+      JSON.stringify({
+        endpoint: 'http://fileserver:9999/v1',
+        max_tokens: 4096,
+        temperature: 0.7,
+      }),
+      'utf8'
+    );
 
     process.env.IDLEHANDS_ENDPOINT = 'http://envserver:1111/v1';
     process.env.IDLEHANDS_MAX_TOKENS = '8192';
@@ -133,12 +141,16 @@ describe('config resolution: CLI > env > file > defaults', () => {
 
   it('CLI overrides both env and file config', async () => {
     const cfgPath = path.join(tmpDir, 'cli-test.json');
-    await fs.writeFile(cfgPath, JSON.stringify({
-      endpoint: 'http://fileserver:9999/v1',
-      max_tokens: 4096,
-      temperature: 0.7,
-      timeout: 120
-    }), 'utf8');
+    await fs.writeFile(
+      cfgPath,
+      JSON.stringify({
+        endpoint: 'http://fileserver:9999/v1',
+        max_tokens: 4096,
+        temperature: 0.7,
+        timeout: 120,
+      }),
+      'utf8'
+    );
 
     process.env.IDLEHANDS_ENDPOINT = 'http://envserver:1111/v1';
     process.env.IDLEHANDS_MAX_TOKENS = '8192';
@@ -150,8 +162,8 @@ describe('config resolution: CLI > env > file > defaults', () => {
         cli: {
           endpoint: 'http://cliserver:2222/v1',
           max_tokens: 2048,
-          timeout: 60
-        }
+          timeout: 60,
+        },
       });
 
       // CLI wins over everything
@@ -173,7 +185,7 @@ describe('config resolution: CLI > env > file > defaults', () => {
 
     try {
       const { config } = await loadConfig({
-        configPath: path.join(tmpDir, 'nonexistent.json')
+        configPath: path.join(tmpDir, 'nonexistent.json'),
       });
       assert.equal(config.verbose, true);
       assert.equal(config.no_confirm, true);
@@ -190,7 +202,7 @@ describe('config resolution: CLI > env > file > defaults', () => {
 
     try {
       const { config } = await loadConfig({
-        configPath: path.join(tmpDir, 'nonexistent.json')
+        configPath: path.join(tmpDir, 'nonexistent.json'),
       });
       assert.equal(config.approval_mode, 'auto-edit');
     } finally {
@@ -204,7 +216,7 @@ describe('config resolution: CLI > env > file > defaults', () => {
     try {
       const { config } = await loadConfig({
         configPath: path.join(tmpDir, 'nonexistent.json'),
-        cli: { approval_mode: 'yolo' }
+        cli: { approval_mode: 'yolo' },
       });
       assert.equal(config.approval_mode, 'yolo');
     } finally {
@@ -215,7 +227,7 @@ describe('config resolution: CLI > env > file > defaults', () => {
   it('sys mode defaults approval_mode to default when approval not explicitly set', async () => {
     const { config } = await loadConfig({
       configPath: path.join(tmpDir, 'nonexistent.json'),
-      cli: { mode: 'sys' as any }
+      cli: { mode: 'sys' as any },
     });
     assert.equal(config.mode, 'sys');
     assert.equal(config.approval_mode, 'default');
@@ -224,7 +236,7 @@ describe('config resolution: CLI > env > file > defaults', () => {
   it('sys mode keeps explicit approval_mode override', async () => {
     const { config } = await loadConfig({
       configPath: path.join(tmpDir, 'nonexistent.json'),
-      cli: { mode: 'sys' as any, approval_mode: 'yolo' as any }
+      cli: { mode: 'sys' as any, approval_mode: 'yolo' as any },
     });
     assert.equal(config.mode, 'sys');
     assert.equal(config.approval_mode, 'yolo');
@@ -233,7 +245,7 @@ describe('config resolution: CLI > env > file > defaults', () => {
   it('reject approval_mode is accepted via CLI', async () => {
     const { config } = await loadConfig({
       configPath: path.join(tmpDir, 'nonexistent.json'),
-      cli: { approval_mode: 'reject' as any }
+      cli: { approval_mode: 'reject' as any },
     });
     assert.equal(config.approval_mode, 'reject');
   });
@@ -262,7 +274,7 @@ describe('config resolution: CLI > env > file > defaults', () => {
   it('endpoint trailing slashes are normalized', async () => {
     const { config } = await loadConfig({
       configPath: path.join(tmpDir, 'nonexistent.json'),
-      cli: { endpoint: 'http://example.com/v1///' }
+      cli: { endpoint: 'http://example.com/v1///' },
     });
     assert.equal(config.endpoint, 'http://example.com/v1');
   });
@@ -271,7 +283,7 @@ describe('config resolution: CLI > env > file > defaults', () => {
     // Use a path that actually exists (tmpDir) so the stale-dir safety check doesn't override it
     const { config } = await loadConfig({
       configPath: path.join(tmpDir, 'nonexistent.json'),
-      cli: { dir: tmpDir }
+      cli: { dir: tmpDir },
     });
     assert.ok(path.isAbsolute(config.dir));
     assert.equal(config.dir, tmpDir);
@@ -280,7 +292,7 @@ describe('config resolution: CLI > env > file > defaults', () => {
   it('dir falls back to cwd when configured dir does not exist', async () => {
     const { config } = await loadConfig({
       configPath: path.join(tmpDir, 'nonexistent.json'),
-      cli: { dir: './nonexistent/ghost/path' }
+      cli: { dir: './nonexistent/ghost/path' },
     });
     assert.ok(path.isAbsolute(config.dir));
     assert.equal(config.dir, process.cwd());
@@ -480,9 +492,11 @@ describe('config resolution: CLI > env > file > defaults', () => {
   it('parses hook system settings from env', async () => {
     process.env.IDLEHANDS_HOOKS_ENABLED = '1';
     process.env.IDLEHANDS_HOOKS_STRICT = '1';
-    process.env.IDLEHANDS_HOOK_PLUGIN_PATHS = './dist/hooks/plugins/example-console.js, ./plugins/custom.js';
+    process.env.IDLEHANDS_HOOK_PLUGIN_PATHS =
+      './dist/hooks/plugins/example-console.js, ./plugins/custom.js';
     process.env.IDLEHANDS_HOOK_WARN_MS = '500';
-    process.env.IDLEHANDS_HOOK_ALLOW_CAPABILITIES = 'observe,read_prompts,read_tool_args,invalid_cap';
+    process.env.IDLEHANDS_HOOK_ALLOW_CAPABILITIES =
+      'observe,read_prompts,read_tool_args,invalid_cap';
 
     try {
       const { config } = await loadConfig({ configPath: path.join(tmpDir, 'nonexistent.json') });
@@ -493,7 +507,11 @@ describe('config resolution: CLI > env > file > defaults', () => {
         './plugins/custom.js',
       ]);
       assert.equal(config.hooks?.warn_ms, 500);
-      assert.deepEqual(config.hooks?.allow_capabilities, ['observe', 'read_prompts', 'read_tool_args']);
+      assert.deepEqual(config.hooks?.allow_capabilities, [
+        'observe',
+        'read_prompts',
+        'read_tool_args',
+      ]);
     } finally {
       delete process.env.IDLEHANDS_HOOKS_ENABLED;
       delete process.env.IDLEHANDS_HOOKS_STRICT;
@@ -502,7 +520,6 @@ describe('config resolution: CLI > env > file > defaults', () => {
       delete process.env.IDLEHANDS_HOOK_ALLOW_CAPABILITIES;
     }
   });
-
 });
 
 describe('anton config', () => {
@@ -519,7 +536,7 @@ describe('anton config', () => {
     'IDLEHANDS_ANTON_VERIFY_AI',
     'IDLEHANDS_ANTON_VERIFY_MODEL',
     'IDLEHANDS_ANTON_VERBOSE',
-    'IDLEHANDS_QUIET_WARNINGS'
+    'IDLEHANDS_QUIET_WARNINGS',
   ];
 
   before(async () => {
@@ -542,7 +559,7 @@ describe('anton config', () => {
 
   it('default anton config values load correctly', async () => {
     const { config } = await loadConfig({
-      configPath: path.join(tmpDir, 'nonexistent.json')
+      configPath: path.join(tmpDir, 'nonexistent.json'),
     });
 
     assert.ok(config.anton, 'anton config block should exist');
@@ -568,7 +585,7 @@ describe('anton config', () => {
 
     try {
       const { config } = await loadConfig({
-        configPath: path.join(tmpDir, 'nonexistent.json')
+        configPath: path.join(tmpDir, 'nonexistent.json'),
       });
 
       assert.equal(config.anton?.max_retries, 5);
@@ -589,9 +606,9 @@ describe('anton config', () => {
         anton: {
           max_retries: 0,
           max_decompose_depth: 10,
-          approval_mode: 'invalid'
-        }
-      }
+          approval_mode: 'invalid',
+        },
+      },
     });
 
     // max_retries clamped to >= 1

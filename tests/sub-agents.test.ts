@@ -1,8 +1,8 @@
-import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { describe, it, before, after } from 'node:test';
 
 import { createSession } from '../dist/agent.js';
 
@@ -72,7 +72,9 @@ describe('sub-agent config validation and limits', () => {
   it('sub_agents.enabled=false prevents delegation tool registration', async () => {
     let toolNames: string[] = [];
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async chatStream(req: any) {
         toolNames = (req?.tools ?? []).map((t: any) => String(t?.function?.name ?? ''));
         return {
@@ -100,21 +102,25 @@ describe('sub-agent config validation and limits', () => {
     let callNo = 0;
 
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async chatStream() {
         callNo++;
 
         if (callNo === 1) {
           return {
             id: 'p-1',
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [spawnCall('delegate anyway')],
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [spawnCall('delegate anyway')],
+                },
               },
-            }],
+            ],
             usage: { prompt_tokens: 10, completion_tokens: 2 },
           };
         }
@@ -134,10 +140,20 @@ describe('sub-agent config validation and limits', () => {
 
     try {
       await session.ask('Build this yourself. Do NOT use spawn_task or sub-agents.');
-      const toolMsg = session.messages.find((m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn') as any;
+      const toolMsg = session.messages.find(
+        (m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn'
+      ) as any;
       assert.ok(toolMsg, 'expected spawn_task tool result');
-      assert.ok(String(toolMsg.content ?? '').includes('blocked — user explicitly asked for no delegation/sub-agents'));
-      assert.equal(callNo, 2, 'should not create nested sub-agent model calls when delegation is forbidden');
+      assert.ok(
+        String(toolMsg.content ?? '').includes(
+          'blocked — user explicitly asked for no delegation/sub-agents'
+        )
+      );
+      assert.equal(
+        callNo,
+        2,
+        'should not create nested sub-agent model calls when delegation is forbidden'
+      );
     } finally {
       await session.close();
     }
@@ -147,30 +163,37 @@ describe('sub-agent config validation and limits', () => {
     let callNo = 0;
 
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async chatStream() {
         callNo++;
 
         if (callNo === 1) {
           return {
             id: 'p-1',
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [
-                  {
-                    id: 'call_spawn',
-                    type: 'function',
-                    function: {
-                      name: 'spawn_task',
-                      arguments: JSON.stringify({ task: 'cd . && npm install', approval_mode: 'yolo' }),
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'call_spawn',
+                      type: 'function',
+                      function: {
+                        name: 'spawn_task',
+                        arguments: JSON.stringify({
+                          task: 'cd . && npm install',
+                          approval_mode: 'yolo',
+                        }),
+                      },
                     },
-                  },
-                ],
+                  ],
+                },
               },
-            }],
+            ],
             usage: { prompt_tokens: 10, completion_tokens: 2 },
           };
         }
@@ -194,9 +217,13 @@ describe('sub-agent config validation and limits', () => {
 
     try {
       await session.ask('build app');
-      const toolMsg = session.messages.find((m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn') as any;
+      const toolMsg = session.messages.find(
+        (m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn'
+      ) as any;
       assert.ok(toolMsg, 'expected spawn_task tool result');
-      assert.ok(String(toolMsg.content ?? '').includes('blocked — package install/remove is restricted'));
+      assert.ok(
+        String(toolMsg.content ?? '').includes('blocked — package install/remove is restricted')
+      );
       assert.equal(callNo, 2, 'should continue in parent after blocked delegation');
     } finally {
       await session.close();
@@ -208,7 +235,9 @@ describe('sub-agent config validation and limits', () => {
     const subMaxTokensSeen: number[] = [];
 
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async chatStream(req: any) {
         callNo++;
 
@@ -216,28 +245,30 @@ describe('sub-agent config validation and limits', () => {
         if (callNo === 1) {
           return {
             id: 'p-1',
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [
-                  {
-                    id: 'call_spawn',
-                    type: 'function',
-                    function: {
-                      name: 'spawn_task',
-                      arguments: JSON.stringify({
-                        task: 'loop sub agent forever',
-                        max_iterations: 2,
-                        max_tokens: 321,
-                        timeout_sec: 1,
-                      }),
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'call_spawn',
+                      type: 'function',
+                      function: {
+                        name: 'spawn_task',
+                        arguments: JSON.stringify({
+                          task: 'loop sub agent forever',
+                          max_iterations: 2,
+                          max_tokens: 321,
+                          timeout_sec: 1,
+                        }),
+                      },
                     },
-                  },
-                ],
+                  ],
+                },
               },
-            }],
+            ],
             usage: { prompt_tokens: 10, completion_tokens: 2 },
           };
         }
@@ -248,18 +279,22 @@ describe('sub-agent config validation and limits', () => {
           subMaxTokensSeen.push(Number(req?.max_tokens ?? 0));
           return {
             id: `s-${callNo}`,
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [{
-                  id: `s-tool-${callNo}`,
-                  type: 'function',
-                  function: { name: 'list_dir', arguments: JSON.stringify({ path: '.' }) },
-                }],
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: `s-tool-${callNo}`,
+                      type: 'function',
+                      function: { name: 'list_dir', arguments: JSON.stringify({ path: '.' }) },
+                    },
+                  ],
+                },
               },
-            }],
+            ],
             usage: { prompt_tokens: 10, completion_tokens: 2 },
           };
         }
@@ -280,15 +315,17 @@ describe('sub-agent config validation and limits', () => {
 
     try {
       await session.ask('delegate');
-      const toolMsg = session.messages.find((m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn') as any;
+      const toolMsg = session.messages.find(
+        (m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn'
+      ) as any;
       assert.ok(toolMsg, 'expected spawn_task tool result');
       const content = String(toolMsg.content ?? '');
       assert.ok(content.includes('status=failed'));
       assert.ok(
         content.includes('max iterations exceeded (2)') ||
-        content.includes('identical read repeated') ||
-        content.includes('identical read/list call repeated'),
-        `expected failure reason to mention max-iterations or loop guard, got: ${content}`,
+          content.includes('identical read repeated') ||
+          content.includes('identical read/list call repeated'),
+        `expected failure reason to mention max-iterations or loop guard, got: ${content}`
       );
       assert.ok(content.includes('approval_mode: yolo'));
       assert.deepEqual(subMaxTokensSeen, [321, 321]);
@@ -307,7 +344,9 @@ describe('sub-agent context and vault inheritance', () => {
       let callNo = 0;
       const subUserMessages: string[] = [];
       const fakeClient: any = {
-        async models() { return { data: [{ id: 'fake-model' }] }; },
+        async models() {
+          return { data: [{ id: 'fake-model' }] };
+        },
         async chatStream(req: any) {
           callNo++;
           const userMsg = req?.messages?.find((m: any) => m.role === 'user')?.content;
@@ -315,7 +354,16 @@ describe('sub-agent context and vault inheritance', () => {
           if (callNo === 1) {
             return {
               id: 'p-1',
-              choices: [{ index: 0, message: { role: 'assistant', content: '', tool_calls: [spawnCall('check context')] } }],
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: 'assistant',
+                    content: '',
+                    tool_calls: [spawnCall('check context')],
+                  },
+                },
+              ],
               usage: { prompt_tokens: 1, completion_tokens: 1 },
             };
           }
@@ -363,41 +411,65 @@ describe('sub-agent context and vault inheritance', () => {
     const notes: Array<{ key: string; value: string }> = [];
     const fakeVault: any = {
       setProjectDir() {},
-      async note(key: string, value: string) { notes.push({ key, value }); },
+      async note(key: string, value: string) {
+        notes.push({ key, value });
+      },
       async upsertNote() {},
-      async search() { return []; },
-      async archiveToolMessages() { return 0; },
+      async search() {
+        return [];
+      },
+      async archiveToolMessages() {
+        return 0;
+      },
       async close() {},
     };
 
     async function runWith(inheritVault: boolean) {
       let callNo = 0;
       const fakeClient: any = {
-        async models() { return { data: [{ id: 'fake-model' }] }; },
+        async models() {
+          return { data: [{ id: 'fake-model' }] };
+        },
         async chatStream() {
           callNo++;
           if (callNo === 1) {
             return {
               id: 'p-1',
-              choices: [{ index: 0, message: { role: 'assistant', content: '', tool_calls: [spawnCall('write vault note')] } }],
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: 'assistant',
+                    content: '',
+                    tool_calls: [spawnCall('write vault note')],
+                  },
+                },
+              ],
               usage: { prompt_tokens: 1, completion_tokens: 1 },
             };
           }
           if (callNo === 2) {
             return {
               id: 's-1',
-              choices: [{
-                index: 0,
-                message: {
-                  role: 'assistant',
-                  content: '',
-                  tool_calls: [{
-                    id: 's-vault-note',
-                    type: 'function',
-                    function: { name: 'vault_note', arguments: JSON.stringify({ key: 'k', value: 'v' }) },
-                  }],
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: 'assistant',
+                    content: '',
+                    tool_calls: [
+                      {
+                        id: 's-vault-note',
+                        type: 'function',
+                        function: {
+                          name: 'vault_note',
+                          arguments: JSON.stringify({ key: 'k', value: 'v' }),
+                        },
+                      },
+                    ],
+                  },
                 },
-              }],
+              ],
               usage: { prompt_tokens: 1, completion_tokens: 1 },
             };
           }
@@ -434,7 +506,11 @@ describe('sub-agent context and vault inheritance', () => {
     const afterFalse = notes.length;
 
     assert.ok(afterTrue > before, 'expected shared vault to receive note from sub-agent');
-    assert.equal(afterFalse, afterTrue, 'expected fake vault count unchanged when inherit_vault=false');
+    assert.equal(
+      afterFalse,
+      afterTrue,
+      'expected fake vault count unchanged when inherit_vault=false'
+    );
   });
 });
 
@@ -442,13 +518,20 @@ describe('sub-agent failure modes and concurrency', () => {
   it('kills timed-out sub-agent gracefully', async () => {
     let callNo = 0;
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async chatStream() {
         callNo++;
         if (callNo === 1) {
           return {
             id: 'p-1',
-            choices: [{ index: 0, message: { role: 'assistant', content: '', tool_calls: [spawnCall('slow task')] } }],
+            choices: [
+              {
+                index: 0,
+                message: { role: 'assistant', content: '', tool_calls: [spawnCall('slow task')] },
+              },
+            ],
             usage: { prompt_tokens: 1, completion_tokens: 1 },
           };
         }
@@ -456,18 +539,22 @@ describe('sub-agent failure modes and concurrency', () => {
           await new Promise((r) => setTimeout(r, 1200));
           return {
             id: 's-1',
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [{
-                  id: 's-tool-timeout',
-                  type: 'function',
-                  function: { name: 'list_dir', arguments: JSON.stringify({ path: '.' }) },
-                }],
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 's-tool-timeout',
+                      type: 'function',
+                      function: { name: 'list_dir', arguments: JSON.stringify({ path: '.' }) },
+                    },
+                  ],
+                },
               },
-            }],
+            ],
             usage: { prompt_tokens: 1, completion_tokens: 1 },
           };
         }
@@ -486,7 +573,9 @@ describe('sub-agent failure modes and concurrency', () => {
 
     try {
       await session.ask('delegate timeout');
-      const toolMsg = session.messages.find((m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn') as any;
+      const toolMsg = session.messages.find(
+        (m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn'
+      ) as any;
       const content = String(toolMsg?.content ?? '');
       assert.ok(content.includes('status=failed'));
       assert.ok(content.includes('session timeout exceeded'));
@@ -498,20 +587,27 @@ describe('sub-agent failure modes and concurrency', () => {
   it('handles concurrent spawn_task calls independently and propagates sub-agent errors', async () => {
     let callNo = 0;
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async chatStream() {
         callNo++;
         if (callNo === 1) {
           return {
             id: 'p-1',
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [spawnCall('good task', 'call_spawn_a'), spawnCall('bad task', 'call_spawn_b')],
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    spawnCall('good task', 'call_spawn_a'),
+                    spawnCall('bad task', 'call_spawn_b'),
+                  ],
+                },
               },
-            }],
+            ],
             usage: { prompt_tokens: 1, completion_tokens: 1 },
           };
         }
@@ -539,14 +635,21 @@ describe('sub-agent failure modes and concurrency', () => {
     };
 
     const session = await createSession({
-      config: baseConfig(tmpDir, { max_iterations: 6, sub_agents: { enabled: true, result_token_cap: 128 } }),
+      config: baseConfig(tmpDir, {
+        max_iterations: 6,
+        sub_agents: { enabled: true, result_token_cap: 128 },
+      }),
       runtime: { client: fakeClient },
     });
 
     try {
       await session.ask('run two delegates');
-      const a = session.messages.find((m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn_a') as any;
-      const b = session.messages.find((m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn_b') as any;
+      const a = session.messages.find(
+        (m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn_a'
+      ) as any;
+      const b = session.messages.find(
+        (m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn_b'
+      ) as any;
       assert.ok(String(a?.content ?? '').includes('status=completed'));
       assert.ok(String(b?.content ?? '').includes('status=failed'));
       assert.ok(String(b?.content ?? '').includes('sub-agent exploded'));
@@ -559,13 +662,24 @@ describe('sub-agent failure modes and concurrency', () => {
     let callNo = 0;
     const huge = 'x'.repeat(4000);
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async chatStream() {
         callNo++;
         if (callNo === 1) {
           return {
             id: 'p-1',
-            choices: [{ index: 0, message: { role: 'assistant', content: '', tool_calls: [spawnCall('return huge text')] } }],
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [spawnCall('return huge text')],
+                },
+              },
+            ],
             usage: { prompt_tokens: 1, completion_tokens: 1 },
           };
         }
@@ -591,7 +705,9 @@ describe('sub-agent failure modes and concurrency', () => {
 
     try {
       await session.ask('delegate long output');
-      const toolMsg = session.messages.find((m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn') as any;
+      const toolMsg = session.messages.find(
+        (m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn'
+      ) as any;
       const content = String(toolMsg?.content ?? '');
       assert.ok(content.includes('status=completed'));
       assert.ok(content.includes('truncated') || content.includes('capped'));

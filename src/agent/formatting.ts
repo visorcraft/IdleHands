@@ -33,7 +33,10 @@ export function digestToolResult(
   success: boolean
 ): string {
   if (!success) {
-    const callIdHint = typeof (args as any)?._tool_call_id === 'string' ? String((args as any)._tool_call_id) : undefined;
+    const callIdHint =
+      typeof (args as any)?._tool_call_id === 'string'
+        ? String((args as any)._tool_call_id)
+        : undefined;
     return digestFailureContent(content, callIdHint);
   }
 
@@ -55,43 +58,62 @@ export function digestToolResult(
         const parsed = JSON.parse(content);
         const rc = parsed.rc ?? '?';
         const outLines = String(parsed.out || '').split('\n');
-        const errLines = String(parsed.err || '').split('\n').filter(Boolean);
+        const errLines = String(parsed.err || '')
+          .split('\n')
+          .filter(Boolean);
         const outPreview = outLines.slice(-15).join('\n');
         const errPreview = errLines.slice(0, 5).join('\n');
-        const truncated = outLines.length > 15 ? `\n# ... (${outLines.length - 15} more lines)` : '';
+        const truncated =
+          outLines.length > 15 ? `\n# ... (${outLines.length - 15} more lines)` : '';
         const errSection = errPreview ? `\n[stderr]\n${errPreview}` : '';
-        return JSON.stringify({ rc, out: outPreview + truncated, ...(errPreview && { err: errPreview }) }) + errSection;
+        return (
+          JSON.stringify({
+            rc,
+            out: outPreview + truncated,
+            ...(errPreview && { err: errPreview }),
+          }) + errSection
+        );
       } catch {
-        return content.slice(0, MAX_DIGEST_CHARS) + (content.length > MAX_DIGEST_CHARS ? '\n# [truncated]' : '');
+        return (
+          content.slice(0, MAX_DIGEST_CHARS) +
+          (content.length > MAX_DIGEST_CHARS ? '\n# [truncated]' : '')
+        );
       }
     }
     case 'search_files': {
       const lines = content.split('\n');
-      const count = lines.filter(l => l.includes(':') && !l.startsWith('[')).length;
+      const count = lines.filter((l) => l.includes(':') && !l.startsWith('[')).length;
       const top = lines.slice(0, 15).join('\n');
       const marker = lines.find((l) => l.includes('[truncated,') && l.includes('chars total'));
-      const truncated = lines.length > 15
-        ? `\n# ... (${lines.length - 15} more matches, ${count} total)`
-        : (marker ? `\n${marker}` : '');
+      const truncated =
+        lines.length > 15
+          ? `\n# ... (${lines.length - 15} more matches, ${count} total)`
+          : marker
+            ? `\n${marker}`
+            : '';
       return top + truncated;
     }
     case 'list_dir': {
       const lines = content.split('\n');
-      const count = lines.filter(l => l.includes('\t') && !l.startsWith('[')).length;
+      const count = lines.filter((l) => l.includes('\t') && !l.startsWith('[')).length;
       const top = lines.slice(0, 20).join('\n');
       const marker = lines.find((l) => l.includes('[truncated,') && l.includes('chars total'));
-      const truncated = lines.length > 20
-        ? `\n# ... (${lines.length - 20} more entries, ${count} total)${marker ? `\n${marker}` : ''}`
-        : (marker ? `\n${marker}` : '');
+      const truncated =
+        lines.length > 20
+          ? `\n# ... (${lines.length - 20} more entries, ${count} total)${marker ? `\n${marker}` : ''}`
+          : marker
+            ? `\n${marker}`
+            : '';
       return top + truncated;
     }
     case 'spawn_task': {
       // Keep the final status line and last 20 lines of output
       const lines = content.split('\n');
-      const statusLine = lines.find(l => l.includes('status=')) || '';
+      const statusLine = lines.find((l) => l.includes('status=')) || '';
       const tail = lines.slice(-20).join('\n');
       const header = statusLine ? `${statusLine}\n` : '';
-      const truncated = lines.length > 20 ? `# ... (${lines.length - 20} earlier lines omitted)\n` : '';
+      const truncated =
+        lines.length > 20 ? `# ... (${lines.length - 20} earlier lines omitted)\n` : '';
       return header + truncated + tail;
     }
     default:
@@ -113,17 +135,30 @@ export function generateMinimalDiff(before: string, after: string, filePath: str
 
   // Simple line-by-line diff (find changed region)
   let diffStart = 0;
-  while (diffStart < bLines.length && diffStart < aLines.length && bLines[diffStart] === aLines[diffStart]) diffStart++;
+  while (
+    diffStart < bLines.length &&
+    diffStart < aLines.length &&
+    bLines[diffStart] === aLines[diffStart]
+  )
+    diffStart++;
   let bEnd = bLines.length - 1;
   let aEnd = aLines.length - 1;
-  while (bEnd > diffStart && aEnd > diffStart && bLines[bEnd] === aLines[aEnd]) { bEnd--; aEnd--; }
+  while (bEnd > diffStart && aEnd > diffStart && bLines[bEnd] === aLines[aEnd]) {
+    bEnd--;
+    aEnd--;
+  }
 
   const contextBefore = Math.max(0, diffStart - 2);
-  const contextAfter = Math.min(Math.max(bLines.length, aLines.length) - 1, Math.max(bEnd, aEnd) + 2);
+  const contextAfter = Math.min(
+    Math.max(bLines.length, aLines.length) - 1,
+    Math.max(bEnd, aEnd) + 2
+  );
   const bEndContext = Math.min(bLines.length - 1, contextAfter);
   const aEndContext = Math.min(aLines.length - 1, contextAfter);
 
-  out.push(`@@ -${contextBefore + 1},${bEndContext - contextBefore + 1} +${contextBefore + 1},${aEndContext - contextBefore + 1} @@`);
+  out.push(
+    `@@ -${contextBefore + 1},${bEndContext - contextBefore + 1} +${contextBefore + 1},${aEndContext - contextBefore + 1} @@`
+  );
 
   let lineCount = 0;
   const MAX_LINES = 20;
@@ -145,13 +180,17 @@ export function generateMinimalDiff(before: string, after: string, filePath: str
   }
   // Context after change
   const afterStart = Math.max(bEnd, aEnd) + 1;
-  for (let i = afterStart; i <= contextAfter && i < Math.max(bLines.length, aLines.length) && lineCount < MAX_LINES; i++) {
-    const line = i < aLines.length ? aLines[i] : bLines[i] ?? '';
+  for (
+    let i = afterStart;
+    i <= contextAfter && i < Math.max(bLines.length, aLines.length) && lineCount < MAX_LINES;
+    i++
+  ) {
+    const line = i < aLines.length ? aLines[i] : (bLines[i] ?? '');
     out.push(` ${line}`);
     lineCount++;
   }
 
-  const totalChanges = (bEnd - diffStart + 1) + (aEnd - diffStart + 1);
+  const totalChanges = bEnd - diffStart + 1 + (aEnd - diffStart + 1);
   if (lineCount >= MAX_LINES && totalChanges > MAX_LINES) {
     out.push(`[+${totalChanges - MAX_LINES} more lines]`);
   }
@@ -160,7 +199,12 @@ export function generateMinimalDiff(before: string, after: string, filePath: str
 }
 
 /** Generate a one-line summary of a tool result for hooks/display. */
-export function toolResultSummary(name: string, args: Record<string, unknown>, content: string, success: boolean): string {
+export function toolResultSummary(
+  name: string,
+  args: Record<string, unknown>,
+  content: string,
+  success: boolean
+): string {
   if (!success) return content.slice(0, 120);
   switch (name) {
     case 'read_file':
@@ -187,7 +231,9 @@ export function toolResultSummary(name: string, args: Record<string, unknown>, c
         const r = JSON.parse(content);
         const lines = (r.out || '').split('\n').filter(Boolean).length;
         return `rc=${r.rc}, ${lines} lines`;
-      } catch { return content.slice(0, 80); }
+      } catch {
+        return content.slice(0, 80);
+      }
     }
     case 'list_dir': {
       const entries = content.split('\n').filter(Boolean).length;
@@ -225,7 +271,9 @@ export function formatDurationMs(ms: number): string {
 }
 
 export function looksLikePlanningNarration(text: string, finishReason?: string): boolean {
-  const s = String(text ?? '').trim().toLowerCase();
+  const s = String(text ?? '')
+    .trim()
+    .toLowerCase();
   if (!s) return false;
 
   // Incomplete streamed answer: likely still needs another turn.
@@ -235,7 +283,9 @@ export function looksLikePlanningNarration(text: string, finishReason?: string):
   if (/(^|\n)\s*(done|completed|finished|final answer|summary:)\b/.test(s)) return false;
 
   // Typical "thinking out loud"/plan chatter that should continue with tools.
-  return /\b(let me|i(?:'|’)ll|i will|i'm going to|i am going to|next i(?:'|’)ll|first i(?:'|’)ll|i need to|i should|checking|reviewing|exploring|starting by)\b/.test(s);
+  return /\b(let me|i(?:'|’)ll|i will|i'm going to|i am going to|next i(?:'|’)ll|first i(?:'|’)ll|i need to|i should|checking|reviewing|exploring|starting by)\b/.test(
+    s
+  );
 }
 
 export function approxTokenCharCap(maxTokens: number): number {
@@ -243,7 +293,10 @@ export function approxTokenCharCap(maxTokens: number): number {
   return safe * 4;
 }
 
-export function capTextByApproxTokens(text: string, maxTokens: number): { text: string; truncated: boolean } {
+export function capTextByApproxTokens(
+  text: string,
+  maxTokens: number
+): { text: string; truncated: boolean } {
   const raw = String(text ?? '');
   const maxChars = approxTokenCharCap(maxTokens);
   if (raw.length <= maxChars) return { text: raw, truncated: false };

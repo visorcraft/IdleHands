@@ -7,12 +7,18 @@ export function supportsVisionModel(model: string, modelMeta: any, harness: Harn
   if (typeof modelMeta?.vision === 'boolean') return modelMeta.vision;
 
   const inputModalities = modelMeta?.input_modalities;
-  if (Array.isArray(inputModalities) && inputModalities.some((m) => String(m).toLowerCase().includes('image'))) {
+  if (
+    Array.isArray(inputModalities) &&
+    inputModalities.some((m) => String(m).toLowerCase().includes('image'))
+  ) {
     return true;
   }
 
   const modalities = modelMeta?.modalities;
-  if (Array.isArray(modalities) && modalities.some((m) => String(m).toLowerCase().includes('image'))) {
+  if (
+    Array.isArray(modalities) &&
+    modalities.some((m) => String(m).toLowerCase().includes('image'))
+  ) {
     return true;
   }
 
@@ -47,7 +53,7 @@ export function deriveContextWindow(opts: {
   const derived = asNumber(
     opts.modelMeta?.context_window,
     opts.modelMeta?.context_length,
-    opts.modelMeta?.max_context_length,
+    opts.modelMeta?.max_context_length
   );
 
   return derived ?? opts.previousContextWindow ?? fallback;
@@ -63,7 +69,11 @@ export function deriveGenerationParams(opts: {
   const base = opts.baseMaxTokens ?? BASE_MAX_TOKENS;
 
   let maxTokens = opts.configuredMaxTokens ?? base;
-  if (maxTokens === base && opts.harness.defaults?.max_tokens && opts.harness.defaults.max_tokens > base) {
+  if (
+    maxTokens === base &&
+    opts.harness.defaults?.max_tokens &&
+    opts.harness.defaults.max_tokens > base
+  ) {
     maxTokens = opts.harness.defaults.max_tokens;
   }
 

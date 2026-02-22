@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import type { ToolSchema, McpServerConfig } from './types.js';
+
 import { encodeJsonRpcFrame, extractMessages } from './jsonrpc.js';
+import type { ToolSchema, McpServerConfig } from './types.js';
 import { PKG_VERSION } from './utils.js';
 
 type JsonRpcRequest = {
@@ -96,11 +97,14 @@ function toErrorMessage(e: any): string {
 class StdioRpcTransport implements RpcTransport {
   private child: ChildProcessWithoutNullStreams;
   private nextId = 1;
-  private pending = new Map<number, {
-    resolve: (v: any) => void;
-    reject: (e: Error) => void;
-    timer: NodeJS.Timeout;
-  }>();
+  private pending = new Map<
+    number,
+    {
+      resolve: (v: any) => void;
+      reject: (e: Error) => void;
+      timer: NodeJS.Timeout;
+    }
+  >();
   private buffer = Buffer.alloc(0);
   private closed = false;
   private stderrTail = '';
@@ -157,7 +161,10 @@ class StdioRpcTransport implements RpcTransport {
 
     // Fallback: newline-delimited JSON for non-standard test servers
     while (this.buffer.length > 0) {
-      const prefix = this.buffer.subarray(0, Math.min(32, this.buffer.length)).toString('utf8').toLowerCase();
+      const prefix = this.buffer
+        .subarray(0, Math.min(32, this.buffer.length))
+        .toString('utf8')
+        .toLowerCase();
       if (prefix.startsWith('content-length')) return; // incomplete header, wait
 
       const nl = this.buffer.indexOf(0x0a);
@@ -167,12 +174,13 @@ class StdioRpcTransport implements RpcTransport {
       if (!line) continue;
       try {
         this.handleParsedMessage(JSON.parse(line) as JsonRpcResponse);
-      } catch { /* skip malformed lines */ }
+      } catch {
+        /* skip malformed lines */
+      }
     }
   }
 
   private handleParsedMessage(msg: JsonRpcResponse) {
-
     if (typeof msg.id !== 'number') {
       // Notification / event, ignore for now.
       return;
@@ -185,7 +193,9 @@ class StdioRpcTransport implements RpcTransport {
     clearTimeout(pending.timer);
 
     if (msg.error) {
-      pending.reject(new Error(msg.error.message || `MCP error code ${msg.error.code ?? 'unknown'}`));
+      pending.reject(
+        new Error(msg.error.message || `MCP error code ${msg.error.code ?? 'unknown'}`)
+      );
       return;
     }
 
@@ -196,10 +206,13 @@ class StdioRpcTransport implements RpcTransport {
     const id = this.nextId++;
 
     return await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`MCP request timed out: ${method} after ${timeoutMs}ms`));
-      }, Math.max(1, timeoutMs));
+      const timer = setTimeout(
+        () => {
+          this.pending.delete(id);
+          reject(new Error(`MCP request timed out: ${method} after ${timeoutMs}ms`));
+        },
+        Math.max(1, timeoutMs)
+      );
 
       this.pending.set(id, {
         resolve,
@@ -346,14 +359,16 @@ export class MCPManager {
   private readonly builtInToolNames: Set<string>;
   private readonly globalEnabledTools: Set<string> | null;
 
-  constructor(private readonly opts: {
-    servers: McpServerConfig[];
-    toolBudgetTokens?: number;
-    callTimeoutMs?: number;
-    offline?: boolean;
-    builtInToolNames?: Iterable<string>;
-    enabledTools?: string[];
-  }) {
+  constructor(
+    private readonly opts: {
+      servers: McpServerConfig[];
+      toolBudgetTokens?: number;
+      callTimeoutMs?: number;
+      offline?: boolean;
+      builtInToolNames?: Iterable<string>;
+      enabledTools?: string[];
+    }
+  ) {
     this.toolBudgetTokens = Number.isFinite(opts.toolBudgetTokens)
       ? Math.max(0, Math.floor(opts.toolBudgetTokens as number))
       : 1000;
@@ -361,9 +376,10 @@ export class MCPManager {
       ? Math.max(1000, Math.floor(opts.callTimeoutMs as number))
       : 30_000;
     this.builtInToolNames = new Set(opts.builtInToolNames ?? []);
-    this.globalEnabledTools = Array.isArray(opts.enabledTools) && opts.enabledTools.length
-      ? new Set(opts.enabledTools)
-      : null;
+    this.globalEnabledTools =
+      Array.isArray(opts.enabledTools) && opts.enabledTools.length
+        ? new Set(opts.enabledTools)
+        : null;
   }
 
   getWarnings(): string[] {
@@ -443,14 +459,18 @@ export class MCPManager {
 
       // Best-effort initialize handshake.
       try {
-        await transport.request('initialize', {
-          protocolVersion: '2024-11-05',
-          capabilities: {},
-          clientInfo: {
-            name: 'idlehands',
-            version: PKG_VERSION,
+        await transport.request(
+          'initialize',
+          {
+            protocolVersion: '2024-11-05',
+            capabilities: {},
+            clientInfo: {
+              name: 'idlehands',
+              version: PKG_VERSION,
+            },
           },
-        }, this.callTimeoutMs);
+          this.callTimeoutMs
+        );
 
         await transport.notify('notifications/initialized', {});
       } catch {
@@ -460,9 +480,10 @@ export class MCPManager {
       const listResult = await transport.request('tools/list', {}, this.callTimeoutMs);
       const list = asArray<any>(listResult?.tools);
 
-      const serverAllowed = Array.isArray(cfg.enabled_tools) && cfg.enabled_tools.length
-        ? new Set(cfg.enabled_tools)
-        : null;
+      const serverAllowed =
+        Array.isArray(cfg.enabled_tools) && cfg.enabled_tools.length
+          ? new Set(cfg.enabled_tools)
+          : null;
 
       for (const rawTool of list) {
         const toolName = String(rawTool?.name ?? '').trim();
@@ -541,7 +562,9 @@ export class MCPManager {
 
     const disabledByBudget = ordered.filter((t) => !t.enabled).length;
     if (disabledByBudget > 0) {
-      this.pushWarn(`[mcp] tool schema budget exceeded (${budget} tokens): ${disabledByBudget} tool(s) disabled`);
+      this.pushWarn(
+        `[mcp] tool schema budget exceeded (${budget} tokens): ${disabledByBudget} tool(s) disabled`
+      );
     }
   }
 
@@ -641,7 +664,10 @@ export class MCPManager {
     this.recomputeBudget();
 
     if (!next.connected) {
-      return { ok: false, message: `MCP server ${name} restart failed: ${next.error || 'unknown error'}` };
+      return {
+        ok: false,
+        message: `MCP server ${name} restart failed: ${next.error || 'unknown error'}`,
+      };
     }
 
     return { ok: true, message: `MCP server ${name} reconnected (${next.tools.length} tools)` };
@@ -657,10 +683,14 @@ export class MCPManager {
       throw new Error(`MCP server unavailable: ${tool.server}`);
     }
 
-    const result = await server.transport.request('tools/call', {
-      name,
-      arguments: args ?? {},
-    }, this.callTimeoutMs);
+    const result = await server.transport.request(
+      'tools/call',
+      {
+        name,
+        arguments: args ?? {},
+      },
+      this.callTimeoutMs
+    );
 
     if (result?.isError) {
       const msg = parseToolCallResult(result) || `MCP tool error: ${name}`;

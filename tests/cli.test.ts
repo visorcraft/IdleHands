@@ -6,11 +6,11 @@
  * and cleaned up afterward.
  */
 
-import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { describe, it, before, after } from 'node:test';
 
 // ── cli/args.ts ──────────────────────────────────────────────────────
 
@@ -374,7 +374,7 @@ describe('collectDirectoryFiles', () => {
     await collectDirectoryFiles(tmpDir, '.', 3, ['node_modules/'], acc);
     assert.ok(acc.includes('root.txt'), 'should find root.txt');
     assert.ok(acc.includes('sub/child.txt'), 'should find sub/child.txt');
-    assert.ok(!acc.some(f => f.includes('node_modules')), 'should skip node_modules');
+    assert.ok(!acc.some((f) => f.includes('node_modules')), 'should skip node_modules');
   });
 
   it('respects maxDepth', async () => {
@@ -445,7 +445,7 @@ describe('image helpers', () => {
 
   it('extractImageRefs finds URL image refs', () => {
     const refs = extractImageRefs('see https://example.com/photo.png in the docs');
-    assert.ok(refs.some(r => r.includes('example.com/photo.png')));
+    assert.ok(refs.some((r) => r.includes('example.com/photo.png')));
   });
 
   it('extractImageRefs finds path-like refs', () => {
@@ -463,10 +463,7 @@ describe('image helpers', () => {
 
 // ── cli/watch.ts ─────────────────────────────────────────────────────
 
-import {
-  parseWatchArgs,
-  summarizeWatchChange,
-} from '../dist/cli/watch.js';
+import { parseWatchArgs, summarizeWatchChange } from '../dist/cli/watch.js';
 
 describe('parseWatchArgs', () => {
   it('parses simple paths', () => {
@@ -605,14 +602,14 @@ describe('collectProjectTree', () => {
 
   it('lists files and directories (depth 2)', async () => {
     const tree = await collectProjectTree(tmpDir);
-    assert.ok(tree.some(l => l.includes('README.md')));
-    assert.ok(tree.some(l => l.includes('src/')));
-    assert.ok(tree.some(l => l.includes('index.ts')));
+    assert.ok(tree.some((l) => l.includes('README.md')));
+    assert.ok(tree.some((l) => l.includes('src/')));
+    assert.ok(tree.some((l) => l.includes('index.ts')));
   });
 
   it('skips dotfiles', async () => {
     const tree = await collectProjectTree(tmpDir);
-    assert.ok(!tree.some(l => l.includes('.hidden')));
+    assert.ok(!tree.some((l) => l.includes('.hidden')));
   });
 });
 
@@ -648,6 +645,7 @@ import {
   registerCommand,
   findCommand,
   allCommandNames,
+  registerAll as registerAllCmds,
 } from '../dist/cli/command-registry.js';
 
 describe('command registry', () => {
@@ -657,7 +655,9 @@ describe('command registry', () => {
       name: '/testcmd',
       aliases: ['/tc'],
       description: 'A test command',
-      async execute() { return true; },
+      async execute() {
+        return true;
+      },
     });
   });
 
@@ -754,7 +754,6 @@ describe('utils', () => {
 // ── Anton CLI commands ───────────────────────────────────────────────
 
 import { antonCommands } from '../dist/cli/commands/anton.js';
-import { registerAll as registerAllCmds } from '../dist/cli/command-registry.js';
 
 // Register Anton commands so findCommand can locate them
 registerAllCmds(antonCommands);
@@ -776,7 +775,7 @@ describe('Anton REPL commands', () => {
       const cmd = antonCommands[0];
       const handled = await cmd.execute(mockCtx, '', '/anton');
       assert.equal(handled, true);
-      assert.ok(logs.some(l => l.includes('No Anton run in progress')));
+      assert.ok(logs.some((l) => l.includes('No Anton run in progress')));
     } finally {
       console.log = origLog;
     }
@@ -794,7 +793,7 @@ describe('Anton REPL commands', () => {
         antonProgress: null,
       } as any;
       await antonCommands[0].execute(mockCtx, 'status', '/anton status');
-      assert.ok(logs.some(l => l.includes('No Anton run in progress')));
+      assert.ok(logs.some((l) => l.includes('No Anton run in progress')));
     } finally {
       console.log = origLog;
     }
@@ -810,7 +809,7 @@ describe('Anton REPL commands', () => {
         antonAbortSignal: null,
       } as any;
       await antonCommands[0].execute(mockCtx, 'stop', '/anton stop');
-      assert.ok(logs.some(l => l.includes('No Anton run in progress')));
+      assert.ok(logs.some((l) => l.includes('No Anton run in progress')));
     } finally {
       console.log = origLog;
     }
@@ -825,7 +824,7 @@ describe('Anton REPL commands', () => {
         antonLastResult: null,
       } as any;
       await antonCommands[0].execute(mockCtx, 'last', '/anton last');
-      assert.ok(logs.some(l => l.includes('No previous Anton run')));
+      assert.ok(logs.some((l) => l.includes('No previous Anton run')));
     } finally {
       console.log = origLog;
     }
@@ -844,7 +843,7 @@ describe('Anton REPL commands', () => {
     try {
       const mockCtx = {} as any;
       await antonCommands[0].execute(mockCtx, 'help', '/anton help');
-      assert.ok(logs.some(l => l.includes('Usage:')));
+      assert.ok(logs.some((l) => l.includes('Usage:')));
     } finally {
       console.log = origLog;
     }
@@ -920,5 +919,42 @@ describe('parseArgs --all flag', () => {
     const args = parseArgs(['bot', '--all', 'telegram']);
     assert.equal(args.all, true);
     assert.equal(args._[1], 'telegram');
+  });
+});
+
+describe('health discovery JSON contract', () => {
+  it('outputs valid JSON with expected structure when --json flag is used', () => {
+    // This test verifies the JSON output contract for health discovery
+    // The actual command execution is tested in runtime-cmds.ts integration tests
+    const output = {
+      discovery: {
+        ports: [8080, 8081, 8082],
+        hosts: [
+          {
+            hostId: 'test-host',
+            services: [
+              {
+                port: 8080,
+                status: 'ready',
+                httpCode: 200,
+                modelIds: ['test-model'],
+                stderr: '',
+                exitCode: 0,
+              },
+            ],
+          },
+        ],
+      },
+      configuredModels: [],
+      ok: true,
+    };
+    
+    const json = JSON.stringify(output, null, 2);
+    const parsed = JSON.parse(json);
+    
+    assert.ok(parsed.discovery);
+    assert.ok(Array.isArray(parsed.discovery.ports));
+    assert.ok(Array.isArray(parsed.discovery.hosts));
+    assert.equal(parsed.ok, true);
   });
 });

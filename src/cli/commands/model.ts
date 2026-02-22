@@ -3,14 +3,13 @@
  */
 
 import path from 'node:path';
-import type { SlashCommand } from '../command-registry.js';
-import {
-  estimateCostLine, formatCount, formatTps, formatKv, mean, percentile,
-} from '../status.js';
+
 import { estimateTokensFromMessages } from '../../history.js';
 import { err as errFmt, warn as warnFmt } from '../../term.js';
 import { projectDir } from '../../utils.js';
+import type { SlashCommand } from '../command-registry.js';
 import { restTokens } from '../command-utils.js';
+import { estimateCostLine, formatCount, formatTps, formatKv, mean, percentile } from '../status.js';
 
 // Track current escalation tier for the terminal session
 let currentEscalationTier = 0;
@@ -38,7 +37,9 @@ export const modelCommands: SlashCommand[] = [
       if (arg === 'next' || arg === '') {
         // Escalate to next tier
         if (currentEscalationTier >= models.length) {
-          console.log(`Already at maximum escalation tier (${currentEscalationTier}/${models.length}).`);
+          console.log(
+            `Already at maximum escalation tier (${currentEscalationTier}/${models.length}).`
+          );
           console.log(`Current model: ${ctx.session.model}`);
           return true;
         }
@@ -57,7 +58,9 @@ export const modelCommands: SlashCommand[] = [
         targetEndpoint = tiers?.[tier]?.endpoint;
       } else {
         // Escalate to specific model by name
-        const idx = models.findIndex(m => m.toLowerCase() === arg || m.toLowerCase().includes(arg));
+        const idx = models.findIndex(
+          (m) => m.toLowerCase() === arg || m.toLowerCase().includes(arg)
+        );
         if (idx === -1) {
           console.log(`Model "${arg}" not found in escalation chain.`);
           console.log(`Available: ${models.join(', ')}`);
@@ -118,9 +121,10 @@ export const modelCommands: SlashCommand[] = [
     name: '/stats',
     description: 'Session statistics',
     async execute(ctx) {
-      const promptTokens = ctx.session.usage.prompt > 0
-        ? ctx.session.usage.prompt
-        : estimateTokensFromMessages(ctx.session.messages);
+      const promptTokens =
+        ctx.session.usage.prompt > 0
+          ? ctx.session.usage.prompt
+          : estimateTokensFromMessages(ctx.session.messages);
       const completionTokens = ctx.session.usage.completion;
       const totalTokens = promptTokens + completionTokens;
       const ctxW = ctx.session.contextWindow || 0;
@@ -137,7 +141,9 @@ export const modelCommands: SlashCommand[] = [
         try {
           const checkpoints = await ctx.session.replay.list(10_000);
           filesModified = new Set(checkpoints.map((cp: any) => cp.filePath).filter(Boolean)).size;
-        } catch { filesModified = 0; }
+        } catch {
+          filesModified = 0;
+        }
       }
 
       const elapsedMs = Date.now() - ctx.sessionStartedMs;
@@ -166,8 +172,14 @@ export const modelCommands: SlashCommand[] = [
     description: 'Server health stats',
     async execute(ctx) {
       const snap = await ctx.readServerHealth(true);
-      if (!snap) { console.log('Server health unavailable.'); return true; }
-      if (snap.unsupported) { console.log('Server does not expose /health.'); return true; }
+      if (!snap) {
+        console.log('Server health unavailable.');
+        return true;
+      }
+      if (snap.unsupported) {
+        console.log('Server does not expose /health.');
+        return true;
+      }
       if (!snap.ok) {
         console.log(`Server health check failed: ${snap.error || 'unknown error'}`);
         return true;
@@ -196,12 +208,23 @@ export const modelCommands: SlashCommand[] = [
         console.log('No performance samples yet. Run a prompt first.');
         return true;
       }
-      const ttfts = ctx.perfSamples.map(s => s.ttftMs).filter((n): n is number => typeof n === 'number' && Number.isFinite(n));
-      const ttcs = ctx.perfSamples.map(s => s.ttcMs).filter((n): n is number => typeof n === 'number' && Number.isFinite(n));
-      const pps = ctx.perfSamples.map(s => s.ppTps).filter((n): n is number => typeof n === 'number' && Number.isFinite(n));
-      const tgs = ctx.perfSamples.map(s => s.tgTps).filter((n): n is number => typeof n === 'number' && Number.isFinite(n));
+      const ttfts = ctx.perfSamples
+        .map((s) => s.ttftMs)
+        .filter((n): n is number => typeof n === 'number' && Number.isFinite(n));
+      const ttcs = ctx.perfSamples
+        .map((s) => s.ttcMs)
+        .filter((n): n is number => typeof n === 'number' && Number.isFinite(n));
+      const pps = ctx.perfSamples
+        .map((s) => s.ppTps)
+        .filter((n): n is number => typeof n === 'number' && Number.isFinite(n));
+      const tgs = ctx.perfSamples
+        .map((s) => s.tgTps)
+        .filter((n): n is number => typeof n === 'number' && Number.isFinite(n));
       const totalPrompt = ctx.perfSamples.reduce((sum, s) => sum + (s.promptTokens || 0), 0);
-      const totalCompletion = ctx.perfSamples.reduce((sum, s) => sum + (s.completionTokens || 0), 0);
+      const totalCompletion = ctx.perfSamples.reduce(
+        (sum, s) => sum + (s.completionTokens || 0),
+        0
+      );
 
       const lines = [
         'Performance summary:',
@@ -229,7 +252,9 @@ export const modelCommands: SlashCommand[] = [
       console.log(`Estimated context tokens: ~${est}`);
       console.log(`Messages in session: ${ctx.session.messages.length}`);
       if (u.prompt > 0 || u.completion > 0) {
-        console.log(`Cumulative server-reported usage: ${u.prompt} prompt + ${u.completion} completion = ${u.prompt + u.completion} total`);
+        console.log(
+          `Cumulative server-reported usage: ${u.prompt} prompt + ${u.completion} completion = ${u.prompt + u.completion} total`
+        );
       } else {
         console.log(ctx.S.dim('(no server-reported usage available)'));
       }
@@ -268,7 +293,9 @@ export const modelCommands: SlashCommand[] = [
       const fileArg = parts[1] ? path.resolve(projectDir(ctx.config), parts[1]) : undefined;
 
       if (!action) {
-        console.log(`Capture: ${ctx.session.capturePath ? `on (${ctx.session.capturePath})` : 'off'}`);
+        console.log(
+          `Capture: ${ctx.session.capturePath ? `on (${ctx.session.capturePath})` : 'off'}`
+        );
         console.log('Usage: /capture on [path] | /capture off | /capture last [path]');
         return true;
       }
@@ -306,19 +333,38 @@ export const modelCommands: SlashCommand[] = [
         const used = estimateTokensFromMessages(ctx.session.messages);
         const ctxW = ctx.session.contextWindow || 0;
         if (ctxW > 0 && used > ctxW) {
-          console.log(warnFmt(`[model] Warning: new model context is ${ctxW.toLocaleString()} but session is at ~${used.toLocaleString()} tokens - compaction recommended`, ctx.S));
+          console.log(
+            warnFmt(
+              `[model] Warning: new model context is ${ctxW.toLocaleString()} but session is at ~${used.toLocaleString()} tokens - compaction recommended`,
+              ctx.S
+            )
+          );
           const compacted = await ctx.session.compactHistory();
-          console.log(ctx.S.dim(`[model] auto-compact: ${compacted.beforeMessages} → ${compacted.afterMessages} messages (~${compacted.freedTokens} tokens freed)`));
+          console.log(
+            ctx.S.dim(
+              `[model] auto-compact: ${compacted.beforeMessages} → ${compacted.afterMessages} messages (~${compacted.freedTokens} tokens freed)`
+            )
+          );
         } else if (ctxW > 0 && used > ctxW * 0.8) {
-          console.log(warnFmt(`[model] Warning: session is at ~${used.toLocaleString()} / ${ctxW.toLocaleString()} tokens`, ctx.S));
+          console.log(
+            warnFmt(
+              `[model] Warning: session is at ~${used.toLocaleString()} / ${ctxW.toLocaleString()} tokens`,
+              ctx.S
+            )
+          );
         }
       };
 
       if (!arg1) {
         console.log(ctx.S.dim('Current model: ') + ctx.S.cyan(ctx.session.model));
-        console.log(ctx.S.dim('Current endpoint: ') + String((ctx.session as any).endpoint ?? ctx.config.endpoint));
+        console.log(
+          ctx.S.dim('Current endpoint: ') +
+            String((ctx.session as any).endpoint ?? ctx.config.endpoint)
+        );
         console.log(ctx.S.dim('Current harness: ') + ctx.S.magenta(ctx.session.harness));
-        console.log(ctx.S.dim('Context window: ') + `${ctx.session.contextWindow.toLocaleString()} tokens`);
+        console.log(
+          ctx.S.dim('Context window: ') + `${ctx.session.contextWindow.toLocaleString()} tokens`
+        );
         console.log('Usage: /model <name> | /model <endpoint> <name> | /model list');
         return true;
       }

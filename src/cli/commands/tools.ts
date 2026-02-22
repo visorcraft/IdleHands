@@ -2,9 +2,9 @@
  * Tool commands: /lsp, /mcp, /commands.
  */
 
-import type { SlashCommand } from '../command-registry.js';
 import { loadCustomCommands } from '../../commands.js';
 import { projectDir } from '../../utils.js';
+import type { SlashCommand } from '../command-registry.js';
 import { restTokens } from '../command-utils.js';
 
 export const toolCommands: SlashCommand[] = [
@@ -39,12 +39,17 @@ export const toolCommands: SlashCommand[] = [
 
       if (!sub || sub === 'list' || sub === 'status') {
         const servers = ctx.session.listMcpServers();
-        if (!servers.length) { console.log('MCP: not configured'); return true; }
+        if (!servers.length) {
+          console.log('MCP: not configured');
+          return true;
+        }
         console.log(ctx.S.bold(`MCP servers (${servers.length}):`));
         for (const s of servers) {
           const state = s.connected ? ctx.S.green('connected') : ctx.S.red('disconnected');
           const suffix = s.error ? ctx.S.dim(` — ${s.error}`) : '';
-          console.log(`- ${s.name} (${s.transport}) ${state} | tools ${s.toolsEnabled}/${s.toolsTotal}${suffix}`);
+          console.log(
+            `- ${s.name} (${s.transport}) ${state} | tools ${s.toolsEnabled}/${s.toolsTotal}${suffix}`
+          );
         }
         const warnings = ctx.session.mcpWarnings();
         for (const w of warnings) console.log(ctx.S.dim(`[mcp] ${w}`));
@@ -53,20 +58,28 @@ export const toolCommands: SlashCommand[] = [
 
       if (sub === 'desc') {
         const tools = ctx.session.listMcpTools({ includeDisabled: true });
-        if (!tools.length) { console.log('MCP: no tools discovered'); return true; }
+        if (!tools.length) {
+          console.log('MCP: no tools discovered');
+          return true;
+        }
         console.log(ctx.S.bold(`MCP tools (${tools.length}):`));
         for (const t of tools) {
           const state = t.enabled ? ctx.S.green('enabled') : ctx.S.dim('disabled');
           const ro = t.readOnly ? ctx.S.dim('ro') : ctx.S.dim('rw');
           const desc = t.description ? ` — ${t.description}` : '';
-          console.log(`- ${t.name} [${t.server}] (${ro}, ~${t.estimatedTokens} tok) ${state}${desc}`);
+          console.log(
+            `- ${t.name} [${t.server}] (${ro}, ~${t.estimatedTokens} tok) ${state}${desc}`
+          );
         }
         return true;
       }
 
       if (sub === 'restart') {
         const name = parts.slice(1).join(' ').trim();
-        if (!name) { console.log('Usage: /mcp restart <name>'); return true; }
+        if (!name) {
+          console.log('Usage: /mcp restart <name>');
+          return true;
+        }
         const res = await ctx.session.restartMcpServer(name);
         console.log(res.ok ? res.message : `MCP restart failed: ${res.message}`);
         return true;
@@ -74,15 +87,25 @@ export const toolCommands: SlashCommand[] = [
 
       if (sub === 'enable') {
         const tool = parts.slice(1).join(' ').trim();
-        if (!tool) { console.log('Usage: /mcp enable <tool>'); return true; }
+        if (!tool) {
+          console.log('Usage: /mcp enable <tool>');
+          return true;
+        }
         const ok = ctx.session.enableMcpTool(tool);
-        console.log(ok ? `MCP tool enabled: ${tool}` : `Could not enable MCP tool: ${tool} (not found or exceeds budget)`);
+        console.log(
+          ok
+            ? `MCP tool enabled: ${tool}`
+            : `Could not enable MCP tool: ${tool} (not found or exceeds budget)`
+        );
         return true;
       }
 
       if (sub === 'disable') {
         const tool = parts.slice(1).join(' ').trim();
-        if (!tool) { console.log('Usage: /mcp disable <tool>'); return true; }
+        if (!tool) {
+          console.log('Usage: /mcp disable <tool>');
+          return true;
+        }
         const ok = ctx.session.disableMcpTool(tool);
         console.log(ok ? `MCP tool disabled: ${tool}` : `Could not disable MCP tool: ${tool}`);
         return true;
@@ -99,10 +122,14 @@ export const toolCommands: SlashCommand[] = [
       ctx.customCommands = await loadCustomCommands(projectDir(ctx.config));
       if (!ctx.customCommands.size) {
         console.log(ctx.S.dim('No custom commands found.'));
-        console.log(ctx.S.dim('Create command files in ~/.config/idlehands/commands/ or .idlehands/commands/'));
+        console.log(
+          ctx.S.dim('Create command files in ~/.config/idlehands/commands/ or .idlehands/commands/')
+        );
       } else {
         console.log(ctx.S.bold(`Custom commands (${ctx.customCommands.size}):`));
-        const rows = [...ctx.customCommands.values()].sort((a: any, b: any) => a.key.localeCompare(b.key));
+        const rows = [...ctx.customCommands.values()].sort((a: any, b: any) =>
+          a.key.localeCompare(b.key)
+        );
         for (const cmd of rows) {
           const cmdArgs = cmd.args.length ? ` ${cmd.args.map((a: any) => `<${a}>`).join(' ')}` : '';
           const desc = cmd.description ? ` — ${cmd.description}` : '';

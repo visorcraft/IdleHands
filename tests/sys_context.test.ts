@@ -1,5 +1,5 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
 
 import {
   sys_context,
@@ -32,10 +32,7 @@ describe('sys_context tool', () => {
   });
 
   it('rejects invalid scope', async () => {
-    await assert.rejects(
-      () => sys_context({} as any, { scope: 'bad-scope' }),
-      /invalid scope/i
-    );
+    await assert.rejects(() => sys_context({} as any, { scope: 'bad-scope' }), /invalid scope/i);
   });
 
   it('cache returns stable output within ttl', async () => {

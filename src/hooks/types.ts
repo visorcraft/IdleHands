@@ -80,7 +80,7 @@ export type HookDispatchContext = {
 
 export type HookHandler<E extends HookEventName = HookEventName> = (
   payload: HookEventMap[E],
-  context: HookDispatchContext,
+  context: HookDispatchContext
 ) => void | Promise<void>;
 
 export type HookPlugin = {

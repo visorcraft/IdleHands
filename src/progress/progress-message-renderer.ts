@@ -1,4 +1,5 @@
 import type { TurnEndEvent } from '../types.js';
+
 import type { IRBlock, IRDoc } from './ir.js';
 import { irLine, irKvItem } from './ir.js';
 
@@ -132,7 +133,10 @@ export class ProgressMessageRenderer {
     // Diff (prefer showing the *start* of the diff)
     if (input.diff && (input.diff.lines ?? []).length) {
       const title = (input.diff.title ?? 'Δ diff').trim();
-      const lines = head((input.diff.lines ?? []).filter((l) => l != null), o.maxDiffLines);
+      const lines = head(
+        (input.diff.lines ?? []).filter((l) => l != null),
+        o.maxDiffLines
+      );
       blocks.push({ type: 'diff', title, lines });
     }
 

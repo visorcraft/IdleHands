@@ -1,5 +1,5 @@
-import path from 'node:path';
 import { createRequire } from 'node:module';
+import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 
@@ -38,7 +38,7 @@ const CODE_NODE_KINDS = [
   ['struct_item', 'struct'],
   ['module_declaration', 'module'],
   ['impl_item', 'impl'],
-  ['impl_definition', 'impl']
+  ['impl_definition', 'impl'],
 ];
 
 const CODE_NAME_NODE_HINTS = new Set([
@@ -48,7 +48,7 @@ const CODE_NAME_NODE_HINTS = new Set([
   'property_identifier',
   'name',
   'constant_identifier',
-  'label'
+  'label',
 ]);
 
 const JSON_YAML_EXTS = new Set(['.json', '.yml', '.yaml']);
@@ -75,7 +75,7 @@ const LANGUAGE_BY_EXT: Record<string, string> = {
   '.rb': 'ruby',
   '.php': 'php',
   '.kt': 'kotlin',
-  '.kts': 'kotlin'
+  '.kts': 'kotlin',
 };
 
 export class LensStore {
@@ -95,7 +95,11 @@ export class LensStore {
   /** Release cached tree-sitter Language objects and reset parser state. Safe to call multiple times. */
   close(): void {
     for (const lang of this.languageCache.values()) {
-      try { (lang as any)?.delete?.(); } catch { /* ignore */ }
+      try {
+        (lang as any)?.delete?.();
+      } catch {
+        /* ignore */
+      }
     }
     this.languageCache.clear();
     this.ParserCtor = null;
@@ -149,7 +153,11 @@ export class LensStore {
     return `${text.slice(0, 1190)}…`;
   }
 
-  async summarizeToolOutput(content: string, toolName?: string, filePathHint?: string): Promise<string> {
+  async summarizeToolOutput(
+    content: string,
+    toolName?: string,
+    filePathHint?: string
+  ): Promise<string> {
     const raw = String(content ?? '');
 
     if (toolName && toolName !== 'read_file') {
@@ -166,7 +174,10 @@ export class LensStore {
       return this.compactRaw(raw);
     }
 
-    const body = lines.slice(1).map((l) => this.stripLineNumberPrefix(l)).join('\n');
+    const body = lines
+      .slice(1)
+      .map((l) => this.stripLineNumberPrefix(l))
+      .join('\n');
     if (body.length <= this.maxRawPreviewChars) {
       return raw;
     }
@@ -183,7 +194,11 @@ export class LensStore {
     return this.compactRaw(raw);
   }
 
-  async summarizeDiff(before: string, after: string, filePath: string): Promise<LensDiffSummary | undefined> {
+  async summarizeDiff(
+    before: string,
+    after: string,
+    filePath: string
+  ): Promise<LensDiffSummary | undefined> {
     const p = path.resolve(filePath);
     const beforeEntries = await this.extractSkeletonEntries(p, before, { parseStructured: true });
     const afterEntries = await this.extractSkeletonEntries(p, after, { parseStructured: true });
@@ -195,7 +210,7 @@ export class LensStore {
         before: beforeLines,
         after: afterLines,
         added: [`+${Math.max(0, afterLines - beforeLines)} lines`],
-        removed: [`-${Math.max(0, beforeLines - afterLines)} lines`]
+        removed: [`-${Math.max(0, beforeLines - afterLines)} lines`],
       };
     }
 
@@ -221,11 +236,15 @@ export class LensStore {
       before: beforeEntries.length,
       after: afterEntries.length,
       added,
-      removed
+      removed,
     };
   }
 
-  async summarizeDiffToText(before: string, after: string, filePath: string): Promise<string | undefined> {
+  async summarizeDiffToText(
+    before: string,
+    after: string,
+    filePath: string
+  ): Promise<string | undefined> {
     const summary = await this.summarizeDiff(before, after, filePath).catch(() => undefined);
     if (!summary) return undefined;
 
@@ -233,13 +252,23 @@ export class LensStore {
       return `diff: no structural signature change (${summary.before} -> ${summary.after})`;
     }
 
-    const added = summary.added.slice(0, 4).map((x) => `+${x}`).join(', ');
-    const removed = summary.removed.slice(0, 4).map((x) => `-${x}`).join(', ');
+    const added = summary.added
+      .slice(0, 4)
+      .map((x) => `+${x}`)
+      .join(', ');
+    const removed = summary.removed
+      .slice(0, 4)
+      .map((x) => `-${x}`)
+      .join(', ');
 
     return [
       `diff: signatures ${summary.before} -> ${summary.after}`,
-      added ? ` added {${added}${summary.added.length > 4 ? `, +${summary.added.length - 4} more` : ''}` : null,
-      removed ? ` removed {${removed}${summary.removed.length > 4 ? `, ${summary.removed.length - 4} more` : ''}` : null
+      added
+        ? ` added {${added}${summary.added.length > 4 ? `, +${summary.added.length - 4} more` : ''}`
+        : null,
+      removed
+        ? ` removed {${removed}${summary.removed.length > 4 ? `, ${summary.removed.length - 4} more` : ''}`
+        : null,
     ]
       .filter(Boolean)
       .join(' ; ');
@@ -270,7 +299,10 @@ export class LensStore {
     return ok;
   }
 
-  private async tryTreeSitterSkeleton(filePath: string, content: string): Promise<string | undefined> {
+  private async tryTreeSitterSkeleton(
+    filePath: string,
+    content: string
+  ): Promise<string | undefined> {
     const ext = path.extname(filePath).toLowerCase();
     const language = LANGUAGE_BY_EXT[ext];
     if (!language) return;
@@ -312,13 +344,14 @@ export class LensStore {
             n.children?.find((c: any) => c?.isNamed && CODE_NAME_NODE_HINTS.has(c.type)) ??
             null;
 
-          const name = nameNode?.text?.trim() || this.extractNamedTokenFromText(text) || `<${kind}>`;
+          const name =
+            nameNode?.text?.trim() || this.extractNamedTokenFromText(text) || `<${kind}>`;
           const signature = this.formatNodeSignature(text);
           lines.push({
             kind,
             name,
             line: this.nodeToLine(n),
-            signature
+            signature,
           });
         }
       }
@@ -326,8 +359,9 @@ export class LensStore {
       if (lines.length) {
         const compact = lines
           .slice(0, this.maxSkeletonItems)
-          .map((line) =>
-            `${line.kind} ${line.name}${line.line ? ` @${line.line}` : ''}${line.signature ? `: ${line.signature}` : ''}`
+          .map(
+            (line) =>
+              `${line.kind} ${line.name}${line.line ? ` @${line.line}` : ''}${line.signature ? `: ${line.signature}` : ''}`
           );
         if (compact.length) {
           return compact.join('\n');
@@ -337,8 +371,16 @@ export class LensStore {
       // parser crashed; fallback to regex heuristics below
     } finally {
       // Clean up tree-sitter resources to prevent memory leaks
-      try { tree?.delete?.(); } catch { /* ignore */ }
-      try { parser?.delete?.(); } catch { /* ignore */ }
+      try {
+        tree?.delete?.();
+      } catch {
+        /* ignore */
+      }
+      try {
+        parser?.delete?.();
+      } catch {
+        /* ignore */
+      }
     }
 
     return this.tryRegexSkeleton(filePath, content);
@@ -358,7 +400,11 @@ export class LensStore {
     for (const [i, raw] of content.split(/\r?\n/).entries()) {
       if (lines.length >= this.maxSkeletonItems) break;
       const lineNo = i + 1;
-      addIf('export function', lineNo, /^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)/.exec(raw));
+      addIf(
+        'export function',
+        lineNo,
+        /^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)/.exec(raw)
+      );
       addIf('class', lineNo, /^(?:export\s+)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)/.exec(raw));
       addIf('const', lineNo, /^(?:export\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)/.exec(raw));
       addIf('let', lineNo, /^(?:export\s+)?let\s+([A-Za-z_$][A-Za-z0-9_$]*)/.exec(raw));
@@ -392,7 +438,12 @@ export class LensStore {
     const lines: string[] = [];
 
     const summarize = (value: unknown, prefix = '') => {
-      if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      if (
+        value === null ||
+        typeof value === 'string' ||
+        typeof value === 'number' ||
+        typeof value === 'boolean'
+      ) {
         lines.push(`${prefix} = ${String(value).slice(0, 120)}`);
         return;
       }
@@ -496,7 +547,11 @@ export class LensStore {
     return `${flat.slice(0, 90)}…`;
   }
 
-  private async extractSkeletonEntries(filePath: string, content: string, opts: { parseStructured: boolean }): Promise<LensSkeletonLine[]> {
+  private async extractSkeletonEntries(
+    filePath: string,
+    content: string,
+    opts: { parseStructured: boolean }
+  ): Promise<LensSkeletonLine[]> {
     const text = String(content ?? '');
     const ts = await this.tryTreeSitterSkeleton(filePath, text);
     if (ts && opts.parseStructured) {

@@ -3,11 +3,23 @@
  * Manages creation, destruction, timeout, limits, queueing, and turn-level cancellation safety.
  */
 
-import { createSession, type AgentSession } from '../agent.js';
-import type { IdlehandsConfig, BotTelegramConfig, ConfirmationProvider, AgentPersona } from '../types.js';
-import type { AntonRunResult, AntonProgress } from '../anton/types.js';
 import path from 'node:path';
-import { detectRepoCandidates, expandHome, isPathAllowed, normalizeAllowedDirs } from './dir-guard.js';
+
+import { createSession, type AgentSession } from '../agent.js';
+import type { AntonRunResult, AntonProgress } from '../anton/types.js';
+import type {
+  IdlehandsConfig,
+  BotTelegramConfig,
+  ConfirmationProvider,
+  AgentPersona,
+} from '../types.js';
+
+import {
+  detectRepoCandidates,
+  expandHome,
+  isPathAllowed,
+  normalizeAllowedDirs,
+} from './dir-guard.js';
 
 function pathResolveHome(input: string): string {
   return path.resolve(expandHome(input));
@@ -42,12 +54,12 @@ export type ManagedSession = {
   agentId: string;
   agentPersona: AgentPersona | null;
   // Escalation tracking
-  currentModelIndex: number;  // 0 = base model, 1+ = escalated
-  escalationCount: number;    // how many times escalated this turn
-  pendingEscalation: string | null;  // model to escalate to on next message
-  pendingEscalationEndpoint: string | null;  // endpoint override for pending escalation
+  currentModelIndex: number; // 0 = base model, 1+ = escalated
+  escalationCount: number; // how many times escalated this turn
+  pendingEscalation: string | null; // model to escalate to on next message
+  pendingEscalationEndpoint: string | null; // endpoint override for pending escalation
   // Watchdog compaction recovery
-  watchdogCompactAttempts: number;  // how many times watchdog has compacted this turn
+  watchdogCompactAttempts: number; // how many times watchdog has compacted this turn
 };
 
 export class SessionManager {
@@ -57,7 +69,10 @@ export class SessionManager {
   constructor(
     private baseConfig: IdlehandsConfig,
     private botConfig: BotTelegramConfig,
-    private makeConfirmProvider?: (chatId: number, userId: number) => ConfirmationProvider | undefined,
+    private makeConfirmProvider?: (
+      chatId: number,
+      userId: number
+    ) => ConfirmationProvider | undefined
   ) {}
 
   get maxSessions(): number {
@@ -161,13 +176,25 @@ export class SessionManager {
 
     const rawAllowedDirs = persona?.allowed_dirs ?? this.botConfig.allowed_dirs;
     const allowedDirs = normalizeAllowedDirs(rawAllowedDirs);
-    const workingDir = pathResolveHome(persona?.default_dir || persona?.allowed_dirs?.[0] || this.botConfig.default_dir || this.baseConfig.dir || process.cwd());
-    const approvalMode = persona?.approval_mode || (this.botConfig.approval_mode as any) || this.baseConfig.approval_mode || 'auto-edit';
+    const workingDir = pathResolveHome(
+      persona?.default_dir ||
+        persona?.allowed_dirs?.[0] ||
+        this.botConfig.default_dir ||
+        this.baseConfig.dir ||
+        process.cwd()
+    );
+    const approvalMode =
+      persona?.approval_mode ||
+      (this.botConfig.approval_mode as any) ||
+      this.baseConfig.approval_mode ||
+      'auto-edit';
 
-    const repoCandidates = await detectRepoCandidates(workingDir, allowedDirs).catch(() => [] as string[]);
+    const repoCandidates = await detectRepoCandidates(workingDir, allowedDirs).catch(
+      () => [] as string[]
+    );
     const requireDirPinForMutations = repoCandidates.length > 1;
     const dirPinned = !requireDirPinForMutations;
-    
+
     // Build system prompt with escalation instructions if configured
     let systemPrompt = persona?.system_prompt;
     if (persona?.escalation?.models?.length && persona?.escalation?.auto !== false) {
@@ -187,7 +214,7 @@ Examples:
 
 Only escalate when genuinely needed. Most tasks should be handled by your current model.
 When you escalate, your request will be re-run on a more capable model.`;
-      
+
       systemPrompt = (systemPrompt || '') + escalationInstructions;
     }
 
@@ -248,13 +275,17 @@ When you escalate, your request will be re-run on a more capable model.`;
 
     // Log agent assignment for debugging
     if (persona) {
-      console.error(`[bot:telegram] ${userId} → agent:${agentId} (${persona.display_name || agentId})`);
+      console.error(
+        `[bot:telegram] ${userId} → agent:${agentId} (${persona.display_name || agentId})`
+      );
     }
-    
+
     return managed;
   }
 
-  beginTurn(chatId: number): { managed: ManagedSession; turnId: number; controller: AbortController } | null {
+  beginTurn(
+    chatId: number
+  ): { managed: ManagedSession; turnId: number; controller: AbortController } | null {
     const managed = this.sessions.get(chatId);
     if (!managed) return null;
     if (managed.inFlight || managed.state === 'resetting') return null;
@@ -313,8 +344,12 @@ When you escalate, your request will be re-run on a more capable model.`;
 
     if (wasRunning) {
       managed.state = 'canceling';
-      try { managed.activeAbortController?.abort(); } catch {}
-      try { managed.session.cancel(); } catch {}
+      try {
+        managed.activeAbortController?.abort();
+      } catch {}
+      try {
+        managed.session.cancel();
+      } catch {}
     }
 
     managed.lastActivity = Date.now();
@@ -336,8 +371,12 @@ When you escalate, your request will be re-run on a more capable model.`;
     managed.antonActive = false;
     managed.antonAbortSignal = null;
     managed.antonProgress = null;
-    try { managed.activeAbortController?.abort(); } catch {}
-    try { managed.session.cancel(); } catch {}
+    try {
+      managed.activeAbortController?.abort();
+    } catch {}
+    try {
+      managed.session.cancel();
+    } catch {}
 
     this.destroy(chatId);
     return { ok: true, message: '🔄 Session reset. Send a new message to start fresh.' };
@@ -359,8 +398,12 @@ When you escalate, your request will be re-run on a more capable model.`;
     managed.antonActive = false;
     managed.antonAbortSignal = null;
     managed.antonProgress = null;
-    try { managed.activeAbortController?.abort(); } catch {}
-    try { managed.session.cancel(); } catch {}
+    try {
+      managed.activeAbortController?.abort();
+    } catch {}
+    try {
+      managed.session.cancel();
+    } catch {}
     this.sessions.delete(chatId);
     return true;
   }
@@ -372,12 +415,16 @@ When you escalate, your request will be re-run on a more capable model.`;
 
     managed.state = 'resetting';
     managed.pendingQueue = [];
-    try { managed.activeAbortController?.abort(); } catch {}
-    
+    try {
+      managed.activeAbortController?.abort();
+    } catch {}
+
     // Preserve conversation history before destroying the old session
     const oldMessages = managed.session.messages.slice();
-    
-    try { managed.session.cancel(); } catch {}
+
+    try {
+      managed.session.cancel();
+    } catch {}
 
     const config: IdlehandsConfig = {
       ...managed.config,
@@ -386,13 +433,16 @@ When you escalate, your request will be re-run on a more capable model.`;
 
     const confirmProvider = this.makeConfirmProvider?.(chatId, managed.userId);
     const session = await createSession({ config, confirmProvider });
-    
+
     // Restore conversation history to the new session
     if (oldMessages.length > 0) {
       try {
         session.restore(oldMessages);
       } catch (e) {
-        console.error(`[session-manager] Failed to restore ${oldMessages.length} messages after escalation:`, e);
+        console.error(
+          `[session-manager] Failed to restore ${oldMessages.length} messages after escalation:`,
+          e
+        );
       }
     }
 
@@ -413,12 +463,16 @@ When you escalate, your request will be re-run on a more capable model.`;
     const managed = this.sessions.get(chatId);
     if (!managed) return false;
 
-    const allowedDirs = managed.allowedDirs.length ? managed.allowedDirs : normalizeAllowedDirs(this.botConfig.allowed_dirs);
+    const allowedDirs = managed.allowedDirs.length
+      ? managed.allowedDirs
+      : normalizeAllowedDirs(this.botConfig.allowed_dirs);
     const resolvedDir = pathResolveHome(dir);
     if (!isPathAllowed(resolvedDir, allowedDirs)) return false;
 
     // User explicitly pinned directory via /dir.
-    const repoCandidates = await detectRepoCandidates(resolvedDir, allowedDirs).catch(() => managed.repoCandidates);
+    const repoCandidates = await detectRepoCandidates(resolvedDir, allowedDirs).catch(
+      () => managed.repoCandidates
+    );
 
     // Destroy and recreate with new dir
     this.destroy(chatId);
@@ -475,7 +529,11 @@ When you escalate, your request will be re-run on a more capable model.`;
     const now = Date.now();
     const expired: number[] = [];
     for (const [chatId, managed] of this.sessions) {
-      if (now - managed.lastActivity > this.sessionTimeoutMs && !managed.inFlight && !managed.antonActive) {
+      if (
+        now - managed.lastActivity > this.sessionTimeoutMs &&
+        !managed.inFlight &&
+        !managed.antonActive
+      ) {
         this.destroy(chatId);
         expired.push(chatId);
       }
@@ -489,7 +547,13 @@ When you escalate, your request will be re-run on a more capable model.`;
   }
 
   /** List all active sessions (for debugging). */
-  list(): Array<{ chatId: number; inFlight: boolean; workingDir: string; age: number; state: SessionState }> {
+  list(): Array<{
+    chatId: number;
+    inFlight: boolean;
+    workingDir: string;
+    age: number;
+    state: SessionState;
+  }> {
     const now = Date.now();
     return [...this.sessions.values()].map((m) => ({
       chatId: m.chatId,

@@ -1,10 +1,11 @@
+import { expandArgs } from '../commands.js';
+import { warn as warnFmt, err as errFmt } from '../term.js';
+import { projectDir } from '../utils.js';
+
+import { findCommand } from './command-registry.js';
+import { splitTokens } from './command-utils.js';
 import type { ReplContext } from './repl-context.js';
 import { runDirectShellCommand } from './shell.js';
-import { splitTokens } from './command-utils.js';
-import { findCommand } from './command-registry.js';
-import { expandArgs } from '../commands.js';
-import { projectDir } from '../utils.js';
-import { warn as warnFmt, err as errFmt } from '../term.js';
 
 export type SessionLike = {
   messages: Array<{ role: string; content: unknown }>;
@@ -49,12 +50,17 @@ export async function runReplPreTurn(opts: {
       command,
       cwd: projectDir(config as any),
       timeoutSec,
-      onStart: (proc) => { ctx.activeShellProc = proc; },
-      onStop: () => { ctx.activeShellProc = null; },
+      onStart: (proc) => {
+        ctx.activeShellProc = proc;
+      },
+      onStop: () => {
+        ctx.activeShellProc = null;
+      },
     });
 
     if (result.timedOut) console.log(warnFmt(`[shell] killed after ${timeoutSec}s timeout`, S));
-    if (!result.timedOut && result.rc !== 0) console.log(warnFmt(`[shell] exited with rc=${result.rc}`, S));
+    if (!result.timedOut && result.rc !== 0)
+      console.log(warnFmt(`[shell] exited with rc=${result.rc}`, S));
 
     if (injectOutput) {
       const merged = `${result.out}${result.err}`.slice(-4000);

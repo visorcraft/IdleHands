@@ -11,10 +11,9 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { SlashCommand } from '../command-registry.js';
-import type { ReplContext } from '../repl-context.js';
-import type { AntonRunConfig, AntonProgressCallback } from '../../anton/types.js';
+
 import { runAnton } from '../../anton/controller.js';
+import { parseTaskFile } from '../../anton/parser.js';
 import {
   formatRunSummary,
   formatProgressBar,
@@ -22,9 +21,11 @@ import {
   formatTaskEnd,
   formatTaskSkip,
 } from '../../anton/reporter.js';
-import { parseTaskFile } from '../../anton/parser.js';
+import type { AntonRunConfig, AntonProgressCallback } from '../../anton/types.js';
 import { projectDir } from '../../utils.js';
+import type { SlashCommand } from '../command-registry.js';
 import { firstToken, restTokens } from '../command-utils.js';
+import type { ReplContext } from '../repl-context.js';
 
 // ── Flag parsing ────────────────────────────────────────────────
 
@@ -84,7 +85,7 @@ function parseAntonArgs(args: string): ParsedAntonFlags | null {
 
   if (!file) return null;
 
-  const num = (k: string) => flags[k] !== undefined ? Number(flags[k]) : undefined;
+  const num = (k: string) => (flags[k] !== undefined ? Number(flags[k]) : undefined);
   const bool = (k: string) => {
     if (flags[k] === undefined) return undefined;
     return flags[k] !== 'false' && flags[k] !== '0';
@@ -195,7 +196,9 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
     testCommand: parsed.testCommand ?? undefined,
     lintCommand: parsed.lintCommand ?? undefined,
     skipOnFail: parsed.skipOnFail ?? defaults.skip_on_fail ?? true,
-    approvalMode: (parsed.approval ?? defaults.approval_mode ?? 'yolo') as AntonRunConfig['approvalMode'],
+    approvalMode: (parsed.approval ??
+      defaults.approval_mode ??
+      'yolo') as AntonRunConfig['approvalMode'],
     verbose: parsed.verbose ?? defaults.verbose ?? false,
     dryRun: parsed.dryRun ?? false,
   };
@@ -257,30 +260,32 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
 }
 
 function showUsage(): void {
-  console.log([
-    'Usage: /anton <file> [flags]',
-    '',
-    'Subcommands:',
-    '  /anton <file> [flags]   Start autonomous task runner',
-    '  /anton run <file>       Same as above',
-    '  /anton status           Show current progress',
-    '  /anton stop             Stop the running task runner',
-    '  /anton last             Show last run results',
-    '',
-    'Flags:',
-    '  --max-retries <n>       Max retries per task (default: 3)',
-    '  --max-iterations <n>    Max total iterations (default: 200)',
-    '  --task-timeout <sec>    Per-task timeout (default: 600)',
-    '  --total-timeout <sec>   Total budget (default: 7200)',
-    '  --max-tokens <n>        Token budget (default: unlimited)',
-    '  --auto-commit           Git commit each success (default: true)',
-    '  --allow-dirty           Allow dirty working tree',
-    '  --verify-ai             Enable L2 AI verification (default: true)',
-    '  --decompose             Enable task decomposition (default: true)',
-    '  --skip-on-fail          Skip failed tasks (default: true)',
-    '  --dry-run               Show plan without executing',
-    '  --verbose               Stream agent tokens',
-  ].join('\n'));
+  console.log(
+    [
+      'Usage: /anton <file> [flags]',
+      '',
+      'Subcommands:',
+      '  /anton <file> [flags]   Start autonomous task runner',
+      '  /anton run <file>       Same as above',
+      '  /anton status           Show current progress',
+      '  /anton stop             Stop the running task runner',
+      '  /anton last             Show last run results',
+      '',
+      'Flags:',
+      '  --max-retries <n>       Max retries per task (default: 3)',
+      '  --max-iterations <n>    Max total iterations (default: 200)',
+      '  --task-timeout <sec>    Per-task timeout (default: 600)',
+      '  --total-timeout <sec>   Total budget (default: 7200)',
+      '  --max-tokens <n>        Token budget (default: unlimited)',
+      '  --auto-commit           Git commit each success (default: true)',
+      '  --allow-dirty           Allow dirty working tree',
+      '  --verify-ai             Enable L2 AI verification (default: true)',
+      '  --decompose             Enable task decomposition (default: true)',
+      '  --skip-on-fail          Skip failed tasks (default: true)',
+      '  --dry-run               Show plan without executing',
+      '  --verbose               Stream agent tokens',
+    ].join('\n')
+  );
 }
 
 // ── Exported command ────────────────────────────────────────────

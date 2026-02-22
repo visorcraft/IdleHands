@@ -1,11 +1,12 @@
 import type { AgentHooks } from '../agent.js';
 import type { ToolCallEvent, ToolResultEvent, ToolStreamEvent, TurnEndEvent } from '../types.js';
-import { TurnProgressController, type TurnProgressSnapshot } from './turn-progress.js';
-import { ToolTailBuffer } from './tool-tail.js';
+
 import { ProgressMessageRenderer } from './progress-message-renderer.js';
-import { renderTelegramHtml } from './serialize-telegram.js';
 import { renderDiscordMarkdown } from './serialize-discord.js';
+import { renderTelegramHtml } from './serialize-telegram.js';
 import { renderTuiLines } from './serialize-tui.js';
+import { ToolTailBuffer } from './tool-tail.js';
+import { TurnProgressController, type TurnProgressSnapshot } from './turn-progress.js';
 
 export type ProgressPresenterBudgets = {
   maxToolLines?: number;
@@ -30,7 +31,9 @@ export class ProgressPresenter {
 
   private progress: TurnProgressController;
   private renderer: ProgressMessageRenderer;
-  private readonly budgets: Required<Omit<ProgressPresenterBudgets, 'toolCallSummary'>> & { toolCallSummary?: (call: { name: string; args: any }) => string };
+  private readonly budgets: Required<Omit<ProgressPresenterBudgets, 'toolCallSummary'>> & {
+    toolCallSummary?: (call: { name: string; args: any }) => string;
+  };
 
   constructor(budgets?: ProgressPresenterBudgets) {
     this.budgets = {
@@ -54,7 +57,7 @@ export class ProgressPresenter {
         bucketMs: 5000,
         maxToolLines: this.budgets.maxToolLines,
         toolCallSummary: this.budgets.toolCallSummary,
-      },
+      }
     );
 
     this.renderer = new ProgressMessageRenderer({

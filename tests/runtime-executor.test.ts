@@ -1,8 +1,8 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { describe, it } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import type { PlanResult } from '../dist/runtime/types.js';
@@ -20,9 +20,27 @@ function makePlan(overrides?: Partial<PlanResult>): PlanResult {
     backend: null,
     hosts: [{ id: 'local', display_name: 'Local', transport: 'local', connection: {} }],
     steps: [
-      { kind: 'stop_model', host_id: 'local', command: 'echo stopping', timeout_sec: 2, description: 'Stop' },
-      { kind: 'start_model', host_id: 'local', command: 'echo starting', timeout_sec: 2, description: 'Start' },
-      { kind: 'probe_health', host_id: 'local', command: 'echo ok', timeout_sec: 2, description: 'Probe' },
+      {
+        kind: 'stop_model',
+        host_id: 'local',
+        command: 'echo stopping',
+        timeout_sec: 2,
+        description: 'Stop',
+      },
+      {
+        kind: 'start_model',
+        host_id: 'local',
+        command: 'echo starting',
+        timeout_sec: 2,
+        description: 'Start',
+      },
+      {
+        kind: 'probe_health',
+        host_id: 'local',
+        command: 'echo ok',
+        timeout_sec: 2,
+        description: 'Probe',
+      },
     ],
     ...overrides,
   };
@@ -53,8 +71,20 @@ describe('runtime executor', () => {
       const plan = makePlan({
         reuse: true,
         steps: [
-          { kind: 'start_model', host_id: 'local', command: `echo touched > ${marker}`, timeout_sec: 2, description: 'Start marker' },
-          { kind: 'probe_health', host_id: 'local', command: 'echo ok', timeout_sec: 2, description: 'Probe' },
+          {
+            kind: 'start_model',
+            host_id: 'local',
+            command: `echo touched > ${marker}`,
+            timeout_sec: 2,
+            description: 'Start marker',
+          },
+          {
+            kind: 'probe_health',
+            host_id: 'local',
+            command: 'echo ok',
+            timeout_sec: 2,
+            description: 'Probe',
+          },
         ],
       });
 
@@ -72,7 +102,10 @@ describe('runtime executor', () => {
 
   it('execute() step failure returns structured error and attempts rollback', async () => {
     await withTmpHome(async () => {
-      const rollbackMarker = path.join(os.tmpdir(), `idlehands-rollback-${Date.now()}-${Math.random()}`);
+      const rollbackMarker = path.join(
+        os.tmpdir(),
+        `idlehands-rollback-${Date.now()}-${Math.random()}`
+      );
       const plan = makePlan({
         steps: [
           {
@@ -105,7 +138,10 @@ describe('runtime executor', () => {
       const stateDir = path.join(home, '.local', 'state', 'idlehands');
       await fs.mkdir(stateDir, { recursive: true });
       const lockPath = path.join(stateDir, 'runtime.lock');
-      await fs.writeFile(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), model: 'other' }));
+      await fs.writeFile(
+        lockPath,
+        JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), model: 'other' })
+      );
 
       const executor = await loadExecutor();
       const prompts: string[] = [];
@@ -128,7 +164,13 @@ describe('runtime executor', () => {
       const executor = await loadExecutor();
       const slowPlan = makePlan({
         steps: [
-          { kind: 'start_model', host_id: 'local', command: 'sleep 1', timeout_sec: 3, description: 'Hold lock' },
+          {
+            kind: 'start_model',
+            host_id: 'local',
+            command: 'sleep 1',
+            timeout_sec: 3,
+            description: 'Hold lock',
+          },
         ],
       });
 
@@ -149,7 +191,10 @@ describe('runtime executor', () => {
       await fs.mkdir(stateDir, { recursive: true });
       const lockPath = path.join(stateDir, 'runtime.lock');
       const activePath = path.join(stateDir, 'runtime-active.json');
-      await fs.writeFile(lockPath, JSON.stringify({ pid: 99999999, startedAt: new Date().toISOString(), model: 'stale' }));
+      await fs.writeFile(
+        lockPath,
+        JSON.stringify({ pid: 99999999, startedAt: new Date().toISOString(), model: 'stale' })
+      );
 
       const executor = await loadExecutor();
       const result = await executor.execute(makePlan());
@@ -169,7 +214,10 @@ describe('runtime executor', () => {
       await fs.mkdir(stateDir, { recursive: true });
       const lockPath = path.join(stateDir, 'runtime.lock');
       const staleStartedAt = new Date(Date.now() - 61 * 60 * 1000).toISOString();
-      await fs.writeFile(lockPath, JSON.stringify({ pid: process.pid, startedAt: staleStartedAt, model: 'stale-live' }));
+      await fs.writeFile(
+        lockPath,
+        JSON.stringify({ pid: process.pid, startedAt: staleStartedAt, model: 'stale-live' })
+      );
 
       const executor = await loadExecutor();
       const result = await executor.execute(makePlan(), {

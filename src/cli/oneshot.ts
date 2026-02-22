@@ -6,13 +6,15 @@
  */
 
 import { spawnSync } from 'node:child_process';
+
 import { createSession } from '../agent.js';
 import type { AgentHooks } from '../agent.js';
-import { expandAtFileRefs, expandPromptImages } from './input.js';
-import { friendlyError, normalizeOutputFormat, type OneShotOutputEvent } from './args.js';
 import { banner, err as errFmt } from '../term.js';
 import type { makeStyler } from '../term.js';
 import { projectDir } from '../utils.js';
+
+import { friendlyError, normalizeOutputFormat, type OneShotOutputEvent } from './args.js';
+import { expandAtFileRefs, expandPromptImages } from './input.js';
 
 export interface OneShotOpts {
   instruction: string;
@@ -81,7 +83,12 @@ export async function runOneShot(opts: OneShotOpts): Promise<never> {
 
   if (diffOnly) {
     const inside = runGit('git rev-parse --is-inside-work-tree');
-    if (inside.status !== 0 || !String(inside.stdout || '').trim().startsWith('true')) {
+    if (
+      inside.status !== 0 ||
+      !String(inside.stdout || '')
+        .trim()
+        .startsWith('true')
+    ) {
       console.error('--diff-only requires running inside a git repository.');
       process.exit(2);
     }
@@ -102,7 +109,9 @@ export async function runOneShot(opts: OneShotOpts): Promise<never> {
   // §11: Ctrl+C during one-shot aborts everything, exit code 130.
   let oneShotSession: any = null;
   const oneShotSigint = () => {
-    try { oneShotSession?.cancel(); } catch {}
+    try {
+      oneShotSession?.cancel();
+    } catch {}
     process.exit(130);
   };
   process.on('SIGINT', oneShotSigint);
@@ -128,23 +137,32 @@ export async function runOneShot(opts: OneShotOpts): Promise<never> {
       spinner = new CliSpinner({ styler: S, verbose: config.verbose });
       spinner.start();
 
-      const uiMode = config.verbose ? 'verbose' : (config.quiet ? 'quiet' : 'normal');
-      oneShotHooks = uiMode === 'verbose'
-        ? {
-          onToolCall: (e) => spinner.onToolCall(e),
-          onToolResult: (e) => spinner.onToolResult(e),
-        }
-        : uiMode === 'quiet'
+      const uiMode = config.verbose ? 'verbose' : config.quiet ? 'quiet' : 'normal';
+      oneShotHooks =
+        uiMode === 'verbose'
           ? {
-            onToken: (t) => { spinner.onFirstDelta(); partialAssistant += t; process.stdout.write(t); },
-            onFirstDelta: () => spinner.onFirstDelta(),
-          }
-          : {
-            onToken: (t) => { spinner.onFirstDelta(); partialAssistant += t; process.stdout.write(t); },
-            onFirstDelta: () => spinner.onFirstDelta(),
-            onToolCall: (e) => spinner.onToolCall(e),
-            onToolResult: (e) => spinner.onToolResult(e),
-          };
+              onToolCall: (e) => spinner.onToolCall(e),
+              onToolResult: (e) => spinner.onToolResult(e),
+            }
+          : uiMode === 'quiet'
+            ? {
+                onToken: (t) => {
+                  spinner.onFirstDelta();
+                  partialAssistant += t;
+                  process.stdout.write(t);
+                },
+                onFirstDelta: () => spinner.onFirstDelta(),
+              }
+            : {
+                onToken: (t) => {
+                  spinner.onFirstDelta();
+                  partialAssistant += t;
+                  process.stdout.write(t);
+                },
+                onFirstDelta: () => spinner.onFirstDelta(),
+                onToolCall: (e) => spinner.onToolCall(e),
+                onToolResult: (e) => spinner.onToolResult(e),
+              };
     } else {
       oneShotHooks = {
         onToken: (t) => {
@@ -278,6 +296,6 @@ export async function runOneShot(opts: OneShotOpts): Promise<never> {
       flushJsonArray();
     }
 
-    process.exit((shouldFailOnError || !cleaned) ? 1 : 0);
+    process.exit(shouldFailOnError || !cleaned ? 1 : 0);
   }
 }

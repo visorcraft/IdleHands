@@ -1,11 +1,11 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { describe, it } from 'node:test';
 
-import { VaultStore } from '../dist/vault.js';
 import type { ChatMessage } from '../dist/types.js';
+import { VaultStore } from '../dist/vault.js';
 
 async function mkTempDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'idlehands-vault-test-'));
@@ -42,7 +42,7 @@ describe('VaultStore', () => {
     const toolMsg: ChatMessage = {
       role: 'tool',
       tool_call_id: 'abc123',
-      content: JSON.stringify({ ok: true, result: 'hello' })
+      content: JSON.stringify({ ok: true, result: 'hello' }),
     };
 
     await vault.archiveToolResult(toolMsg, 'read_file');
@@ -241,7 +241,11 @@ describe('VaultStore', () => {
     await vault.init();
 
     const latestKey = `artifact:review:latest:${projectId}`;
-    await vault.upsertNote(latestKey, JSON.stringify({ id: 'latest', kind: 'code_review' }), 'system');
+    await vault.upsertNote(
+      latestKey,
+      JSON.stringify({ id: 'latest', kind: 'code_review' }),
+      'system'
+    );
 
     for (let i = 1; i <= 5; i++) {
       await vault.upsertNote(
@@ -256,7 +260,11 @@ describe('VaultStore', () => {
       .map((x) => x.key ?? '')
       .filter((k) => k.startsWith(`artifact:review:item:${projectId}:`));
 
-    assert.equal(immutableKeys.length, 2, `expected only 2 immutable artifacts retained, got: ${immutableKeys.length}`);
+    assert.equal(
+      immutableKeys.length,
+      2,
+      `expected only 2 immutable artifacts retained, got: ${immutableKeys.length}`
+    );
 
     const latest = await vault.getLatestByKey(latestKey, 'system');
     assert.ok(latest, 'latest artifact pointer should be retained');

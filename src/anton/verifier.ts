@@ -1,6 +1,6 @@
 /**
  * Anton verification engine — Phase E implementation.
- * 
+ *
  * Implements the three-level verification cascade:
  * - L0: Agent completion status
  * - L1: Build/test/lint commands
@@ -10,7 +10,9 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+
 import { runCommand } from '../runtime/executor.js';
+
 import type {
   DetectedCommands,
   AntonVerificationResult,
@@ -191,12 +193,9 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
   }
 
   // L2: AI verification (only if enabled and conditions met)
-  if (
-    opts.config.verifyAi &&
-    opts.diff.trim() &&
-    opts.createVerifySession
-  ) {
-    let session: { ask: (prompt: string) => Promise<string>; close: () => Promise<void> } | null = null;
+  if (opts.config.verifyAi && opts.diff.trim() && opts.createVerifySession) {
+    let session: { ask: (prompt: string) => Promise<string>; close: () => Promise<void> } | null =
+      null;
     try {
       session = await opts.createVerifySession();
       const prompt = `You are a code review verifier. Task: "${opts.task.text}"
@@ -212,7 +211,7 @@ or
 {"pass": false, "reason": "..."}`;
 
       const response = await session.ask(prompt);
-      
+
       try {
         const parsed = JSON.parse(response.trim());
         if (typeof parsed.pass === 'boolean') {
@@ -264,11 +263,11 @@ function isCommandAvailable(...cmd: string[]): boolean {
   const result = spawnSync('which', [cmd[0]], {
     timeout: 5000,
     encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore']
+    stdio: ['ignore', 'pipe', 'ignore'],
   });
-  
+
   if (result.status !== 0) return false;
-  
+
   // For compound commands like 'cargo clippy', test the full command
   if (cmd.length > 1) {
     const testResult = spawnSync('bash', ['-c', `${command} --help >/dev/null 2>&1`], {
@@ -276,7 +275,7 @@ function isCommandAvailable(...cmd: string[]): boolean {
     });
     return testResult.status === 0;
   }
-  
+
   return true;
 }
 
@@ -285,7 +284,7 @@ function makeTargetExists(cwd: string, target: string): boolean {
     const result = spawnSync('make', ['-n', target], {
       cwd,
       timeout: 5000,
-      stdio: ['ignore', 'ignore', 'pipe']
+      stdio: ['ignore', 'ignore', 'pipe'],
     });
     // make -n returns 0 if target exists and is valid
     return result.status === 0;

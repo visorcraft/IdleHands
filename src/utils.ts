@@ -4,16 +4,19 @@
  * Avoids duplicate implementations scattered across modules.
  */
 
-import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import path from 'node:path';
-import os from 'node:os';
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 /** Package version read once at startup. Falls back to '0.0.0'. */
 export const PKG_VERSION: string = (() => {
-  try { return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version; }
-  catch { return '0.0.0'; }
+  try {
+    return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+  } catch {
+    return '0.0.0';
+  }
 })();
 
 /** Resolved absolute path to bash — avoids ENOENT under restricted environments. */
@@ -22,7 +25,9 @@ export const BASH_PATH: string = (() => {
     const r = spawnSync('which', ['bash'], { encoding: 'utf8', timeout: 1000 });
     const p = r.stdout?.trim();
     if (p && p.startsWith('/')) return p;
-  } catch { /* fallback */ }
+  } catch {
+    /* fallback */
+  }
   return '/usr/bin/bash';
 })();
 
@@ -54,9 +59,10 @@ export function stateDir(): string {
 /**
  * XDG-compatible config directory.
  * `~/.config/idlehands`
+ * Can be overridden with IDLEHANDS_CONFIG_DIR environment variable.
  */
 export function configDir(): string {
-  return path.join(os.homedir(), '.config', 'idlehands');
+  return process.env.IDLEHANDS_CONFIG_DIR || path.join(os.homedir(), '.config', 'idlehands');
 }
 
 /**
@@ -79,7 +85,11 @@ export function shellEscape(s: string): string {
  * Fetch with timeout using AbortController.
  * Throws on network errors/timeouts (caller decides fallback behavior).
  */
-export async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 3000): Promise<Response> {
+export async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = 3000
+): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {

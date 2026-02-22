@@ -1,8 +1,8 @@
-import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { describe, it, before, after } from 'node:test';
 
 import { LensStore } from '../dist/lens.js';
 import { read_file } from '../dist/tools.js';
@@ -20,7 +20,10 @@ describe('lens', () => {
 
   it('produces structural projection for code-like files', async () => {
     const lens = new LensStore();
-    const out = await lens.projectFile('/tmp/sample.ts', 'export function foo() { return 1; }\nconst x = 1;\n');
+    const out = await lens.projectFile(
+      '/tmp/sample.ts',
+      'export function foo() { return 1; }\nconst x = 1;\n'
+    );
     assert.ok(out.includes('lens:'));
     assert.ok(out.includes('foo'));
   });
@@ -54,20 +57,30 @@ describe('lens', () => {
   it('uses JSON and YAML fallback compressors', async () => {
     const lens = new LensStore();
 
-    const jsonOut = await lens.projectFile('/tmp/config.json', JSON.stringify({
-      api: { endpoint: 'http://x', retries: 3 },
-      features: ['a', 'b']
-    }, null, 2));
+    const jsonOut = await lens.projectFile(
+      '/tmp/config.json',
+      JSON.stringify(
+        {
+          api: { endpoint: 'http://x', retries: 3 },
+          features: ['a', 'b'],
+        },
+        null,
+        2
+      )
+    );
     assert.ok(jsonOut.includes('# lens:json'));
     assert.ok(jsonOut.includes('api'));
 
-    const yamlOut = await lens.projectFile('/tmp/config.yaml', [
-      'endpoint: http://x',
-      'retries: 3',
-      'nested:',
-      '  ignored: child',
-      'feature_flag: true'
-    ].join('\n'));
+    const yamlOut = await lens.projectFile(
+      '/tmp/config.yaml',
+      [
+        'endpoint: http://x',
+        'retries: 3',
+        'nested:',
+        '  ignored: child',
+        'feature_flag: true',
+      ].join('\n')
+    );
     assert.ok(yamlOut.includes('# lens:yaml'));
     assert.ok(yamlOut.includes('endpoint'));
     assert.ok(yamlOut.includes('feature_flag'));
@@ -103,7 +116,7 @@ describe('lens', () => {
       cwd: tmpDir,
       noConfirm: true,
       dryRun: false,
-      lens
+      lens,
     };
 
     const out = await read_file(ctx, { path: 'large.ts' });
@@ -122,7 +135,7 @@ describe('lens', () => {
       cwd: tmpDir,
       noConfirm: true,
       dryRun: false,
-      lens
+      lens,
     };
 
     const out = await read_file(ctx, { path: 'small.ts' });

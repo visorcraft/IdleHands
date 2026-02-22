@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { IdlehandsConfig } from './types.js';
+
+import type { IdlehandsConfig } from './types.js';
 import { configDir } from './utils.js';
 
 const DEFAULTS: IdlehandsConfig = {
@@ -72,7 +73,7 @@ const DEFAULTS: IdlehandsConfig = {
     enabled: true,
     vault: { enabled: true },
     lens: { enabled: true },
-    replay: { enabled: true }
+    replay: { enabled: true },
   },
   auto_update_check: true,
   offline: false,
@@ -96,14 +97,14 @@ const DEFAULTS: IdlehandsConfig = {
   mcp_tool_budget: 1000,
   mcp_call_timeout_sec: 30,
   mcp: {
-    servers: []
+    servers: [],
   },
   anton: {
     max_retries: 3,
     max_iterations: 200,
     task_timeout_sec: 600,
     total_timeout_sec: 7200,
-    max_total_tokens: undefined,  // unlimited
+    max_total_tokens: undefined, // unlimited
     verify_ai: true,
     decompose: true,
     max_decompose_depth: 2,
@@ -241,7 +242,7 @@ export async function loadConfig(opts: {
     mode: ((): 'code' | 'sys' | undefined => {
       const m = process.env.IDLEHANDS_MODE?.toLowerCase();
       if (!m) return undefined;
-      return (m === 'code' || m === 'sys') ? m : undefined;
+      return m === 'code' || m === 'sys' ? m : undefined;
     })(),
     sys_eager: parseBool(process.env.IDLEHANDS_SYS_EAGER),
     context_window: parseNum(process.env.IDLEHANDS_CONTEXT_WINDOW),
@@ -265,7 +266,9 @@ export async function loadConfig(opts: {
     watchdog_timeout_ms: parseNum(process.env.IDLEHANDS_WATCHDOG_TIMEOUT_MS),
     watchdog_max_compactions: parseNum(process.env.IDLEHANDS_WATCHDOG_MAX_COMPACTIONS),
     watchdog_idle_grace_timeouts: parseNum(process.env.IDLEHANDS_WATCHDOG_IDLE_GRACE_TIMEOUTS),
-    debug_abort_reason: parseBool(process.env.IDLEHANDS_DEBUG_ABORT_REASON ?? process.env.IDLEHANDS_DEBUG_CANCEL_REASON),
+    debug_abort_reason: parseBool(
+      process.env.IDLEHANDS_DEBUG_ABORT_REASON ?? process.env.IDLEHANDS_DEBUG_CANCEL_REASON
+    ),
     hooks: {
       enabled: parseBool(process.env.IDLEHANDS_HOOKS_ENABLED),
       strict: parseBool(process.env.IDLEHANDS_HOOKS_STRICT),
@@ -320,11 +323,13 @@ export async function loadConfig(opts: {
         })(),
         mode: parseTrifectaMode(process.env.IDLEHANDS_VAULT_MODE),
         stale_policy: parseReviewArtifactStalePolicy(
-          process.env.IDLEHANDS_REVIEW_ARTIFACT_STALE_POLICY ?? process.env.IDLEHANDS_VAULT_STALE_POLICY
+          process.env.IDLEHANDS_REVIEW_ARTIFACT_STALE_POLICY ??
+            process.env.IDLEHANDS_VAULT_STALE_POLICY
         ),
         immutable_review_artifacts_per_project: parseNum(
-          process.env.IDLEHANDS_REVIEW_ARTIFACT_IMMUTABLE_CAP ?? process.env.IDLEHANDS_VAULT_IMMUTABLE_REVIEW_CAP
-        )
+          process.env.IDLEHANDS_REVIEW_ARTIFACT_IMMUTABLE_CAP ??
+            process.env.IDLEHANDS_VAULT_IMMUTABLE_REVIEW_CAP
+        ),
       },
       lens: {
         enabled: (() => {
@@ -333,7 +338,7 @@ export async function loadConfig(opts: {
           const disabled = parseBool(raw);
           if (disabled === undefined) return undefined;
           return !disabled;
-        })()
+        })(),
       },
       replay: {
         enabled: (() => {
@@ -342,9 +347,9 @@ export async function loadConfig(opts: {
           const disabled = parseBool(raw);
           if (disabled === undefined) return undefined;
           return !disabled;
-        })()
-      }
-    }
+        })(),
+      },
+    },
   };
 
   const stripUndef = <T extends Record<string, any>>(obj: T): Partial<T> => {
@@ -369,7 +374,10 @@ export async function loadConfig(opts: {
   const envTrifecta = (envCfg as any).trifecta;
   const cliTrifecta = (cliCfg as any).trifecta;
 
-  merged.trifecta = mergeTrifecta(mergeTrifecta(mergeTrifecta(DEFAULTS.trifecta as any, fileTrifecta ?? {}), envTrifecta ?? {}), cliTrifecta ?? {});
+  merged.trifecta = mergeTrifecta(
+    mergeTrifecta(mergeTrifecta(DEFAULTS.trifecta as any, fileTrifecta ?? {}), envTrifecta ?? {}),
+    cliTrifecta ?? {}
+  );
 
   // Anton: shallow merge like trifecta (defaults < file < env < cli)
   const fileAnton = (fileCfg as any).anton;
@@ -452,7 +460,9 @@ export async function loadConfig(opts: {
   } catch {
     // Dir doesn't exist (stale config) — use cwd
     if (resolvedDir !== process.cwd()) {
-      console.warn(`[warn] configured dir "${resolvedDir}" does not exist, using cwd "${process.cwd()}"`);
+      console.warn(
+        `[warn] configured dir "${resolvedDir}" does not exist, using cwd "${process.cwd()}"`
+      );
     }
     merged.dir = process.cwd();
   }
@@ -465,7 +475,13 @@ export async function loadConfig(opts: {
   merged.lsp = merged.lsp && typeof merged.lsp === 'object' ? merged.lsp : {};
   merged.lsp.servers = Array.isArray(merged.lsp.servers)
     ? merged.lsp.servers
-        .filter((s: any) => s && typeof s === 'object' && typeof s.language === 'string' && typeof s.command === 'string')
+        .filter(
+          (s: any) =>
+            s &&
+            typeof s === 'object' &&
+            typeof s.language === 'string' &&
+            typeof s.command === 'string'
+        )
         .map((s: any) => ({
           language: String(s.language).trim().toLowerCase(),
           command: String(s.command).trim(),
@@ -476,7 +492,10 @@ export async function loadConfig(opts: {
         .filter((s: any) => s.language.length > 0 && s.command.length > 0)
     : [];
   if (typeof merged.lsp.diagnostic_severity_threshold === 'number') {
-    merged.lsp.diagnostic_severity_threshold = Math.max(1, Math.min(4, Math.floor(merged.lsp.diagnostic_severity_threshold)));
+    merged.lsp.diagnostic_severity_threshold = Math.max(
+      1,
+      Math.min(4, Math.floor(merged.lsp.diagnostic_severity_threshold))
+    );
   }
 
   merged.hooks = merged.hooks && typeof merged.hooks === 'object' ? merged.hooks : {};
@@ -600,9 +619,15 @@ export async function loadConfig(opts: {
     merged.sub_agents.timeout_sec = Math.max(1, Math.floor(merged.sub_agents.timeout_sec));
   }
   if (typeof merged.sub_agents.result_token_cap === 'number') {
-    merged.sub_agents.result_token_cap = Math.max(128, Math.floor(merged.sub_agents.result_token_cap));
+    merged.sub_agents.result_token_cap = Math.max(
+      128,
+      Math.floor(merged.sub_agents.result_token_cap)
+    );
   }
-  if (typeof merged.sub_agents.system_prompt !== 'string' || !merged.sub_agents.system_prompt.trim()) {
+  if (
+    typeof merged.sub_agents.system_prompt !== 'string' ||
+    !merged.sub_agents.system_prompt.trim()
+  ) {
     merged.sub_agents.system_prompt = DEFAULTS.sub_agents?.system_prompt;
   }
   if (typeof merged.sub_agents.model === 'string') {
@@ -611,16 +636,29 @@ export async function loadConfig(opts: {
   if (typeof merged.sub_agents.endpoint === 'string') {
     merged.sub_agents.endpoint = merged.sub_agents.endpoint.trim().replace(/\/+$/, '');
   }
-  if (merged.sub_agents.approval_mode && !['plan', 'reject', 'default', 'auto-edit', 'yolo'].includes(merged.sub_agents.approval_mode)) {
+  if (
+    merged.sub_agents.approval_mode &&
+    !['plan', 'reject', 'default', 'auto-edit', 'yolo'].includes(merged.sub_agents.approval_mode)
+  ) {
     delete merged.sub_agents.approval_mode;
   }
 
-  merged.mcp_tool_budget = Number.isFinite(merged.mcp_tool_budget) ? Math.max(0, Math.floor(merged.mcp_tool_budget)) : DEFAULTS.mcp_tool_budget;
-  merged.mcp_call_timeout_sec = Number.isFinite(merged.mcp_call_timeout_sec) ? Math.max(1, Math.floor(merged.mcp_call_timeout_sec)) : DEFAULTS.mcp_call_timeout_sec;
+  merged.mcp_tool_budget = Number.isFinite(merged.mcp_tool_budget)
+    ? Math.max(0, Math.floor(merged.mcp_tool_budget))
+    : DEFAULTS.mcp_tool_budget;
+  merged.mcp_call_timeout_sec = Number.isFinite(merged.mcp_call_timeout_sec)
+    ? Math.max(1, Math.floor(merged.mcp_call_timeout_sec))
+    : DEFAULTS.mcp_call_timeout_sec;
   merged.mcp = merged.mcp && typeof merged.mcp === 'object' ? merged.mcp : { servers: [] };
   merged.mcp.servers = Array.isArray(merged.mcp.servers)
     ? merged.mcp.servers
-        .filter((s: any) => s && typeof s === 'object' && typeof s.name === 'string' && typeof s.transport === 'string')
+        .filter(
+          (s: any) =>
+            s &&
+            typeof s === 'object' &&
+            typeof s.name === 'string' &&
+            typeof s.transport === 'string'
+        )
         .map((s: any) => ({
           ...s,
           name: String(s.name).trim(),
@@ -653,14 +691,19 @@ export async function loadConfig(opts: {
   if (merged.anton) {
     const a = merged.anton;
     if (typeof a.max_retries === 'number') a.max_retries = Math.max(1, Math.floor(a.max_retries));
-    if (typeof a.max_iterations === 'number') a.max_iterations = Math.max(1, Math.floor(a.max_iterations));
-    if (typeof a.task_timeout_sec === 'number') a.task_timeout_sec = Math.max(10, Math.floor(a.task_timeout_sec));
-    if (typeof a.total_timeout_sec === 'number') a.total_timeout_sec = Math.max(10, Math.floor(a.total_timeout_sec));
+    if (typeof a.max_iterations === 'number')
+      a.max_iterations = Math.max(1, Math.floor(a.max_iterations));
+    if (typeof a.task_timeout_sec === 'number')
+      a.task_timeout_sec = Math.max(10, Math.floor(a.task_timeout_sec));
+    if (typeof a.total_timeout_sec === 'number')
+      a.total_timeout_sec = Math.max(10, Math.floor(a.total_timeout_sec));
     if (typeof a.task_timeout_sec === 'number' && typeof a.total_timeout_sec === 'number') {
       a.total_timeout_sec = Math.max(a.total_timeout_sec, a.task_timeout_sec);
     }
-    if (typeof a.max_decompose_depth === 'number') a.max_decompose_depth = Math.max(0, Math.min(5, Math.floor(a.max_decompose_depth)));
-    if (typeof a.max_total_tasks === 'number') a.max_total_tasks = Math.max(1, Math.floor(a.max_total_tasks));
+    if (typeof a.max_decompose_depth === 'number')
+      a.max_decompose_depth = Math.max(0, Math.min(5, Math.floor(a.max_decompose_depth)));
+    if (typeof a.max_total_tasks === 'number')
+      a.max_total_tasks = Math.max(1, Math.floor(a.max_total_tasks));
     const validApprovalModes = ['plan', 'reject', 'default', 'auto-edit', 'yolo'];
     if (a.approval_mode && !validApprovalModes.includes(a.approval_mode)) {
       if (!process.env.IDLEHANDS_QUIET_WARNINGS) {
@@ -716,7 +759,10 @@ export async function loadConfig(opts: {
     merged.watchdog_max_compactions = Math.max(0, Math.floor(merged.watchdog_max_compactions));
   }
   if (typeof merged.watchdog_idle_grace_timeouts === 'number') {
-    merged.watchdog_idle_grace_timeouts = Math.max(0, Math.floor(merged.watchdog_idle_grace_timeouts));
+    merged.watchdog_idle_grace_timeouts = Math.max(
+      0,
+      Math.floor(merged.watchdog_idle_grace_timeouts)
+    );
   }
 
   // Normalize mode
@@ -775,7 +821,7 @@ export async function loadConfig(opts: {
  */
 export async function applyRuntimeEndpoint(
   config: IdlehandsConfig,
-  cliEndpoint?: string,
+  cliEndpoint?: string
 ): Promise<boolean> {
   // CLI --endpoint is explicit intent — never override
   if (cliEndpoint) return false;
@@ -796,4 +842,3 @@ export async function applyRuntimeEndpoint(
 export async function ensureConfigDir(configPath: string) {
   await fs.mkdir(path.dirname(configPath), { recursive: true });
 }
-

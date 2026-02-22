@@ -17,6 +17,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+
 import { configDir } from './utils.js';
 
 interface CustomCommand {
@@ -153,12 +154,12 @@ function toCommandKey(raw: string): string {
 /** Load commands from a directory. */
 async function loadFromDir(
   dir: string,
-  source: 'global' | 'project',
+  source: 'global' | 'project'
 ): Promise<Map<string, CustomCommand>> {
   const cmds = new Map<string, CustomCommand>();
   let entries: any[];
   try {
-    entries = await fs.readdir(dir, { withFileTypes: true }) as any[];
+    entries = (await fs.readdir(dir, { withFileTypes: true })) as any[];
   } catch {
     return cmds;
   }
@@ -200,9 +201,7 @@ async function loadFromDir(
  * Load all custom commands. Project-scoped commands override global ones
  * when they share the same slug.
  */
-export async function loadCustomCommands(
-  projectDir?: string,
-): Promise<Map<string, CustomCommand>> {
+export async function loadCustomCommands(projectDir?: string): Promise<Map<string, CustomCommand>> {
   const globalCmds = await loadFromDir(globalCommandsDir(), 'global');
   const merged = new Map(globalCmds);
 

@@ -3,19 +3,32 @@
  * Each handler receives the grammy Context and the SessionManager.
  */
 
-import type { Context } from 'grammy';
-import path from 'node:path';
 import fs from 'node:fs/promises';
-import type { SessionManager } from './session-manager.js';
-import { escapeHtml } from './format.js';
-import { firstToken } from '../cli/command-utils.js';
+import path from 'node:path';
+
+import type { Context } from 'grammy';
+
 import { runAnton } from '../anton/controller.js';
 import { parseTaskFile } from '../anton/parser.js';
-import { formatRunSummary, formatProgressBar, formatTaskStart, formatTaskEnd, formatTaskSkip } from '../anton/reporter.js';
+import {
+  formatRunSummary,
+  formatProgressBar,
+  formatTaskStart,
+  formatTaskEnd,
+  formatTaskSkip,
+} from '../anton/reporter.js';
 import type { AntonRunConfig, AntonProgressCallback } from '../anton/types.js';
-import { WATCHDOG_RECOMMENDED_TUNING_TEXT, resolveWatchdogSettings, shouldRecommendWatchdogTuning, type WatchdogSettings } from '../watchdog.js';
-
+import { firstToken } from '../cli/command-utils.js';
 import type { BotTelegramConfig } from '../types.js';
+import {
+  WATCHDOG_RECOMMENDED_TUNING_TEXT,
+  resolveWatchdogSettings,
+  shouldRecommendWatchdogTuning,
+  type WatchdogSettings,
+} from '../watchdog.js';
+
+import { escapeHtml } from './format.js';
+import type { SessionManager } from './session-manager.js';
 
 type CommandContext = {
   ctx: Context;
@@ -32,12 +45,12 @@ type CommandContext = {
 
 export async function handleVersion({ ctx, botConfig }: CommandContext): Promise<void> {
   const lines = [
-    `<b>Idle Hands</b> v${botConfig.version || "unknown"}`,
-    "",
-    `<b>Model:</b> <code>${escapeHtml(botConfig.model || "auto")}</code>`,
-    `<b>Endpoint:</b> <code>${escapeHtml(botConfig.endpoint || "?")}</code>`,
+    `<b>Idle Hands</b> v${botConfig.version || 'unknown'}`,
+    '',
+    `<b>Model:</b> <code>${escapeHtml(botConfig.model || 'auto')}</code>`,
+    `<b>Endpoint:</b> <code>${escapeHtml(botConfig.endpoint || '?')}</code>`,
   ];
-  await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
+  await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
 }
 
 export async function handleStart({ ctx, botConfig }: CommandContext): Promise<void> {
@@ -109,9 +122,10 @@ export async function handleStatus({ ctx, sessions }: CommandContext): Promise<v
     return;
   }
   const s = managed.session;
-  const contextPct = s.contextWindow > 0
-    ? ((s.usage.prompt + s.usage.completion) / s.contextWindow * 100).toFixed(1)
-    : '?';
+  const contextPct =
+    s.contextWindow > 0
+      ? (((s.usage.prompt + s.usage.completion) / s.contextWindow) * 100).toFixed(1)
+      : '?';
   const lines = [
     '<b>Session Status</b>',
     '',
@@ -133,7 +147,10 @@ export async function handleWatchdog({ ctx, sessions, botConfig }: CommandContex
   if (!chatId) return;
 
   const text = ctx.message?.text ?? '';
-  const arg = text.replace(/^\/watchdog\s*/i, '').trim().toLowerCase();
+  const arg = text
+    .replace(/^\/watchdog\s*/i, '')
+    .trim()
+    .toLowerCase();
   if (arg && arg !== 'status') {
     await ctx.reply('Usage: /watchdog or /watchdog status');
     return;
@@ -157,7 +174,10 @@ export async function handleWatchdog({ ctx, sessions, botConfig }: CommandContex
   }
 
   if (managed) {
-    const idleSec = managed.lastProgressAt > 0 ? ((Date.now() - managed.lastProgressAt) / 1000).toFixed(1) : 'n/a';
+    const idleSec =
+      managed.lastProgressAt > 0
+        ? ((Date.now() - managed.lastProgressAt) / 1000).toFixed(1)
+        : 'n/a';
     lines.push('');
     lines.push(`<b>In-flight:</b> ${managed.inFlight ? 'yes' : 'no'}`);
     lines.push(`<b>State:</b> ${escapeHtml(managed.state)}`);
@@ -186,8 +206,13 @@ export async function handleDir({ ctx, sessions }: CommandContext): Promise<void
     if (managed) {
       lines.push(`<b>Directory pinned:</b> ${managed.dirPinned ? 'yes' : 'no'}`);
       if (!managed.dirPinned && managed.repoCandidates.length > 1) {
-        lines.push('<b>Action required:</b> run <code>/dir &lt;repo-root&gt;</code> before file edits.');
-        const preview = managed.repoCandidates.slice(0, 5).map((p) => `<code>${escapeHtml(p)}</code>`).join(', ');
+        lines.push(
+          '<b>Action required:</b> run <code>/dir &lt;repo-root&gt;</code> before file edits.'
+        );
+        const preview = managed.repoCandidates
+          .slice(0, 5)
+          .map((p) => `<code>${escapeHtml(p)}</code>`)
+          .join(', ');
         lines.push(`<b>Detected repos:</b> ${preview}`);
       }
     }
@@ -200,9 +225,13 @@ export async function handleDir({ ctx, sessions }: CommandContext): Promise<void
   if (ok) {
     const updated = sessions.get(chatId);
     const resolved = updated?.workingDir ?? arg;
-    await ctx.reply(`✅ Working directory pinned to <code>${escapeHtml(resolved)}</code>`, { parse_mode: 'HTML' });
+    await ctx.reply(`✅ Working directory pinned to <code>${escapeHtml(resolved)}</code>`, {
+      parse_mode: 'HTML',
+    });
   } else {
-    await ctx.reply('❌ Directory not allowed or session error. Check bot.telegram.allowed_dirs / persona.allowed_dirs.');
+    await ctx.reply(
+      '❌ Directory not allowed or session error. Check bot.telegram.allowed_dirs / persona.allowed_dirs.'
+    );
   }
 }
 
@@ -244,7 +273,10 @@ export async function handleApproval({ ctx, sessions }: CommandContext): Promise
 
   if (!arg) {
     const current = managed?.approvalMode ?? 'auto-edit';
-    await ctx.reply(`<b>Approval mode:</b> <code>${escapeHtml(current)}</code>\n\nOptions: ${modes.join(', ')}`, { parse_mode: 'HTML' });
+    await ctx.reply(
+      `<b>Approval mode:</b> <code>${escapeHtml(current)}</code>\n\nOptions: ${modes.join(', ')}`,
+      { parse_mode: 'HTML' }
+    );
     return;
   }
 
@@ -258,14 +290,19 @@ export async function handleApproval({ ctx, sessions }: CommandContext): Promise
     managed.config.approval_mode = arg as any;
     managed.config.no_confirm = arg === 'yolo';
   }
-  await ctx.reply(`✅ Approval mode set to <code>${escapeHtml(arg)}</code>`, { parse_mode: 'HTML' });
+  await ctx.reply(`✅ Approval mode set to <code>${escapeHtml(arg)}</code>`, {
+    parse_mode: 'HTML',
+  });
 }
 
 export async function handleMode({ ctx, sessions }: CommandContext): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) return;
   const text = ctx.message?.text ?? '';
-  const arg = text.replace(/^\/mode\s*/, '').trim().toLowerCase();
+  const arg = text
+    .replace(/^\/mode\s*/, '')
+    .trim()
+    .toLowerCase();
   const managed = sessions.get(chatId);
 
   if (!managed) {
@@ -274,7 +311,9 @@ export async function handleMode({ ctx, sessions }: CommandContext): Promise<voi
   }
 
   if (!arg) {
-    await ctx.reply(`<b>Mode:</b> <code>${escapeHtml(managed.config.mode ?? 'code')}</code>`, { parse_mode: 'HTML' });
+    await ctx.reply(`<b>Mode:</b> <code>${escapeHtml(managed.config.mode ?? 'code')}</code>`, {
+      parse_mode: 'HTML',
+    });
     return;
   }
 
@@ -296,7 +335,10 @@ export async function handleSubAgents({ ctx, sessions }: CommandContext): Promis
   const chatId = ctx.chat?.id;
   if (!chatId) return;
   const text = ctx.message?.text ?? '';
-  const arg = text.replace(/^\/subagents\s*/, '').trim().toLowerCase();
+  const arg = text
+    .replace(/^\/subagents\s*/, '')
+    .trim()
+    .toLowerCase();
   const managed = sessions.get(chatId);
 
   if (!managed) {
@@ -309,7 +351,7 @@ export async function handleSubAgents({ ctx, sessions }: CommandContext): Promis
   if (!arg) {
     await ctx.reply(
       `<b>Sub-agents:</b> <code>${current ? 'on' : 'off'}</code>\n\nUsage: /subagents on | off`,
-      { parse_mode: 'HTML' },
+      { parse_mode: 'HTML' }
     );
     return;
   }
@@ -323,7 +365,7 @@ export async function handleSubAgents({ ctx, sessions }: CommandContext): Promis
   managed.config.sub_agents = { ...(managed.config.sub_agents ?? {}), enabled };
   await ctx.reply(
     `✅ Sub-agents <code>${enabled ? 'on' : 'off'}</code>${!enabled ? ' — spawn_task disabled for this session' : ''}`,
-    { parse_mode: 'HTML' },
+    { parse_mode: 'HTML' }
   );
 }
 
@@ -484,21 +526,26 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
   // start run — args is the file path (possibly with "run" prefix)
   const filePart = sub === 'run' ? args.replace(/^\S+\s*/, '').trim() : args;
   if (!filePart) {
-    await ctx.reply([
-      '<b>/anton</b> — Autonomous task runner',
-      '',
-      '/anton &lt;file&gt; — Start run',
-      '/anton status — Show progress',
-      '/anton stop — Stop running',
-      '/anton last — Last run results',
-    ].join('\n'), { parse_mode: 'HTML' });
+    await ctx.reply(
+      [
+        '<b>/anton</b> — Autonomous task runner',
+        '',
+        '/anton &lt;file&gt; — Start run',
+        '/anton status — Show progress',
+        '/anton stop — Stop running',
+        '/anton last — Last run results',
+      ].join('\n'),
+      { parse_mode: 'HTML' }
+    );
     return;
   }
 
   // Ensure session exists
-  const session = managed || await sessions.getOrCreate(chatId, userId);
+  const session = managed || (await sessions.getOrCreate(chatId, userId));
   if (!session) {
-    await ctx.reply('⚠️ Too many active sessions. Try again later (or wait for an old session to expire).');
+    await ctx.reply(
+      '⚠️ Too many active sessions. Try again later (or wait for an old session to expire).'
+    );
     return;
   }
 
@@ -603,9 +650,13 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
   try {
     const tf = await parseTaskFile(filePath);
     pendingCount = tf.pending.length;
-  } catch { /* non-fatal */ }
+  } catch {
+    /* non-fatal */
+  }
 
-  await ctx.reply(`🤖 Anton started on ${escapeHtml(filePart)} (${pendingCount} tasks pending)`, { parse_mode: 'HTML' });
+  await ctx.reply(`🤖 Anton started on ${escapeHtml(filePart)} (${pendingCount} tasks pending)`, {
+    parse_mode: 'HTML',
+  });
 
   runAnton({
     config: runConfig,
@@ -625,16 +676,20 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
 
 // ── Multi-agent commands ───────────────────────────────────────────────
 
-export async function handleAgent({ ctx, sessions, botConfig: _botConfig }: CommandContext): Promise<void> {
+export async function handleAgent({
+  ctx,
+  sessions,
+  botConfig: _botConfig,
+}: CommandContext): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) return;
   const managed = sessions.get(chatId);
-  
+
   if (!managed?.agentPersona) {
     await ctx.reply('No agent configured. Using global config.');
     return;
   }
-  
+
   const p = managed.agentPersona;
   const lines = [
     `<b>Agent: ${escapeHtml(p.display_name || managed.agentId)}</b> (<code>${escapeHtml(managed.agentId)}</code>)`,
@@ -642,57 +697,75 @@ export async function handleAgent({ ctx, sessions, botConfig: _botConfig }: Comm
     ...(p.endpoint ? [`<b>Endpoint:</b> <code>${escapeHtml(p.endpoint)}</code>`] : []),
     ...(p.approval_mode ? [`<b>Approval:</b> <code>${escapeHtml(p.approval_mode)}</code>`] : []),
     ...(p.default_dir ? [`<b>Default dir:</b> <code>${escapeHtml(p.default_dir)}</code>`] : []),
-    ...(p.allowed_dirs?.length ? [`<b>Allowed dirs:</b> ${p.allowed_dirs.map(d => `<code>${escapeHtml(d)}</code>`).join(', ')}`] : []),
+    ...(p.allowed_dirs?.length
+      ? [
+          `<b>Allowed dirs:</b> ${p.allowed_dirs.map((d) => `<code>${escapeHtml(d)}</code>`).join(', ')}`,
+        ]
+      : []),
   ];
-  
+
   // Show escalation info if configured
   if (p.escalation?.models?.length) {
     lines.push('');
-    lines.push(`<b>Escalation models:</b> ${p.escalation.models.map(m => `<code>${escapeHtml(m)}</code>`).join(', ')}`);
+    lines.push(
+      `<b>Escalation models:</b> ${p.escalation.models.map((m) => `<code>${escapeHtml(m)}</code>`).join(', ')}`
+    );
     if (managed.currentModelIndex > 0) {
       lines.push(`<b>Current tier:</b> ${managed.currentModelIndex} (escalated)`);
     }
     if (managed.pendingEscalation) {
-      lines.push(`<b>Pending escalation:</b> <code>${escapeHtml(managed.pendingEscalation)}</code>`);
+      lines.push(
+        `<b>Pending escalation:</b> <code>${escapeHtml(managed.pendingEscalation)}</code>`
+      );
     }
   }
-  
+
   await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
 }
 
 export async function handleAgents({ ctx, sessions, botConfig }: CommandContext): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) return;
-  
+
   const agents = botConfig.telegram?.agents;
   if (!agents || Object.keys(agents).length === 0) {
     await ctx.reply('No agents configured. Using global config.');
     return;
   }
-  
+
   const managed = sessions.get(chatId);
   const currentAgentId = managed?.agentId;
-  
+
   const lines = ['<b>Configured Agents:</b>', ''];
   for (const [id, agent] of Object.entries(agents)) {
     const current = id === currentAgentId ? ' ← current' : '';
     const model = agent.model ? ` (${escapeHtml(agent.model)})` : '';
-    lines.push(`• <b>${escapeHtml(agent.display_name || id)}</b> (<code>${escapeHtml(id)}</code>)${model}${current}`);
+    lines.push(
+      `• <b>${escapeHtml(agent.display_name || id)}</b> (<code>${escapeHtml(id)}</code>)${model}${current}`
+    );
   }
-  
+
   // Show routing rules
   const routing = botConfig.telegram?.routing;
   if (routing) {
     lines.push('', '<b>Routing:</b>');
     if (routing.default) lines.push(`Default: <code>${escapeHtml(routing.default)}</code>`);
     if (routing.users && Object.keys(routing.users).length > 0) {
-      lines.push(`Users: ${Object.entries(routing.users).map(([u, a]) => `${u}→${escapeHtml(a)}`).join(', ')}`);
+      lines.push(
+        `Users: ${Object.entries(routing.users)
+          .map(([u, a]) => `${u}→${escapeHtml(a)}`)
+          .join(', ')}`
+      );
     }
     if (routing.chats && Object.keys(routing.chats).length > 0) {
-      lines.push(`Chats: ${Object.entries(routing.chats).map(([c, a]) => `${c}→${escapeHtml(a)}`).join(', ')}`);
+      lines.push(
+        `Chats: ${Object.entries(routing.chats)
+          .map(([c, a]) => `${c}→${escapeHtml(a)}`)
+          .join(', ')}`
+      );
     }
   }
-  
+
   await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
 }
 
@@ -700,39 +773,42 @@ export async function handleEscalate({ ctx, sessions, botConfig }: CommandContex
   const chatId = ctx.chat?.id;
   const userId = ctx.from?.id;
   if (!chatId || !userId) return;
-  
+
   const managed = sessions.get(chatId);
   if (!managed) {
     await ctx.reply('No active session. Send a message first.');
     return;
   }
-  
+
   const escalation = managed.agentPersona?.escalation;
   if (!escalation || !escalation.models?.length) {
     await ctx.reply('❌ No escalation models configured for this agent.');
     return;
   }
-  
+
   const text = ctx.message?.text ?? '';
   const arg = text.replace(/^\/escalate\s*/, '').trim();
-  
+
   // No arg: show available models and current state
   if (!arg) {
     const currentModel = managed.config.model || botConfig.model || 'default';
     const lines = [
       `<b>Current model:</b> <code>${escapeHtml(currentModel)}</code>`,
-      `<b>Escalation models:</b> ${escalation.models.map(m => `<code>${escapeHtml(m)}</code>`).join(', ')}`,
+      `<b>Escalation models:</b> ${escalation.models.map((m) => `<code>${escapeHtml(m)}</code>`).join(', ')}`,
       '',
       'Usage: /escalate &lt;model&gt; or /escalate next',
       'Then send your message - it will use the escalated model.',
     ];
     if (managed.pendingEscalation) {
-      lines.push('', `⚡ <b>Pending escalation:</b> <code>${escapeHtml(managed.pendingEscalation)}</code> (next message will use this)`);
+      lines.push(
+        '',
+        `⚡ <b>Pending escalation:</b> <code>${escapeHtml(managed.pendingEscalation)}</code> (next message will use this)`
+      );
     }
     await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
     return;
   }
-  
+
   // Handle 'next' - escalate to next model in chain
   let targetModel: string;
   let targetEndpoint: string | undefined;
@@ -743,43 +819,55 @@ export async function handleEscalate({ ctx, sessions, botConfig }: CommandContex
   } else {
     // Specific model requested
     if (!escalation.models.includes(arg)) {
-      await ctx.reply(`❌ Model <code>${escapeHtml(arg)}</code> not in escalation chain. Available: ${escalation.models.map(m => `<code>${escapeHtml(m)}</code>`).join(', ')}`, { parse_mode: 'HTML' });
+      await ctx.reply(
+        `❌ Model <code>${escapeHtml(arg)}</code> not in escalation chain. Available: ${escalation.models.map((m) => `<code>${escapeHtml(m)}</code>`).join(', ')}`,
+        { parse_mode: 'HTML' }
+      );
       return;
     }
     targetModel = arg;
     const idx = escalation.models.indexOf(arg);
     targetEndpoint = escalation.tiers?.[idx]?.endpoint;
   }
-  
+
   managed.pendingEscalation = targetModel;
   managed.pendingEscalationEndpoint = targetEndpoint || null;
-  await ctx.reply(`⚡ Next message will use <code>${escapeHtml(targetModel)}</code>. Send your request now.`, { parse_mode: 'HTML' });
+  await ctx.reply(
+    `⚡ Next message will use <code>${escapeHtml(targetModel)}</code>. Send your request now.`,
+    { parse_mode: 'HTML' }
+  );
 }
 
-export async function handleDeescalate({ ctx, sessions, botConfig }: CommandContext): Promise<void> {
+export async function handleDeescalate({
+  ctx,
+  sessions,
+  botConfig,
+}: CommandContext): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) return;
-  
+
   const managed = sessions.get(chatId);
   if (!managed) {
     await ctx.reply('No active session.');
     return;
   }
-  
+
   if (managed.currentModelIndex === 0 && !managed.pendingEscalation) {
     await ctx.reply('Already using base model.');
     return;
   }
-  
+
   const baseModel = managed.agentPersona?.model || botConfig.model || 'default';
   managed.pendingEscalation = null;
   managed.pendingEscalationEndpoint = null;
   managed.currentModelIndex = 0;
-  
+
   // Recreate session with base model
   try {
     await sessions.recreateSession(chatId, { model: baseModel });
-    await ctx.reply(`✅ Returned to base model: <code>${escapeHtml(baseModel)}</code>`, { parse_mode: 'HTML' });
+    await ctx.reply(`✅ Returned to base model: <code>${escapeHtml(baseModel)}</code>`, {
+      parse_mode: 'HTML',
+    });
   } catch (e: any) {
     await ctx.reply(`❌ Failed to deescalate: ${e?.message ?? e}`);
   }

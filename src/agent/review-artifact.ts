@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { projectIndexKeys } from '../indexer.js';
+
 import { isGitDirty } from '../git.js';
+import { projectIndexKeys } from '../indexer.js';
 import { BASH_PATH as BASH } from '../utils.js';
 
 export type ReviewArtifact = {
@@ -16,7 +17,11 @@ export type ReviewArtifact = {
   gitDirty?: boolean;
 };
 
-export function reviewArtifactKeys(projectDir: string): { latestKey: string; byIdPrefix: string; projectId: string } {
+export function reviewArtifactKeys(projectDir: string): {
+  latestKey: string;
+  byIdPrefix: string;
+  projectId: string;
+} {
   const { projectId } = projectIndexKeys(projectDir);
   return {
     projectId,
@@ -29,8 +34,15 @@ export function looksLikeCodeReviewRequest(text: string): boolean {
   const t = text.toLowerCase();
   if (!t.trim()) return false;
   if (/^\s*\/review\b/.test(t)) return true;
-  if (/\b(?:code\s+review|security\s+review|review\s+the\s+(?:code|diff|changes|repo|repository|pr)|audit\s+the\s+code)\b/.test(t)) return true;
-  return /\breview\b/.test(t) && /\b(?:code|repo|repository|diff|changes|pull\s*request|pr)\b/.test(t);
+  if (
+    /\b(?:code\s+review|security\s+review|review\s+the\s+(?:code|diff|changes|repo|repository|pr)|audit\s+the\s+code)\b/.test(
+      t
+    )
+  )
+    return true;
+  return (
+    /\breview\b/.test(t) && /\b(?:code|repo|repository|diff|changes|pull\s*request|pr)\b/.test(t)
+  );
 }
 
 export function looksLikeReviewRetrievalRequest(text: string): boolean {
@@ -42,10 +54,29 @@ export function looksLikeReviewRetrievalRequest(text: string): boolean {
   if (!/\breview\b/.test(t)) return false;
 
   if (/\bprint\s+stale\s+review\s+anyway\b/.test(t)) return true;
-  if (/\b(?:print|show|display|repeat|paste|send|output|give)\b[^\n.]{0,80}\breview\b[^\n.]{0,40}\b(?:again|back)\b/.test(t)) return true;
-  if (/\b(?:print|show|display|repeat|paste|send|output|give)\b[^\n.]{0,80}\b(?:full|entire|complete|whole)\b[^\n.]{0,80}\breview\b/.test(t)) return true;
-  if (/\b(?:full|entire|complete|whole)\b[^\n.]{0,30}\bcode\s+review\b/.test(t) && /\b(?:print|show|display|repeat|paste|send|output|give)\b/.test(t)) return true;
-  if (/\b(?:print|show|display|repeat|paste|send|output|give)\b[^\n.]{0,80}\b(?:last|latest|previous)\b[^\n.]{0,40}\breview\b/.test(t)) return true;
+  if (
+    /\b(?:print|show|display|repeat|paste|send|output|give)\b[^\n.]{0,80}\breview\b[^\n.]{0,40}\b(?:again|back)\b/.test(
+      t
+    )
+  )
+    return true;
+  if (
+    /\b(?:print|show|display|repeat|paste|send|output|give)\b[^\n.]{0,80}\b(?:full|entire|complete|whole)\b[^\n.]{0,80}\breview\b/.test(
+      t
+    )
+  )
+    return true;
+  if (
+    /\b(?:full|entire|complete|whole)\b[^\n.]{0,30}\bcode\s+review\b/.test(t) &&
+    /\b(?:print|show|display|repeat|paste|send|output|give)\b/.test(t)
+  )
+    return true;
+  if (
+    /\b(?:print|show|display|repeat|paste|send|output|give)\b[^\n.]{0,80}\b(?:last|latest|previous)\b[^\n.]{0,40}\breview\b/.test(
+      t
+    )
+  )
+    return true;
   return false;
 }
 
@@ -53,8 +84,18 @@ export function retrievalAllowsStaleArtifact(text: string): boolean {
   const t = text.toLowerCase();
   if (!t.trim()) return false;
   if (/\bprint\s+stale\s+review\s+anyway\b/.test(t)) return true;
-  if (/\b(?:force|override|ignore)\b[^\n.]{0,80}\b(?:stale|old|previous)\b[^\n.]{0,80}\breview\b/.test(t)) return true;
-  if (/\b(?:stale|old|previous)\b[^\n.]{0,80}\breview\b[^\n.]{0,80}\b(?:anyway|still|force|override|ignore)\b/.test(t)) return true;
+  if (
+    /\b(?:force|override|ignore)\b[^\n.]{0,80}\b(?:stale|old|previous)\b[^\n.]{0,80}\breview\b/.test(
+      t
+    )
+  )
+    return true;
+  if (
+    /\b(?:stale|old|previous)\b[^\n.]{0,80}\breview\b[^\n.]{0,80}\b(?:anyway|still|force|override|ignore)\b/.test(
+      t
+    )
+  )
+    return true;
   return false;
 }
 
@@ -90,7 +131,13 @@ export function gitHead(cwd: string): string | undefined {
     encoding: 'utf8',
     timeout: 1000,
   });
-  if (inside.status !== 0 || !String(inside.stdout || '').trim().startsWith('true')) return undefined;
+  if (
+    inside.status !== 0 ||
+    !String(inside.stdout || '')
+      .trim()
+      .startsWith('true')
+  )
+    return undefined;
 
   const head = spawnSync(BASH, ['-lc', 'git rev-parse HEAD'], {
     cwd,
@@ -120,7 +167,9 @@ export function reviewArtifactStaleReason(artifact: ReviewArtifact, cwd: string)
   return '';
 }
 
-export function normalizeModelsResponse(raw: any): { data: Array<{ id: string; [k: string]: any }> } {
+export function normalizeModelsResponse(raw: any): {
+  data: Array<{ id: string; [k: string]: any }>;
+} {
   if (Array.isArray(raw)) {
     return {
       data: raw
@@ -130,7 +179,7 @@ export function normalizeModelsResponse(raw: any): { data: Array<{ id: string; [
           if (typeof m.id === 'string' && m.id) return m;
           return null;
         })
-        .filter(Boolean) as Array<{ id: string; [k: string]: any }>
+        .filter(Boolean) as Array<{ id: string; [k: string]: any }>,
     };
   }
 
@@ -138,7 +187,7 @@ export function normalizeModelsResponse(raw: any): { data: Array<{ id: string; [
     return {
       data: raw.data
         .map((m: any) => (m && typeof m.id === 'string' && m.id ? m : null))
-        .filter(Boolean) as Array<{ id: string; [k: string]: any }>
+        .filter(Boolean) as Array<{ id: string; [k: string]: any }>,
     };
   }
 

@@ -5,6 +5,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+
 import {
   serviceState,
   hasSystemd,
@@ -27,7 +28,7 @@ async function waitForActive(timeoutMs = 5000): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (checkActive()) return true;
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 500));
   }
   return checkActive();
 }
@@ -36,7 +37,7 @@ async function showRestartProgress(): Promise<void> {
   process.stdout.write(`  ⏳ Stopping service...`);
   spawnSync('systemctl', ['--user', 'stop', SVC], { stdio: 'pipe' });
   // Brief pause for clean shutdown
-  await new Promise(r => setTimeout(r, 1000));
+  await new Promise((r) => setTimeout(r, 1000));
   console.log(` ${GREEN}✓${RESET}`);
 
   process.stdout.write(`  ⏳ Starting service...`);
@@ -95,7 +96,7 @@ export async function runServiceSubcommand(args: any): Promise<void> {
     case 'stop': {
       process.stdout.write(`Stopping ${SVC}...`);
       spawnSync('systemctl', ['--user', 'stop', SVC], { stdio: 'pipe' });
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, 1000));
       const stopped = !checkActive();
       console.log(stopped ? ` ${GREEN}✓${RESET}` : ` ${RED}✗${RESET}`);
       if (!stopped) process.exitCode = 1;

@@ -1,10 +1,14 @@
 export type BenchSuccess =
   | { type: 'equals'; value: string }
-  | { type: 'exec'; command: string; exitCode?: number; stdoutEquals?: string; stdoutIncludes?: string };
+  | {
+      type: 'exec';
+      command: string;
+      exitCode?: number;
+      stdoutEquals?: string;
+      stdoutIncludes?: string;
+    };
 
-export type BenchWorkspace =
-  | { kind: 'fixed'; dir: string }
-  | { kind: 'temp'; prefix?: string };
+export type BenchWorkspace = { kind: 'fixed'; dir: string } | { kind: 'temp'; prefix?: string };
 
 export type BenchEngine = 'idlehands' | 'openclaw';
 

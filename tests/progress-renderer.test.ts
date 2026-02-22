@@ -1,9 +1,9 @@
-import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { test } from 'node:test';
 
 import { ProgressMessageRenderer } from '../dist/progress/progress-message-renderer.js';
-import { renderTelegramHtml } from '../dist/progress/serialize-telegram.js';
 import { renderDiscordMarkdown } from '../dist/progress/serialize-discord.js';
+import { renderTelegramHtml } from '../dist/progress/serialize-telegram.js';
 import { renderTuiLines } from '../dist/progress/serialize-tui.js';
 
 test('progress renderer serializes consistently across Telegram/Discord/TUI', () => {
@@ -17,10 +17,7 @@ test('progress renderer serializes consistently across Telegram/Discord/TUI', ()
   const doc = renderer.render({
     banner: '🧹 Compacting context and retrying...',
     statusLine: '🔧 exec: npm test (10s tool, 40s total)',
-    toolLines: [
-      '◆ exec: npm test...',
-      '✓ exec: rc=0, 88 lines',
-    ],
+    toolLines: ['◆ exec: npm test...', '✓ exec: rc=0, 88 lines'],
     toolTail: {
       name: 'exec',
       stream: 'stdout',

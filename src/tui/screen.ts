@@ -46,8 +46,10 @@ export function probeTermCapabilities(): TermCapabilities {
 export function validateTerminal(): { ok: boolean; reason?: string } {
   const caps = probeTermCapabilities();
   if (caps.term === 'dumb') return { ok: false, reason: 'dumb terminal — no cursor control' };
-  if (caps.rows < 10) return { ok: false, reason: `terminal too short (${caps.rows} rows, need 10+)` };
-  if (caps.cols < 40) return { ok: false, reason: `terminal too narrow (${caps.cols} cols, need 40+)` };
+  if (caps.rows < 10)
+    return { ok: false, reason: `terminal too short (${caps.rows} rows, need 10+)` };
+  if (caps.cols < 40)
+    return { ok: false, reason: `terminal too narrow (${caps.cols} cols, need 40+)` };
   return { ok: true };
 }
 

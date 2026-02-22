@@ -1,3 +1,5 @@
+import { shellEscape } from '../utils.js';
+
 import type {
   RuntimesConfig,
   PlanRequest,
@@ -12,7 +14,6 @@ import type {
   RuntimeHost,
   RuntimeBackend,
 } from './types.js';
-import { shellEscape } from '../utils.js';
 
 function interpolate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{(\w+)\}/g, (_, key) => vars[key] ?? `{${key}}`);
@@ -30,12 +31,14 @@ function buildVars(
   model: ResolvedModel,
   host: RuntimeHost,
   backend: ResolvedBackend | null,
-  backendCfg: RuntimeBackend | null,
+  backendCfg: RuntimeBackend | null
 ): Record<string, string> {
   const port = String(model.runtime_defaults?.port ?? 8080);
   const backendArgs = backend?.args?.map((arg) => shellEscape(arg)).join(' ') ?? '';
   const backendEnv = backend?.env
-    ? Object.entries(backend.env).map(([k, v]) => `${k}=${shellEscape(String(v))}`).join(' ')
+    ? Object.entries(backend.env)
+        .map(([k, v]) => `${k}=${shellEscape(String(v))}`)
+        .join(' ')
     : '';
 
   return {
@@ -56,10 +59,13 @@ function buildVars(
 export function plan(
   request: PlanRequest,
   config: RuntimesConfig,
-  activeState: ActiveRuntime | null,
+  activeState: ActiveRuntime | null
 ): PlanOutput {
   if (request.forceSplit === true) {
-    return error('SPLIT_NOT_IMPLEMENTED', 'Multi-host split (tensor/pipeline parallel) is not yet implemented.');
+    return error(
+      'SPLIT_NOT_IMPLEMENTED',
+      'Multi-host split (tensor/pipeline parallel) is not yet implemented.'
+    );
   }
 
   const modelCfg = config.models.find((m) => m.id === request.modelId && m.enabled);
@@ -69,9 +75,13 @@ export function plan(
 
   if (request.hostOverride) {
     const host = config.hosts.find((h) => h.id === request.hostOverride && h.enabled);
-    if (!host) return error('NO_ELIGIBLE_HOST', `Host not found or disabled: ${request.hostOverride}`);
+    if (!host)
+      return error('NO_ELIGIBLE_HOST', `Host not found or disabled: ${request.hostOverride}`);
     if (Array.isArray(modelCfg.host_policy) && !modelCfg.host_policy.includes(host.id)) {
-      return error('HOST_POLICY_VIOLATION', `Host ${host.id} violates host policy for model ${modelCfg.id}`);
+      return error(
+        'HOST_POLICY_VIOLATION',
+        `Host ${host.id} violates host policy for model ${modelCfg.id}`
+      );
     }
     targetHosts = [host];
   } else if (modelCfg.host_policy === 'any') {
@@ -96,7 +106,10 @@ export function plan(
   if (request.backendOverride) {
     backendCfg = config.backends.find((b) => b.id === request.backendOverride && b.enabled) ?? null;
     if (!backendCfg) {
-      return error('BACKEND_NOT_FOUND', `Backend not found or disabled: ${request.backendOverride}`);
+      return error(
+        'BACKEND_NOT_FOUND',
+        `Backend not found or disabled: ${request.backendOverride}`
+      );
     }
   } else if (modelCfg.backend_policy === 'any') {
     backendCfg = null;

@@ -1,8 +1,9 @@
-import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { test, describe } from 'node:test';
+
 import { acquireAntonLock, releaseAntonLock, isAntonLockHeld } from '../dist/anton/lock.js';
 
 // Mock stateDir to use a temp directory for tests
@@ -30,7 +31,7 @@ async function cleanupTestStateDir(): Promise<void> {
 async function writeStaleLock(age: number, pid: number, heartbeatAge?: number): Promise<void> {
   const lockPath = path.join(tempStateDir, 'idlehands', 'anton.lock');
   await fs.mkdir(path.dirname(lockPath), { recursive: true });
-  
+
   const staleTime = new Date(Date.now() - age);
   const hbTime = new Date(Date.now() - (heartbeatAge ?? age));
   const staleLock = {
@@ -38,9 +39,9 @@ async function writeStaleLock(age: number, pid: number, heartbeatAge?: number): 
     startedAt: staleTime.toISOString(),
     heartbeatAt: hbTime.toISOString(),
     cwd: '/tmp/test',
-    taskFile: 'test.md'
+    taskFile: 'test.md',
   };
-  
+
   await fs.writeFile(lockPath, JSON.stringify(staleLock), 'utf8');
 }
 
@@ -51,7 +52,7 @@ describe('Anton lock functions', () => {
       await assert.doesNotReject(async () => {
         await acquireAntonLock('test.md', '/tmp/test');
       });
-      
+
       // Verify lock is held
       assert.strictEqual(await isAntonLockHeld(), true);
     } finally {
@@ -66,7 +67,7 @@ describe('Anton lock functions', () => {
       // Use parent PID — guaranteed alive and accessible to process.kill(pid, 0)
       const alivePid = process.ppid;
       await writeStaleLock(0, alivePid);
-      
+
       // Acquire should fail — different PID, not stale
       await assert.rejects(
         async () => await acquireAntonLock('test2.md', '/tmp/test2'),
@@ -97,16 +98,13 @@ describe('Anton lock functions', () => {
     try {
       await acquireAntonLock('test.md', '/tmp/test');
       assert.strictEqual(await isAntonLockHeld(), true);
-      
+
       await releaseAntonLock();
       assert.strictEqual(await isAntonLockHeld(), false);
-      
+
       // Verify lock file is gone
       const lockPath = path.join(tempStateDir, 'idlehands', 'anton.lock');
-      await assert.rejects(
-        async () => await fs.access(lockPath),
-        { code: 'ENOENT' }
-      );
+      await assert.rejects(async () => await fs.access(lockPath), { code: 'ENOENT' });
     } finally {
       await cleanupTestStateDir();
     }
@@ -118,12 +116,12 @@ describe('Anton lock functions', () => {
       // Write a stale lock (2 hours old with current PID to make sure it's old but not dead process)
       const staleAge = 2 * 60 * 60 * 1000; // 2 hours
       await writeStaleLock(staleAge, process.pid);
-      
+
       // This should succeed by reclaiming the stale lock
       await assert.doesNotReject(async () => {
         await acquireAntonLock('test.md', '/tmp/test');
       });
-      
+
       assert.strictEqual(await isAntonLockHeld(), true);
     } finally {
       await releaseAntonLock();
@@ -137,12 +135,12 @@ describe('Anton lock functions', () => {
       // Write a lock with a dead PID (use a very high number that's unlikely to exist)
       const deadPid = 999999;
       await writeStaleLock(10 * 60 * 1000, deadPid); // 10 minutes old but dead process
-      
+
       // This should succeed by reclaiming the dead lock
       await assert.doesNotReject(async () => {
         await acquireAntonLock('test.md', '/tmp/test');
       });
-      
+
       assert.strictEqual(await isAntonLockHeld(), true);
     } finally {
       await releaseAntonLock();

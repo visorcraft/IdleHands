@@ -1,8 +1,8 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { describe, it } from 'node:test';
 
 import { normalizePluginName, scaffoldHookPlugin } from '../dist/hooks/scaffold.js';
 
@@ -48,7 +48,7 @@ describe('hooks scaffold', () => {
           baseDir: dir,
           force: false,
         }),
-        /Target already exists/i,
+        /Target already exists/i
       );
 
       await scaffoldHookPlugin({

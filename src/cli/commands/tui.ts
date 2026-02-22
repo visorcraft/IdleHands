@@ -1,6 +1,6 @@
-import type { IdlehandsConfig } from '../../types.js';
 import { TuiController } from '../../tui/controller.js';
 import { validateTerminal } from '../../tui/screen.js';
+import type { IdlehandsConfig } from '../../types.js';
 
 /**
  * Launch the fullscreen TUI. Validates terminal capabilities first;

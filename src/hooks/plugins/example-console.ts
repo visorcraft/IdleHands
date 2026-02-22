@@ -15,10 +15,14 @@ const plugin: HookPlugin = {
   hooks: {
     ask_start: ({ askId, instruction }, ctx) => {
       const preview = instruction.length > 120 ? `${instruction.slice(0, 120)}…` : instruction;
-      console.error(`[hook:example-console] ask_start ${askId} model=${ctx.model} prompt=${preview}`);
+      console.error(
+        `[hook:example-console] ask_start ${askId} model=${ctx.model} prompt=${preview}`
+      );
     },
     ask_end: ({ askId, turns, toolCalls }) => {
-      console.error(`[hook:example-console] ask_end ${askId} turns=${turns} toolCalls=${toolCalls}`);
+      console.error(
+        `[hook:example-console] ask_end ${askId} turns=${turns} toolCalls=${toolCalls}`
+      );
     },
   },
 };

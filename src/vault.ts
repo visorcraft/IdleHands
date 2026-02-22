@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+
 import type { ChatMessage } from './types.js';
 import { stateDir } from './utils.js';
 
@@ -62,12 +63,16 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function isToolMessage(m: ChatMessage): m is { role: 'tool'; content: string; tool_call_id: string } {
+function isToolMessage(
+  m: ChatMessage
+): m is { role: 'tool'; content: string; tool_call_id: string } {
   return m.role === 'tool' && typeof m.content === 'string' && typeof m.tool_call_id === 'string';
 }
 
 function toSearchText(row: VaultDbRow) {
-  return normalizeText(`${row.key ?? ''} ${row.tool ?? ''} ${row.value ?? ''} ${row.snippet ?? ''} ${row.content ?? ''}`);
+  return normalizeText(
+    `${row.key ?? ''} ${row.tool ?? ''} ${row.value ?? ''} ${row.snippet ?? ''} ${row.content ?? ''}`
+  );
 }
 
 function isProtectedArtifactKey(key: string | null | undefined): boolean {
@@ -105,7 +110,10 @@ export class VaultStore {
   constructor(opts: VaultOptions = {}) {
     this.dbPath = opts.path ?? defaultVaultPath();
     this.maxEntries = opts.maxEntries ?? 500;
-    this.immutableReviewArtifactsPerProject = Math.max(1, Math.floor(opts.immutableReviewArtifactsPerProject ?? 20));
+    this.immutableReviewArtifactsPerProject = Math.max(
+      1,
+      Math.floor(opts.immutableReviewArtifactsPerProject ?? 20)
+    );
     this._projectDir = opts.projectDir;
   }
 
@@ -122,7 +130,11 @@ export class VaultStore {
   /** Close the database connection. Safe to call multiple times. */
   close(): void {
     if (this.db) {
-      try { this.db.close(); } catch { /* already closed */ }
+      try {
+        this.db.close();
+      } catch {
+        /* already closed */
+      }
       this.db = null;
     }
     this.initPromise = null;
@@ -200,9 +212,19 @@ export class VaultStore {
         if (this.ftsEnabled) {
           this.run('DELETE FROM vault_fts WHERE rowid = ?', [existingId]);
           const row: VaultDbRow = {
-            id: existingId, kind, key: cleanKey, value: cleanVal, tool: null, tool_call_id: null,
-            content: cleanVal, snippet, project_dir: projDir,
-            created_at: now, updated_at: now, createdAt: now, updatedAt: now,
+            id: existingId,
+            kind,
+            key: cleanKey,
+            value: cleanVal,
+            tool: null,
+            tool_call_id: null,
+            content: cleanVal,
+            snippet,
+            project_dir: projDir,
+            created_at: now,
+            updated_at: now,
+            createdAt: now,
+            updatedAt: now,
           };
           this.indexFts(existingId, row);
         }
@@ -228,7 +250,11 @@ export class VaultStore {
 
       this.db.exec('COMMIT');
     } catch (e) {
-      try { this.db.exec('ROLLBACK'); } catch { /* ignore */ }
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
       throw e;
     }
 
@@ -236,7 +262,10 @@ export class VaultStore {
     return String(id);
   }
 
-  async getLatestByKey(key: string, kind?: VaultMode | 'system'): Promise<VaultSearchResult | null> {
+  async getLatestByKey(
+    key: string,
+    kind?: VaultMode | 'system'
+  ): Promise<VaultSearchResult | null> {
     await this.init();
 
     const rows = kind
@@ -263,17 +292,17 @@ export class VaultStore {
 
   async deleteByKey(key: string): Promise<number> {
     await this.init();
-    const ids = this.rows<{ id: number }>(
-      `SELECT id FROM vault_entries WHERE key = ?`, [key]
-    ).map((r) => Number(r.id));
+    const ids = this.rows<{ id: number }>(`SELECT id FROM vault_entries WHERE key = ?`, [key]).map(
+      (r) => Number(r.id)
+    );
     return this.deleteByIds(ids);
   }
 
   async deleteByKeyPrefix(prefix: string): Promise<number> {
     await this.init();
-    const ids = this.rows<{ id: number }>(
-      `SELECT id FROM vault_entries WHERE key LIKE ?`, [`${prefix}%`]
-    ).map((r) => Number(r.id));
+    const ids = this.rows<{ id: number }>(`SELECT id FROM vault_entries WHERE key LIKE ?`, [
+      `${prefix}%`,
+    ]).map((r) => Number(r.id));
     return this.deleteByIds(ids);
   }
 
@@ -307,14 +336,25 @@ export class VaultStore {
     const raw = message.content;
 
     this.transaction(() =>
-      this.insertAndIndex('tool', `tool:${name}`, raw, name, message.tool_call_id, raw, truncate(raw, 300))
+      this.insertAndIndex(
+        'tool',
+        `tool:${name}`,
+        raw,
+        name,
+        message.tool_call_id,
+        raw,
+        truncate(raw, 300)
+      )
     );
 
     await this.pruneToLimit();
     await this.persist();
   }
 
-  async archiveToolMessages(messages: ChatMessage[], toolNameByCallId: Map<string, string> = new Map()): Promise<number> {
+  async archiveToolMessages(
+    messages: ChatMessage[],
+    toolNameByCallId: Map<string, string> = new Map()
+  ): Promise<number> {
     await this.init();
 
     // Filter to valid tool messages that aren't already archived
@@ -338,7 +378,15 @@ export class VaultStore {
     // Batch insert in a single transaction
     this.transaction(() => {
       for (const item of toArchive) {
-        this.insertAndIndex('tool', `tool:${item.name}`, item.content, item.name, item.tool_call_id, item.content, truncate(item.content, 300));
+        this.insertAndIndex(
+          'tool',
+          `tool:${item.name}`,
+          item.content,
+          item.name,
+          item.tool_call_id,
+          item.content,
+          truncate(item.content, 300)
+        );
       }
     });
 
@@ -360,7 +408,7 @@ export class VaultStore {
         const ftsQuery = this.escapeFtsQuery(q);
         // Fetch extra results to allow project-scoping reorder
         const fetchLimit = projDir ? n * 3 : n;
-        const rows = this.rows<(VaultDbRow & { rank: number })>(
+        const rows = this.rows<VaultDbRow & { rank: number }>(
           `SELECT e.id, e.kind, e.key, e.value, e.tool, e.tool_call_id, e.content, e.snippet, e.project_dir, e.created_at, e.updated_at,
                   bm25(vault_fts) as rank
            FROM vault_fts
@@ -412,7 +460,12 @@ export class VaultStore {
           if (!t) continue;
           if (haystack.includes(t)) score += 1;
         }
-        return { ...r, score, updatedAt: r.updated_at ?? r.updatedAt ?? '', _projectDir: r.project_dir };
+        return {
+          ...r,
+          score,
+          updatedAt: r.updated_at ?? r.updatedAt ?? '',
+          _projectDir: r.project_dir,
+        };
       })
       .filter((x) => x.score > 0)
       .sort((a, b) => {
@@ -439,7 +492,10 @@ export class VaultStore {
    * 2. No project dir (legacy/unscoped entries)
    * 3. Different project dir (cross-project — deprioritized)
    */
-  private sortByProjectRelevance<T extends { _projectDir?: string | null; score?: number }>(results: T[], projDir: string): T[] {
+  private sortByProjectRelevance<T extends { _projectDir?: string | null; score?: number }>(
+    results: T[],
+    projDir: string
+  ): T[] {
     const norm = projDir.replace(/\/+$/, '');
     return results.sort((a, b) => {
       const aTier = this.projectTier(a._projectDir, norm);
@@ -469,7 +525,11 @@ export class VaultStore {
       return;
     } catch (e) {
       if (this.db) {
-        try { this.db.close(); } catch { /* ignore */ }
+        try {
+          this.db.close();
+        } catch {
+          /* ignore */
+        }
         this.db = null;
       }
       await this.recoverCorruptDb(e);
@@ -484,7 +544,9 @@ export class VaultStore {
     this.migrate();
     await this.rebuildFts();
     if (!process.env.IDLEHANDS_QUIET_WARNINGS) {
-      console.warn(`[warn] vault db corrupt, recreated from scratch: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(
+        `[warn] vault db corrupt, recreated from scratch: ${e instanceof Error ? e.message : String(e)}`
+      );
     }
   }
 
@@ -507,9 +569,13 @@ export class VaultStore {
       );
     `);
 
-    this.db.exec('CREATE INDEX IF NOT EXISTS idx_vault_updated_at ON vault_entries (updated_at DESC);');
+    this.db.exec(
+      'CREATE INDEX IF NOT EXISTS idx_vault_updated_at ON vault_entries (updated_at DESC);'
+    );
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_vault_tool_call ON vault_entries (tool_call_id);');
-    this.db.exec('CREATE INDEX IF NOT EXISTS idx_vault_project_dir ON vault_entries (project_dir);');
+    this.db.exec(
+      'CREATE INDEX IF NOT EXISTS idx_vault_project_dir ON vault_entries (project_dir);'
+    );
 
     // Migration: add project_dir column to existing databases
     try {
@@ -649,7 +715,7 @@ export class VaultStore {
       content: r.content ?? undefined,
       snippet: r.snippet ?? undefined,
       createdAt: r.created_at ?? r.createdAt ?? '',
-      updatedAt: r.updated_at ?? r.updatedAt ?? ''
+      updatedAt: r.updated_at ?? r.updatedAt ?? '',
     };
   }
 
@@ -672,7 +738,11 @@ export class VaultStore {
       this.db.exec('COMMIT');
       return result;
     } catch (e) {
-      try { this.db.exec('ROLLBACK'); } catch { /* already rolled back */ }
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {
+        /* already rolled back */
+      }
       throw e;
     }
   }
@@ -685,7 +755,7 @@ export class VaultStore {
     tool: string | null,
     toolCallId: string | null,
     content: string | null,
-    snippet: string | null,
+    snippet: string | null
   ): number {
     const now = nowIso();
     const projDir = this._projectDir ?? null;
@@ -697,8 +767,19 @@ export class VaultStore {
     const id = Number(result.lastInsertRowid);
     if (id != null && this.ftsEnabled) {
       const row: VaultDbRow = {
-        id, kind, key, value, tool, tool_call_id: toolCallId, content, snippet, project_dir: projDir,
-        created_at: now, updated_at: now, createdAt: now, updatedAt: now,
+        id,
+        kind,
+        key,
+        value,
+        tool,
+        tool_call_id: toolCallId,
+        content,
+        snippet,
+        project_dir: projDir,
+        created_at: now,
+        updated_at: now,
+        createdAt: now,
+        updatedAt: now,
       };
       this.indexFts(id, row);
     }

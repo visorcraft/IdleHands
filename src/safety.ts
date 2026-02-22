@@ -16,8 +16,9 @@
  * - Safety logging to stderr
  */
 
-import path from 'node:path';
 import fs from 'node:fs/promises';
+import path from 'node:path';
+
 import { configDir } from './utils.js';
 
 // ──────────────────────────────────────────────────────
@@ -26,45 +27,48 @@ import { configDir } from './utils.js';
 
 export const FORBIDDEN_PATTERNS: Array<{ re: RegExp; reason: string }> = [
   // Wipe root / home / system directories
-  { re: /\brm\s+(-\w*[rf]\w*\s+)*\s*\/\s*$/,   reason: 'rm targeting /' },
-  { re: /\brm\s+(-\w*[rf]\w*\s+)+\/$/,          reason: 'rm -rf /' },
-  { re: /\brm\s+(-\w*[rf]\w*\s+)+\/(boot|etc|usr|lib|sbin|bin|var|sys|proc|dev)\b/,
-                                                  reason: 'rm targeting system directory' },
-  { re: /\brm\s+(-\w*[rf]\w*\s+)+~\/?$/,        reason: 'rm targeting home directory' },
-  { re: /\brm\s+(-\w*[rf]\w*\s+)+\$HOME\b/,     reason: 'rm targeting $HOME' },
+  { re: /\brm\s+(-\w*[rf]\w*\s+)*\s*\/\s*$/, reason: 'rm targeting /' },
+  { re: /\brm\s+(-\w*[rf]\w*\s+)+\/$/, reason: 'rm -rf /' },
+  {
+    re: /\brm\s+(-\w*[rf]\w*\s+)+\/(boot|etc|usr|lib|sbin|bin|var|sys|proc|dev)\b/,
+    reason: 'rm targeting system directory',
+  },
+  { re: /\brm\s+(-\w*[rf]\w*\s+)+~\/?$/, reason: 'rm targeting home directory' },
+  { re: /\brm\s+(-\w*[rf]\w*\s+)+\$HOME\b/, reason: 'rm targeting $HOME' },
 
   // Block device / partition destruction
-  { re: /\bdd\b.*\bof\s*=\s*\/dev\//,            reason: 'dd writing to block device' },
-  { re: /\bmkfs\b/,                               reason: 'mkfs (filesystem creation)' },
-  { re: /\bfdisk\b/,                              reason: 'fdisk (partition table modification)' },
-  { re: /\bparted\b/,                             reason: 'parted (partition modification)' },
+  { re: /\bdd\b.*\bof\s*=\s*\/dev\//, reason: 'dd writing to block device' },
+  { re: /\bmkfs\b/, reason: 'mkfs (filesystem creation)' },
+  { re: /\bfdisk\b/, reason: 'fdisk (partition table modification)' },
+  { re: /\bparted\b/, reason: 'parted (partition modification)' },
 
   // Boot/kernel destruction
-  { re: /\bupdate-grub\b/,                        reason: 'GRUB modification' },
-  { re: /\bgrub-install\b/,                       reason: 'GRUB installation' },
+  { re: /\bupdate-grub\b/, reason: 'GRUB modification' },
+  { re: /\bgrub-install\b/, reason: 'GRUB installation' },
 
   // Recursive permission nuke
-  { re: /\bchmod\s+(-\w*R\w*\s+)*(0?777|a\+rwx)\s+\/\s*$/,
-                                                  reason: 'chmod 777 / (recursive permission nuke)' },
-  { re: /\bchown\s+(-\w*R\w*\s+).*\s+\/\s*$/,   reason: 'chown targeting /' },
+  {
+    re: /\bchmod\s+(-\w*R\w*\s+)*(0?777|a\+rwx)\s+\/\s*$/,
+    reason: 'chmod 777 / (recursive permission nuke)',
+  },
+  { re: /\bchown\s+(-\w*R\w*\s+).*\s+\/\s*$/, reason: 'chown targeting /' },
 
   // Fork bomb
-  { re: /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/,
-                                                  reason: 'fork bomb' },
+  { re: /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/, reason: 'fork bomb' },
 
   // Direct passwd/shadow manipulation
-  { re: />\s*\/etc\/passwd\b/,                    reason: 'overwriting /etc/passwd' },
-  { re: />\s*\/etc\/shadow\b/,                    reason: 'overwriting /etc/shadow' },
+  { re: />\s*\/etc\/passwd\b/, reason: 'overwriting /etc/passwd' },
+  { re: />\s*\/etc\/shadow\b/, reason: 'overwriting /etc/shadow' },
 
   // Disable firewall entirely
-  { re: /\bufw\s+disable\b/,                      reason: 'disabling firewall' },
-  { re: /\biptables\s+-F\b/,                      reason: 'flushing all iptables rules' },
+  { re: /\bufw\s+disable\b/, reason: 'disabling firewall' },
+  { re: /\biptables\s+-F\b/, reason: 'flushing all iptables rules' },
 
   // System shutdown/reboot (model shouldn't decide this)
   { re: /\b(shutdown|reboot|poweroff|init\s+[06])\b/, reason: 'system shutdown/reboot' },
 
   // Wipe entire git history
-  { re: /\bgit\s+push\s+--mirror\b/,             reason: 'git mirror push (overwrites remote)' },
+  { re: /\bgit\s+push\s+--mirror\b/, reason: 'git mirror push (overwrites remote)' },
 ];
 
 // ──────────────────────────────────────────────────────
@@ -73,44 +77,48 @@ export const FORBIDDEN_PATTERNS: Array<{ re: RegExp; reason: string }> = [
 
 export const CAUTIOUS_PATTERNS: Array<{ re: RegExp; reason: string }> = [
   // Recursive delete (non-system paths)
-  { re: /\brm\s+(-\w*[rf]\w*\s+)/,               reason: 'rm with -r or -f flags' },
+  { re: /\brm\s+(-\w*[rf]\w*\s+)/, reason: 'rm with -r or -f flags' },
 
   // Sudo escalation
-  { re: /\bsudo\b/,                               reason: 'sudo (privilege escalation)' },
+  { re: /\bsudo\b/, reason: 'sudo (privilege escalation)' },
 
   // Remote code execution
-  { re: /\bcurl\b.*\|\s*(ba)?sh\b/,              reason: 'piping curl to shell' },
-  { re: /\bwget\b.*\|\s*(ba)?sh\b/,              reason: 'piping wget to shell' },
+  { re: /\bcurl\b.*\|\s*(ba)?sh\b/, reason: 'piping curl to shell' },
+  { re: /\bwget\b.*\|\s*(ba)?sh\b/, reason: 'piping wget to shell' },
 
   // Git force operations
-  { re: /\bgit\s+push\s+.*--force\b/,            reason: 'git force push' },
-  { re: /\bgit\s+push\s+-f\b/,                   reason: 'git force push' },
-  { re: /\bgit\s+reset\s+--hard\b/,              reason: 'git reset --hard' },
-  { re: /\bgit\s+clean\s+-[dfx]/,                reason: 'git clean (removes untracked files)' },
+  { re: /\bgit\s+push\s+.*--force\b/, reason: 'git force push' },
+  { re: /\bgit\s+push\s+-f\b/, reason: 'git force push' },
+  { re: /\bgit\s+reset\s+--hard\b/, reason: 'git reset --hard' },
+  { re: /\bgit\s+clean\s+-[dfx]/, reason: 'git clean (removes untracked files)' },
 
   // Package management
-  { re: /\b(apt|apt-get|dnf|yum|pacman|pip|npm)\s+(install|remove|purge|uninstall)\b/,
-                                                  reason: 'package install/remove' },
+  {
+    re: /\b(apt|apt-get|dnf|yum|pacman|pip|npm)\s+(install|remove|purge|uninstall)\b/,
+    reason: 'package install/remove',
+  },
 
   // Service management
-  { re: /\bsystemctl\s+(start|stop|restart|enable|disable|mask)\b/,
-                                                  reason: 'service state change' },
+  {
+    re: /\bsystemctl\s+(start|stop|restart|enable|disable|mask)\b/,
+    reason: 'service state change',
+  },
 
   // Network/firewall changes
-  { re: /\bufw\s+(allow|deny|reject)\b/,         reason: 'firewall rule change' },
-  { re: /\biptables\s+(-A|-I|-D)\b/,             reason: 'iptables rule change' },
+  { re: /\bufw\s+(allow|deny|reject)\b/, reason: 'firewall rule change' },
+  { re: /\biptables\s+(-A|-I|-D)\b/, reason: 'iptables rule change' },
 
   // Docker management
-  { re: /\bdocker\s+(rm|rmi|system\s+prune)\b/,  reason: 'docker resource removal' },
+  { re: /\bdocker\s+(rm|rmi|system\s+prune)\b/, reason: 'docker resource removal' },
 
   // Dangerous file operations outside of the tool system
-  { re: /\bmv\s+.*\/\.\./,                        reason: 'mv with path traversal' },
-  { re: /\bcp\s+.*--no-preserve\b/,              reason: 'cp without preserving attributes' },
+  { re: /\bmv\s+.*\/\.\./, reason: 'mv with path traversal' },
+  { re: /\bcp\s+.*--no-preserve\b/, reason: 'cp without preserving attributes' },
 
   // SSH/SCP to remote (model should confirm remote operations)
-  { re: /\bssh\b/,                                reason: 'ssh (remote operation)' },
-  { re: /\bscp\b/,                                reason: 'scp (remote copy)' },
-  { re: /\brsync\b/,                              reason: 'rsync (remote sync)' },
+  { re: /\bssh\b/, reason: 'ssh (remote operation)' },
+  { re: /\bscp\b/, reason: 'scp (remote copy)' },
+  { re: /\brsync\b/, reason: 'rsync (remote sync)' },
 ];
 
 // ──────────────────────────────────────────────────────
@@ -189,16 +197,23 @@ let _userProtectedPaths: string[] = [];
 let _userProtectedDeleteRoots: string[] = [];
 
 /** Enable lockdown mode: all cautious commands become forbidden. */
-export function setLockdown(enabled: boolean) { _lockdown = enabled; }
+export function setLockdown(enabled: boolean) {
+  _lockdown = enabled;
+}
 
 /** Enable safety logging to stderr. */
-export function setSafetyLogging(enabled: boolean) { _logEnabled = enabled; }
+export function setSafetyLogging(enabled: boolean) {
+  _logEnabled = enabled;
+}
 
 function safetyLog(tier: string, detail: string) {
   if (!_logEnabled) return;
-  const tag = tier === 'forbidden' ? '\x1b[31m[safety] BLOCKED\x1b[0m'
-            : tier === 'cautious'  ? '\x1b[33m[safety] cautious\x1b[0m'
-            : '\x1b[2m[safety] free\x1b[0m';
+  const tag =
+    tier === 'forbidden'
+      ? '\x1b[31m[safety] BLOCKED\x1b[0m'
+      : tier === 'cautious'
+        ? '\x1b[33m[safety] cautious\x1b[0m'
+        : '\x1b[2m[safety] free\x1b[0m';
   process.stderr.write(`${tag}: ${detail}\n`);
 }
 
@@ -224,8 +239,12 @@ export async function loadSafetyConfig(configPath?: string): Promise<SafetyConfi
     _userForbidden = compilePatterns(parsed.forbidden_patterns, 'forbidden');
     _userCautious = compilePatterns(parsed.cautious_patterns, 'cautious');
     _userAllow = compileAllowPatterns(parsed.allow_patterns);
-    _userProtectedPaths = Array.isArray(parsed.protected_paths) ? parsed.protected_paths.filter((s: any) => typeof s === 'string') : [];
-    _userProtectedDeleteRoots = Array.isArray(parsed.protected_delete_roots) ? parsed.protected_delete_roots.filter((s: any) => typeof s === 'string') : [];
+    _userProtectedPaths = Array.isArray(parsed.protected_paths)
+      ? parsed.protected_paths.filter((s: any) => typeof s === 'string')
+      : [];
+    _userProtectedDeleteRoots = Array.isArray(parsed.protected_delete_roots)
+      ? parsed.protected_delete_roots.filter((s: any) => typeof s === 'string')
+      : [];
     return parsed;
   } catch (e: any) {
     if (!process.env.IDLEHANDS_QUIET_WARNINGS) {
@@ -311,7 +330,7 @@ export function checkExecSafety(command: string): SafetyVerdict {
   for (const { re, reason } of CAUTIOUS_PATTERNS) {
     if (re.test(cmd)) {
       // Check user allow-list first (explicit bypass for known-safe commands)
-      if (_userAllow.some(a => a.test(cmd))) {
+      if (_userAllow.some((a) => a.test(cmd))) {
         safetyLog('free', `allowed by user allow_patterns — ${cmd}`);
         return { allowed: true, tier: 'free' };
       }
@@ -332,7 +351,7 @@ export function checkExecSafety(command: string): SafetyVerdict {
   // User-defined cautious
   for (const { re, reason } of _userCautious) {
     if (re.test(cmd)) {
-      if (_userAllow.some(a => a.test(cmd))) {
+      if (_userAllow.some((a) => a.test(cmd))) {
         safetyLog('free', `allowed by user allow_patterns — ${cmd}`);
         return { allowed: true, tier: 'free' };
       }
@@ -456,7 +475,7 @@ export async function checkPathTraversal(
       // Symlink resolved to different location — re-check
       if (!realPath.startsWith(cwd + '/') && realPath !== cwd) {
         if (allowedDirs) {
-          const inAllowed = allowedDirs.some(d => {
+          const inAllowed = allowedDirs.some((d) => {
             const rd = path.resolve(d);
             return realPath.startsWith(rd + '/') || realPath === rd;
           });
@@ -487,7 +506,7 @@ export function isProtectedDeleteTarget(command: string): boolean {
 
   const allRoots = [...PROTECTED_DELETE_ROOTS, ..._userProtectedDeleteRoots];
 
-  const targets = rmMatch[2].split(/\s+/).filter(t => t.startsWith('/'));
+  const targets = rmMatch[2].split(/\s+/).filter((t) => t.startsWith('/'));
   for (const target of targets) {
     const norm = path.normalize(target).replace(/\/+$/, '') || '/';
     if (allRoots.includes(norm)) return true;

@@ -9,9 +9,10 @@
 
 import type { AgentHooks } from '../agent.js';
 import type { UserContent } from '../types.js';
-import type { ReplContext } from './repl-context.js';
-import { getGitShortStat } from './init.js';
 import { projectDir } from '../utils.js';
+
+import { getGitShortStat } from './init.js';
+import type { ReplContext } from './repl-context.js';
 
 export interface AgentTurnResult {
   text: string;
@@ -25,26 +26,33 @@ export interface AgentTurnResult {
  */
 export async function runAgentTurnWithSpinner(
   ctx: ReplContext,
-  input: UserContent,
+  input: UserContent
 ): Promise<AgentTurnResult> {
   const { CliSpinner } = await import('../spinner.js');
   const spinner = new CliSpinner({ styler: ctx.S, verbose: ctx.config.verbose });
   spinner.start();
 
-  const uiMode = ctx.config.verbose ? 'verbose' : (ctx.config.quiet ? 'quiet' : 'normal');
-  const hooks: AgentHooks = uiMode === 'quiet'
-    ? {
-        onToken: (t) => { spinner.onFirstDelta(); process.stdout.write(t); },
-        onFirstDelta: () => spinner.onFirstDelta(),
-        onTurnEnd: (stats) => ctx.maybePrintTurnMetrics(stats),
-      }
-    : {
-        onToken: (t) => { spinner.onFirstDelta(); process.stdout.write(t); },
-        onFirstDelta: () => spinner.onFirstDelta(),
-        onToolCall: (e) => spinner.onToolCall(e),
-        onToolResult: (e) => spinner.onToolResult(e),
-        onTurnEnd: (stats) => ctx.maybePrintTurnMetrics(stats),
-      };
+  const uiMode = ctx.config.verbose ? 'verbose' : ctx.config.quiet ? 'quiet' : 'normal';
+  const hooks: AgentHooks =
+    uiMode === 'quiet'
+      ? {
+          onToken: (t) => {
+            spinner.onFirstDelta();
+            process.stdout.write(t);
+          },
+          onFirstDelta: () => spinner.onFirstDelta(),
+          onTurnEnd: (stats) => ctx.maybePrintTurnMetrics(stats),
+        }
+      : {
+          onToken: (t) => {
+            spinner.onFirstDelta();
+            process.stdout.write(t);
+          },
+          onFirstDelta: () => spinner.onFirstDelta(),
+          onToolCall: (e) => spinner.onToolCall(e),
+          onToolResult: (e) => spinner.onToolResult(e),
+          onTurnEnd: (stats) => ctx.maybePrintTurnMetrics(stats),
+        };
 
   const prevEditedPath = ctx.session.lastEditedPath;
   const res = await ctx.session.ask(input, hooks);

@@ -6,8 +6,8 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import path from 'node:path';
 import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -28,7 +28,8 @@ const CACHE_TTL_MS = 60_000; // 60 seconds
  * Returns: 'apt' | 'dnf' | 'pacman' | 'unknown'
  */
 export function detectPackageManager(): string {
-  const has = (cmd: string) => spawnSync('bash', ['-lc', `command -v ${cmd}`], { stdio: 'ignore' }).status === 0;
+  const has = (cmd: string) =>
+    spawnSync('bash', ['-lc', `command -v ${cmd}`], { stdio: 'ignore' }).status === 0;
   if (has('apt')) return 'apt';
   if (has('dnf')) return 'dnf';
   if (has('pacman')) return 'pacman';
@@ -42,7 +43,7 @@ export function detectPackageManager(): string {
 export async function collectSnapshot(scope: SysScope = 'all'): Promise<string> {
   // Check cache
   const cached = cache.get(scope);
-  if (cached && (Date.now() - cached.ts) < CACHE_TTL_MS) {
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
     return cached.text;
   }
 
@@ -64,7 +65,7 @@ export function clearSnapshotCache(): void {
 function resolveSnapshotScript(): string {
   // Try likely locations in source checkout and installed package.
   const candidates = [
-    SNAPSHOT_SCRIPT,                                       // co-located (src/sys/ or dist/sys/)
+    SNAPSHOT_SCRIPT, // co-located (src/sys/ or dist/sys/)
     path.join(process.cwd(), 'src', 'sys', 'snapshot.sh'), // repo root → source
     path.join(process.cwd(), 'dist', 'sys', 'snapshot.sh'), // repo root → dist
   ];
@@ -128,14 +129,16 @@ export const SYS_CONTEXT_SCHEMA = {
   type: 'function' as const,
   function: {
     name: 'sys_context',
-    description: 'Get system information snapshot. Use this when you need to know about the OS, services, network, disk, or packages.',
+    description:
+      'Get system information snapshot. Use this when you need to know about the OS, services, network, disk, or packages.',
     parameters: {
       type: 'object',
       properties: {
         scope: {
           type: 'string',
           enum: ['all', 'services', 'network', 'disk', 'packages'],
-          description: 'What info to collect. "all" returns everything (~500 tokens). Individual scopes return ~100 tokens each.',
+          description:
+            'What info to collect. "all" returns everything (~500 tokens). Individual scopes return ~100 tokens each.',
         },
       },
     },

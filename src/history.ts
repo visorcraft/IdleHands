@@ -1,4 +1,4 @@
-import { ChatMessage, type UserContentPart } from './types.js';
+import type { ChatMessage, UserContentPart } from './types.js';
 
 // Pre-compiled regex for think-block stripping (avoids re-creation per call)
 const THINK_RE = /<think>([\s\S]*?)<\/think>/gi;
@@ -9,7 +9,7 @@ export function stripThinking(text: string): { visible: string; thinking: string
   const thinkBlocks: string[] = [];
   let visible = text;
   for (const re of [THINK_RE, THINKING_RE]) {
-    re.lastIndex = 0;  // reset stateful global regex
+    re.lastIndex = 0; // reset stateful global regex
     visible = visible.replace(re, (_m, g1) => {
       thinkBlocks.push(String(g1));
       return '';
@@ -77,8 +77,11 @@ export function enforceContextBudget(opts: {
   const budget = Math.max(1024, contextWindow - maxTokens - safetyMargin);
   // Trigger compaction at configurable threshold (default 80%).
   // Force mode targets 50% to guarantee freeing space.
-  const compactAt = opts.force ? 0.5
-    : Number.isFinite(opts.compactAt) ? Math.min(0.95, Math.max(0.5, Number(opts.compactAt))) : 0.8;
+  const compactAt = opts.force
+    ? 0.5
+    : Number.isFinite(opts.compactAt)
+      ? Math.min(0.95, Math.max(0.5, Number(opts.compactAt)))
+      : 0.8;
   const threshold = Math.floor(budget * compactAt);
 
   let msgs = [...opts.messages];
@@ -96,7 +99,11 @@ export function enforceContextBudget(opts: {
   let protectedIdx = -1;
   for (let i = msgs.length - 1; i >= sysStart; i--) {
     const m = msgs[i];
-    if (m.role === 'assistant' && !(m as any).tool_calls?.length && messageContentChars((m as any).content) > 50) {
+    if (
+      m.role === 'assistant' &&
+      !(m as any).tool_calls?.length &&
+      messageContentChars((m as any).content) > 50
+    ) {
       protectedIdx = i;
       break;
     }
@@ -113,9 +120,10 @@ export function enforceContextBudget(opts: {
     // Remove the group (assistant + following tool results) in one splice.
     const groupEnd = findGroupEnd(msgs, groupIdx);
     // Adjust protectedIdx if dropping before it
-    if (protectedIdx > groupIdx) protectedIdx -= (groupEnd - groupIdx);
+    if (protectedIdx > groupIdx) protectedIdx -= groupEnd - groupIdx;
     const dropped = msgs.splice(groupIdx, groupEnd - groupIdx);
-    for (const d of dropped) currentTokens -= Math.ceil((messageContentChars((d as any).content) + 20) / 4);
+    for (const d of dropped)
+      currentTokens -= Math.ceil((messageContentChars((d as any).content) + 20) / 4);
   }
 
   // Phase 2: drop any oldest messages if still over budget.
@@ -135,7 +143,9 @@ export function enforceContextBudget(opts: {
   if (dropped > 0) {
     const freed = beforeTokens - estimateTokensFromMessages(msgs);
     const usedPct = budget > 0 ? ((beforeTokens / budget) * 100).toFixed(1) : '?';
-    console.error(`[auto-compact] Approaching context limit (${usedPct}%) - compacting ${dropped} old turns, ~${freed} tokens freed`);
+    console.error(
+      `[auto-compact] Approaching context limit (${usedPct}%) - compacting ${dropped} old turns, ~${freed} tokens freed`
+    );
   }
 
   return msgs;
@@ -146,7 +156,12 @@ export function enforceContextBudget(opts: {
  * We drop the entire group (assistant + tool results) to keep the protocol valid.
  * Falls back to finding the oldest tool-result message (orphaned) if no group is found.
  */
-function findOldestToolCallGroup(msgs: ChatMessage[], fromIdx: number, toIdx: number, protectedIdx = -1): number {
+function findOldestToolCallGroup(
+  msgs: ChatMessage[],
+  fromIdx: number,
+  toIdx: number,
+  protectedIdx = -1
+): number {
   // First: look for an assistant message with tool_calls (a complete group to drop)
   for (let i = fromIdx; i < toIdx; i++) {
     if (i === protectedIdx) continue;

@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { IdlehandsConfig } from './types.js';
+
+import type { IdlehandsConfig } from './types.js';
 import { estimateTokens } from './utils.js';
 
 async function readIfExists(p: string): Promise<string | null> {
@@ -25,7 +26,9 @@ function resolveHintPath(abs: string, cwd: string): string {
 
 function summarizeProjectContext(text: string, maxTokens = 1024): string {
   const maxChars = Math.max(800, Math.floor(maxTokens * 4));
-  const lines = String(text ?? '').replace(/\r/g, '').split('\n');
+  const lines = String(text ?? '')
+    .replace(/\r/g, '')
+    .split('\n');
   const picked: string[] = [];
   const seen = new Set<string>();
 
@@ -45,7 +48,10 @@ function summarizeProjectContext(text: string, maxTokens = 1024): string {
       for (let j = i + 1; j < Math.min(lines.length, i + 6); j++) {
         const nxt = lines[j] ?? '';
         if (/^\s{0,3}#{1,4}\s+/.test(nxt)) break;
-        if (/^\s*[-*]\s+/.test(nxt) || /\b(TODO|FIXME|NOTE|IMPORTANT|MUST|NEVER|ALWAYS|RULE)\b/i.test(nxt)) {
+        if (
+          /^\s*[-*]\s+/.test(nxt) ||
+          /\b(TODO|FIXME|NOTE|IMPORTANT|MUST|NEVER|ALWAYS|RULE)\b/i.test(nxt)
+        ) {
           push(nxt);
         }
       }
@@ -71,7 +77,11 @@ function summarizeProjectContext(text: string, maxTokens = 1024): string {
   }
 
   let out = picked.join('\n');
-  if (!out.trim()) out = lines.filter((l) => l.trim()).slice(0, 120).join('\n');
+  if (!out.trim())
+    out = lines
+      .filter((l) => l.trim())
+      .slice(0, 120)
+      .join('\n');
   if (out.length > maxChars) {
     out = out.slice(0, maxChars) + `\n[summary truncated, source larger than ~${maxTokens} tokens]`;
   }
@@ -116,7 +126,7 @@ export async function loadProjectContext(cfg: IdlehandsConfig): Promise<string> 
     if (!summarizeByDefault && fullTokens > maxTokens) {
       throw new Error(
         `Project context file is ~${fullTokens} tokens (${abs}). Max is ${maxTokens}. ` +
-        `Trim it or use --no-context to skip.`
+          `Trim it or use --no-context to skip.`
       );
     }
 

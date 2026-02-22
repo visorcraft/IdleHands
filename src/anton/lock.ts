@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+
 import { stateDir } from '../utils.js';
 
 function lockPath(): string {
@@ -60,7 +61,12 @@ async function readLock(): Promise<AntonLock | null> {
     return {
       pid: typeof parsed.pid === 'number' ? parsed.pid : 0,
       startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : '',
-      heartbeatAt: typeof parsed.heartbeatAt === 'string' ? parsed.heartbeatAt : (typeof parsed.startedAt === 'string' ? parsed.startedAt : ''),
+      heartbeatAt:
+        typeof parsed.heartbeatAt === 'string'
+          ? parsed.heartbeatAt
+          : typeof parsed.startedAt === 'string'
+            ? parsed.startedAt
+            : '',
       cwd: typeof parsed.cwd === 'string' ? parsed.cwd : '',
       taskFile: typeof parsed.taskFile === 'string' ? parsed.taskFile : '',
     };
@@ -92,7 +98,7 @@ async function removeLock(): Promise<void> {
 
 export async function acquireAntonLock(taskFile: string, cwd: string): Promise<void> {
   const existing = await readLock();
-  
+
   if (existing) {
     if (isLockStale(existing)) {
       console.warn(`Warning: Stale Anton lock detected (PID ${existing.pid}), reclaiming...`);
@@ -101,10 +107,12 @@ export async function acquireAntonLock(taskFile: string, cwd: string): Promise<v
       // Same process (e.g. concurrent tests in same runner) — safe to reclaim.
       await removeLock();
     } else {
-      throw new Error(`Anton: Run already in progress (PID ${existing.pid}). Use /anton stop first.`);
+      throw new Error(
+        `Anton: Run already in progress (PID ${existing.pid}). Use /anton stop first.`
+      );
     }
   }
-  
+
   try {
     await writeLock(taskFile, cwd);
   } catch (error: any) {
@@ -112,7 +120,9 @@ export async function acquireAntonLock(taskFile: string, cwd: string): Promise<v
       // Race condition - another process created lock
       const newExisting = await readLock();
       if (newExisting && !isLockStale(newExisting)) {
-        throw new Error(`Anton: Run already in progress (PID ${newExisting.pid}). Use /anton stop first.`);
+        throw new Error(
+          `Anton: Run already in progress (PID ${newExisting.pid}). Use /anton stop first.`
+        );
       }
       // If it's stale, try again recursively (but this should be rare)
       return acquireAntonLock(taskFile, cwd);

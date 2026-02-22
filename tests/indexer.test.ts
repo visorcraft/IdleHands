@@ -1,11 +1,9 @@
-import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { describe, it, before, after } from 'node:test';
 
-import { VaultStore } from '../dist/vault.js';
-import { LensStore } from '../dist/lens.js';
 import {
   runProjectIndex,
   projectIndexKeys,
@@ -13,6 +11,8 @@ import {
   isFreshIndex,
   indexSummaryLine,
 } from '../dist/indexer.js';
+import { LensStore } from '../dist/lens.js';
+import { VaultStore } from '../dist/vault.js';
 
 describe('project indexer', () => {
   let tmpDir: string;
@@ -41,13 +41,26 @@ describe('project indexer', () => {
     await fs.writeFile(path.join(tmpDir, '.gitignore'), 'ignored.ts\n', 'utf8');
     await fs.writeFile(path.join(tmpDir, '.idlehandsignore'), 'secret.py\n', 'utf8');
 
-    await fs.writeFile(path.join(tmpDir, 'src', 'app.ts'), 'export function app() { return 1; }\n', 'utf8');
-    await fs.writeFile(path.join(tmpDir, 'src', 'worker.py'), 'def worker():\n  return 2\n', 'utf8');
+    await fs.writeFile(
+      path.join(tmpDir, 'src', 'app.ts'),
+      'export function app() { return 1; }\n',
+      'utf8'
+    );
+    await fs.writeFile(
+      path.join(tmpDir, 'src', 'worker.py'),
+      'def worker():\n  return 2\n',
+      'utf8'
+    );
     await fs.writeFile(path.join(tmpDir, 'ignored.ts'), 'export const ignored = true\n', 'utf8');
     await fs.writeFile(path.join(tmpDir, 'secret.py'), 'def secret():\n  pass\n', 'utf8');
-    await fs.writeFile(path.join(tmpDir, 'node_modules', 'pkg', 'skip.ts'), 'export const x = 1\n', 'utf8');
+    await fs.writeFile(
+      path.join(tmpDir, 'node_modules', 'pkg', 'skip.ts'),
+      'export const x = 1\n',
+      'utf8'
+    );
 
-    const progress: Array<{ scanned: number; indexed: number; skipped: number; current?: string }> = [];
+    const progress: Array<{ scanned: number; indexed: number; skipped: number; current?: string }> =
+      [];
 
     const result = await runProjectIndex({
       projectDir: tmpDir,

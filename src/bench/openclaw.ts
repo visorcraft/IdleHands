@@ -15,11 +15,18 @@ export async function runOpenclaw(opts: {
   sessionId: string;
   local?: boolean;
   profile?: string;
-}): Promise<{ exitCode: number; stdout: string; stderr: string; ttfrMs: number | null; ttcMs: number }> {
+}): Promise<{
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  ttfrMs: number | null;
+  ttcMs: number;
+}> {
   const t0 = nowMs();
   let ttfr: number | null = null;
 
-  const prefix = `Work in directory: ${opts.workDir}.\n` +
+  const prefix =
+    `Work in directory: ${opts.workDir}.\n` +
     `Use absolute paths OR set cwd explicitly when using exec.\n` +
     `Do not modify files outside that directory.\n\n`;
 
@@ -44,7 +51,7 @@ export async function runOpenclaw(opts: {
       `IMPORTANT: for ANY command execution, you MUST run it as:\n` +
       `  bash -lc 'cd ${opts.workDir} && <command>'\n` +
       `Do NOT run commands without the 'cd ${opts.workDir} &&' prefix.\n\n` +
-      opts.instruction
+      opts.instruction,
   ];
 
   const binArgs = [] as string[];
@@ -59,17 +66,21 @@ export async function runOpenclaw(opts: {
       ...process.env,
       // Ensure the OpenClaw CLI uses the same pinned Halo model/provider.
       // (We generate this config in bench to keep apples-to-apples with Idle Hands.)
-      OPENCLAW_CONFIG_PATH: process.env.OPENCLAW_CONFIG_PATH || '/home/user/.openclaw-idlehands-bench/openclaw.json'
-    }
+      OPENCLAW_CONFIG_PATH:
+        process.env.OPENCLAW_CONFIG_PATH || '/home/user/.openclaw-idlehands-bench/openclaw.json',
+    },
   });
 
-  const killTimer = setTimeout(() => {
-    try {
-      child.kill('SIGKILL');
-    } catch {
-      // ignore
-    }
-  }, Math.max(1, opts.timeoutSec + 10) * 1000);
+  const killTimer = setTimeout(
+    () => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // ignore
+      }
+    },
+    Math.max(1, opts.timeoutSec + 10) * 1000
+  );
 
   const out: Buffer[] = [];
   const err: Buffer[] = [];
@@ -87,7 +98,9 @@ export async function runOpenclaw(opts: {
     err.push(d);
   });
 
-  const exitCode = await new Promise<number>((resolve) => child.on('close', (code) => resolve(code ?? 0)));
+  const exitCode = await new Promise<number>((resolve) =>
+    child.on('close', (code) => resolve(code ?? 0))
+  );
   clearTimeout(killTimer);
   const t1 = nowMs();
 
@@ -99,6 +112,6 @@ export async function runOpenclaw(opts: {
     stdout,
     stderr,
     ttfrMs: ttfr,
-    ttcMs: t1 - t0
+    ttcMs: t1 - t0,
   };
 }

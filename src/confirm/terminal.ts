@@ -3,8 +3,9 @@
  * Implements Phase 8c: diff preview, shell prompts, remembered decisions.
  */
 
-import type { ConfirmationProvider, ConfirmRequest, BlockedNotice } from '../types.js';
 import type { Interface as ReadlineInterface } from 'node:readline/promises';
+
+import type { ConfirmationProvider, ConfirmRequest, BlockedNotice } from '../types.js';
 
 export class TerminalConfirmProvider implements ConfirmationProvider {
   /**
@@ -88,11 +89,7 @@ export class TerminalConfirmProvider implements ConfirmationProvider {
     const maxW = Math.min(process.stdout.columns ?? 80, 80);
     const inner = summary.length > maxW - 6 ? summary.slice(0, maxW - 9) + '...' : summary;
     const border = '─'.repeat(Math.max(inner.length + 2, 20));
-    const lines = [
-      `┌${border}┐`,
-      `│ ${inner.padEnd(border.length - 1)}│`,
-      `└${border}┘`
-    ];
+    const lines = [`┌${border}┐`, `│ ${inner.padEnd(border.length - 1)}│`, `└${border}┘`];
     return `${lines.join('\n')}\n${suffix} `;
   }
 }

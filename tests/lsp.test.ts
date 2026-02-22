@@ -1,8 +1,8 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { describe, it } from 'node:test';
 
 import { LspClient, LspManager, detectInstalledLspServers } from '../dist/lsp.js';
 
@@ -310,12 +310,18 @@ describe('LspClient', () => {
     try {
       await client.start();
       await assert.rejects(
-        () => client.request('textDocument/documentSymbol', { textDocument: { uri: LspClient.filePathToUri(path.join(root, 'x.ts')) } }),
+        () =>
+          client.request('textDocument/documentSymbol', {
+            textDocument: { uri: LspClient.filePathToUri(path.join(root, 'x.ts')) },
+          }),
         /process closed|request timed out|client is not running/i
       );
 
       await assert.rejects(
-        () => client.request('textDocument/documentSymbol', { textDocument: { uri: LspClient.filePathToUri(path.join(root, 'y.ts')) } }),
+        () =>
+          client.request('textDocument/documentSymbol', {
+            textDocument: { uri: LspClient.filePathToUri(path.join(root, 'y.ts')) },
+          }),
         /not running|closed|process/i
       );
 
@@ -359,8 +365,20 @@ describe('LspClient', () => {
     const rootA = await fs.mkdtemp(path.join(os.tmpdir(), 'idlehands-lsp-root-a-'));
     const rootB = await fs.mkdtemp(path.join(os.tmpdir(), 'idlehands-lsp-root-b-'));
 
-    const clientA = new LspClient({ command: process.execPath, args: [serverScript], cwd: rootA, rootPath: rootA, requestTimeoutMs: 1000 });
-    const clientB = new LspClient({ command: process.execPath, args: [serverScript], cwd: rootB, rootPath: rootB, requestTimeoutMs: 1000 });
+    const clientA = new LspClient({
+      command: process.execPath,
+      args: [serverScript],
+      cwd: rootA,
+      rootPath: rootA,
+      requestTimeoutMs: 1000,
+    });
+    const clientB = new LspClient({
+      command: process.execPath,
+      args: [serverScript],
+      cwd: rootB,
+      rootPath: rootB,
+      requestTimeoutMs: 1000,
+    });
 
     try {
       await clientA.start();
@@ -438,7 +456,12 @@ describe('LspClient', () => {
   });
 
   it('auto-detects installed language servers and picks first candidate per language', () => {
-    const installed = new Set(['gopls', 'pyright-langserver', 'typescript-language-server', 'clangd']);
+    const installed = new Set([
+      'gopls',
+      'pyright-langserver',
+      'typescript-language-server',
+      'clangd',
+    ]);
 
     const found = detectInstalledLspServers({
       hasCommand: (cmd) => installed.has(cmd),
@@ -446,10 +469,15 @@ describe('LspClient', () => {
 
     assert.ok(found.some((s) => s.language === 'go' && s.command === 'gopls'));
     assert.ok(found.some((s) => s.language === 'python' && s.command === 'pyright-langserver'));
-    assert.ok(found.some((s) => s.language === 'typescript' && s.command === 'typescript-language-server'));
+    assert.ok(
+      found.some((s) => s.language === 'typescript' && s.command === 'typescript-language-server')
+    );
 
     // First-candidate wins for duplicated language entries.
-    assert.equal(found.some((s) => s.language === 'typescript' && s.command === 'tsserver'), false);
+    assert.equal(
+      found.some((s) => s.language === 'typescript' && s.command === 'tsserver'),
+      false
+    );
   });
 });
 

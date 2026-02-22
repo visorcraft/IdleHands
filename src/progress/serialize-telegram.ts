@@ -1,5 +1,6 @@
-import type { IRDoc, IRBlock, IRSpan, IRKvItem } from './ir.js';
 import { markdownToTelegramHtml, escapeHtml } from '../bot/format.js';
+
+import type { IRDoc, IRBlock, IRSpan, IRKvItem } from './ir.js';
 
 export type TelegramRenderOptions = {
   maxLen?: number; // Telegram hard limit: 4096
