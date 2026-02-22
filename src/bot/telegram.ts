@@ -665,7 +665,11 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
     }
 
     const fileThreshold = botConfig.file_threshold_chars ?? 8192;
-    await processMessage(
+
+    // IMPORTANT: do not await long-running turns here.
+    // grammy can process updates sequentially; awaiting would block subsequent updates
+    // (including /cancel) until the current turn finishes.
+    void processMessage(
       bot,
       sessions,
       managed,
@@ -680,7 +684,11 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
         idleGraceTimeouts: watchdogIdleGraceTimeouts,
         debugAbortReason,
       },
-    );
+    ).catch((e: any) => {
+      const errMsg = e?.message ?? String(e);
+      console.error(`[bot] processMessage failed for chat ${chatId}: ${errMsg}`);
+      bot.api.sendMessage(chatId, `⚠️ Bot error: ${errMsg.length > 300 ? errMsg.slice(0, 297) + '...' : errMsg}`).catch(() => {});
+    });
   });
 
   // ---------------------------------------------------------------------------
