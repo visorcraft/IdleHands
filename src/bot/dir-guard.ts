@@ -8,7 +8,7 @@ const SKIP_DIRS = new Set([
 
 export function expandHome(raw: string): string {
   const home = process.env.HOME || '/home';
-  return raw.replace(/^~(?=$|\//)/, home);
+  return raw.replace(/^~(?=$|\/)/, home);
 }
 
 export function normalizeAllowedDirs(allowed?: string[]): string[] {
