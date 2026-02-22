@@ -105,6 +105,13 @@ describe('write_file', () => {
     const st = await fs.stat(p);
     assert.equal(st.mode & 0o777, 0o755);
   });
+
+  it('blocks writes outside cwd in code mode', async () => {
+    await assert.rejects(
+      () => write_file(ctx, { path: '/tmp/idlehands-outside-write.txt', content: 'x' }),
+      /outside the working directory/i,
+    );
+  });
 });
 
 describe('edit_file', () => {
@@ -154,6 +161,15 @@ describe('edit_file', () => {
     const after = await fs.readFile(p);
     assert.equal(Buffer.compare(after, original), 0, 'binary file should not be modified on failure');
   });
+
+  it('blocks edits outside cwd in code mode', async () => {
+    const outside = '/tmp/idlehands-outside-edit.txt';
+    await fs.writeFile(outside, 'hello world', 'utf8');
+    await assert.rejects(
+      () => edit_file(ctx, { path: outside, old_text: 'hello', new_text: 'bye' }),
+      /outside the working directory/i,
+    );
+  });
 });
 
 describe('edit_range', () => {
@@ -174,6 +190,15 @@ describe('edit_range', () => {
     await assert.rejects(
       () => edit_range(ctx, { path: 'range-bad.txt', start_line: 3, end_line: 2, replacement: 'x' }),
       /invalid end_line/i
+    );
+  });
+
+  it('blocks range edits outside cwd in code mode', async () => {
+    const outside = '/tmp/idlehands-outside-range.txt';
+    await fs.writeFile(outside, 'a\nb\nc\n', 'utf8');
+    await assert.rejects(
+      () => edit_range(ctx, { path: outside, start_line: 1, end_line: 1, replacement: 'z' }),
+      /outside the working directory/i,
     );
   });
 });
@@ -244,6 +269,15 @@ describe('insert_file', () => {
     assert.ok(!content.includes('\n\n'), `Should not have double newline, got: ${JSON.stringify(content)}`);
     assert.ok(content.includes('line3'), 'Should contain appended text');
     assert.equal(content, 'line1\nline2\nline3\n');
+  });
+
+  it('blocks inserts outside cwd in code mode', async () => {
+    const outside = '/tmp/idlehands-outside-insert.txt';
+    await fs.writeFile(outside, 'base\n', 'utf8');
+    await assert.rejects(
+      () => insert_file(ctx, { path: outside, line: -1, text: 'x' }),
+      /outside the working directory/i,
+    );
   });
 });
 

@@ -516,15 +516,8 @@ export async function write_file(ctx: ToolContext, args: any) {
   if (!p) throw new Error('write_file: missing path');
   if (content == null) throw new Error('write_file: missing content (got ' + typeof raw + ')');
 
-  // Out-of-cwd enforcement: block creating NEW files outside cwd, warn on editing existing ones.
+  enforceMutationWithinCwd('write_file', p, ctx);
   const cwdWarning = checkCwdWarning('write_file', p, ctx);
-  if (cwdWarning) {
-    // Check if the file already exists — only allow editing existing files outside cwd
-    const exists = await fs.stat(p).then(() => true, () => false);
-    if (!exists) {
-      throw new Error(`write_file: BLOCKED — cannot create new file "${p}" outside the working directory "${path.resolve(ctx.cwd)}". Use relative paths to create files within your project.`);
-    }
-  }
 
   // Path safety check (Phase 9)
   const pathVerdict = checkPathSafety(p);
@@ -571,6 +564,8 @@ export async function insert_file(ctx: ToolContext, args: any) {
   if (!p) throw new Error('insert_file: missing path');
   if (!Number.isFinite(line)) throw new Error('insert_file: missing/invalid line');
   if (text == null) throw new Error('insert_file: missing text (got ' + typeof rawText + ')');
+
+  enforceMutationWithinCwd('insert_file', p, ctx);
 
   // Path safety check (Phase 9)
   const pathVerdict = checkPathSafety(p);
@@ -665,6 +660,8 @@ export async function edit_file(ctx: ToolContext, args: any) {
   if (!p) throw new Error('edit_file: missing path');
   if (oldText == null) throw new Error('edit_file: missing old_text');
   if (newText == null) throw new Error('edit_file: missing new_text');
+
+  enforceMutationWithinCwd('edit_file', p, ctx);
 
   // Path safety check (Phase 9)
   const pathVerdict = checkPathSafety(p);
@@ -910,6 +907,8 @@ export async function edit_range(ctx: ToolContext, args: any) {
   if (!Number.isFinite(startLine) || startLine < 1) throw new Error('edit_range: missing/invalid start_line');
   if (!Number.isFinite(endLine) || endLine < startLine) throw new Error('edit_range: missing/invalid end_line');
   if (replacement == null) throw new Error('edit_range: missing replacement (got ' + typeof rawReplacement + ')');
+
+  enforceMutationWithinCwd('edit_range', p, ctx);
 
   // Path safety check (Phase 9)
   const pathVerdict = checkPathSafety(p);
@@ -1716,6 +1715,19 @@ function checkCwdWarning(tool: string, resolvedPath: string, ctx: ToolContext): 
   const warning = `\n[WARNING] Path "${resolvedPath}" is OUTSIDE the working directory "${absCwd}". You MUST use relative paths and work within the project directory. Do NOT create or edit files outside the cwd.`;
   console.warn(`[warning] ${tool}: path "${resolvedPath}" is outside the working directory "${absCwd}".`);
   return warning;
+}
+
+/**
+ * Hard guard for mutating file tools in normal code mode.
+ * In code mode, writing outside cwd is always blocked to prevent accidental edits
+ * in the wrong repository. System mode keeps broader path freedom for /etc workflows.
+ */
+function enforceMutationWithinCwd(tool: string, resolvedPath: string, ctx: ToolContext): void {
+  if (ctx.mode === 'sys') return;
+  const absCwd = path.resolve(ctx.cwd);
+  if (!isWithinDir(resolvedPath, absCwd)) {
+    throw new Error(`${tool}: BLOCKED — path "${resolvedPath}" is outside the working directory "${absCwd}". Run /dir <project-root> first, then retry with relative paths.`);
+  }
 }
 
 async function hasRg() {
