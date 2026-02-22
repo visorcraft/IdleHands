@@ -3,9 +3,10 @@
  */
 
 import fs from 'node:fs/promises';
-import type { SlashCommand } from '../command-registry.js';
+
 import { atomicWrite, unifiedDiffFromBuffers } from '../../replay_cli.js';
 import { colorizeUnifiedDiff, err as errFmt, warn as warnFmt } from '../../term.js';
+import type { SlashCommand } from '../command-registry.js';
 
 export const trifectaCommands: SlashCommand[] = [
   {
@@ -16,12 +17,18 @@ export const trifectaCommands: SlashCommand[] = [
         console.log('Vault is disabled. Enable by removing --no-vault/--no-trifecta.');
         return true;
       }
-      if (!args) { console.log('Usage: /vault <query>'); return true; }
+      if (!args) {
+        console.log('Usage: /vault <query>');
+        return true;
+      }
       try {
         const results = await ctx.session.vault.search(args, 20);
-        if (!results.length) { console.log('No vault entries found.'); return true; }
+        if (!results.length) {
+          console.log('No vault entries found.');
+          return true;
+        }
         for (const r of results) {
-          const key = r.kind === 'note' ? r.key ?? 'note' : r.tool ?? 'tool';
+          const key = r.kind === 'note' ? (r.key ?? 'note') : (r.tool ?? 'tool');
           const snippet = (r.value ?? r.snippet ?? '').replace(/\s+/g, ' ').slice(0, 220);
           console.log(`${r.updatedAt} [${r.kind}] ${key}: ${snippet}`);
         }
@@ -41,7 +48,10 @@ export const trifectaCommands: SlashCommand[] = [
       }
       try {
         const results = await ctx.session.vault.list(20);
-        if (!results.length) { console.log('No vault notes yet.'); return true; }
+        if (!results.length) {
+          console.log('No vault notes yet.');
+          return true;
+        }
         for (const r of results.filter((x: any) => x.kind === 'note')) {
           const value = (r.value ?? '').replace(/\s+/g, ' ').slice(0, 220);
           console.log(`${r.updatedAt} ${r.key}: ${value}`);
@@ -61,10 +71,16 @@ export const trifectaCommands: SlashCommand[] = [
         return true;
       }
       const idx = args.indexOf(' ');
-      if (!args || idx === -1) { console.log('Usage: /note <key> <value>'); return true; }
+      if (!args || idx === -1) {
+        console.log('Usage: /note <key> <value>');
+        return true;
+      }
       const key = args.slice(0, idx).trim();
       const value = args.slice(idx + 1).trim();
-      if (!key || !value) { console.log('Usage: /note <key> <value>'); return true; }
+      if (!key || !value) {
+        console.log('Usage: /note <key> <value>');
+        return true;
+      }
       try {
         const id = await ctx.session.vault.note(key, value);
         console.log(`vault note saved: ${id}`);
@@ -84,7 +100,10 @@ export const trifectaCommands: SlashCommand[] = [
       }
       try {
         const cps = await ctx.session.replay.list(50);
-        if (!cps.length) { console.log('No checkpoints yet.'); return true; }
+        if (!cps.length) {
+          console.log('No checkpoints yet.');
+          return true;
+        }
         for (const c of cps) {
           const note = c.note ? `  [${String(c.note).slice(0, 80)}]` : '';
           console.log(`${c.id}  ${c.op}  ${c.filePath}${note}`);
@@ -103,15 +122,22 @@ export const trifectaCommands: SlashCommand[] = [
         console.log('Replay is disabled. Enable by omitting --no-trifecta/--no-replay.');
         return true;
       }
-      if (!args) { console.log('Usage: /rewind <checkpoint-id>'); return true; }
+      if (!args) {
+        console.log('Usage: /rewind <checkpoint-id>');
+        return true;
+      }
       try {
         const { cp } = await ctx.session.replay.get(args);
         const filePath = cp.filePath;
         const msg = await ctx.session.replay.rewind(
           args,
           async () => {
-            try { return await fs.readFile(filePath); }
-            catch (e: any) { if (e?.code === 'ENOENT') return Buffer.alloc(0); throw e; }
+            try {
+              return await fs.readFile(filePath);
+            } catch (e: any) {
+              if (e?.code === 'ENOENT') return Buffer.alloc(0);
+              throw e;
+            }
           },
           async (buf: Buffer) => await atomicWrite(filePath, buf)
         );
@@ -126,8 +152,14 @@ export const trifectaCommands: SlashCommand[] = [
     name: '/diff',
     description: 'Show checkpoint diff',
     async execute(ctx, args) {
-      if (!ctx.session.replay) { console.log('Replay is disabled.'); return true; }
-      if (!args) { console.log('Usage: /diff <checkpoint-id>'); return true; }
+      if (!ctx.session.replay) {
+        console.log('Replay is disabled.');
+        return true;
+      }
+      if (!args) {
+        console.log('Usage: /diff <checkpoint-id>');
+        return true;
+      }
       try {
         const got = await ctx.session.replay.get(args);
         const before = got.before.toString('utf8');

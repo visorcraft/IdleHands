@@ -73,12 +73,21 @@ const PALETTES: Record<string, Palette> = {
 };
 
 const DEFAULTS: Record<keyof Omit<TuiColors, 'reset'>, string> = {
-  dim: 'dim', bold: 'bold', red: 'red', yellow: 'yellow',
-  green: 'green', cyan: 'cyan', magenta: 'magenta', blue: 'blue',
+  dim: 'dim',
+  bold: 'bold',
+  red: 'red',
+  yellow: 'yellow',
+  green: 'green',
+  cyan: 'cyan',
+  magenta: 'magenta',
+  blue: 'blue',
 };
 
 function resolveAnsi(spec: string): string {
-  return spec.split('+').map(p => ANSI[p.trim()] ?? '').join('');
+  return spec
+    .split('+')
+    .map((p) => ANSI[p.trim()] ?? '')
+    .join('');
 }
 
 /** Resolve a theme name to concrete ANSI escape strings. */

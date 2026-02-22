@@ -1,33 +1,34 @@
 /**
  * Tests for Anton controller - main orchestrator.
- * 
+ *
  * IMPORTANT: These tests run serially (concurrency: 1) because they share
  * the global anton.lock file.
  */
 
-import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
+import { mkdtemp, writeFile, readFile, mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test, describe, beforeEach, afterEach } from 'node:test';
+
+import type { AgentSession, AgentResult } from '../dist/agent.js';
 import { runAnton } from '../dist/anton/controller.js';
 import { releaseAntonLock } from '../dist/anton/lock.js';
-import type { 
-  AntonRunConfig, 
-  AntonProgressCallback, 
-  AntonProgress, 
-  AntonTask, 
-  AntonAttempt, 
-  AntonRunResult 
+import type {
+  AntonRunConfig,
+  AntonProgressCallback,
+  AntonProgress,
+  AntonTask,
+  AntonAttempt,
+  AntonRunResult,
 } from '../dist/anton/types.js';
 import type { IdlehandsConfig } from '../dist/types.js';
-import type { AgentSession, AgentResult } from '../dist/agent.js';
 
 // Mock session factory — returns correct AgentResult shape
 function createMockSession(responses: string[]): AgentSession {
   let responseIndex = 0;
-  
+
   return {
     model: 'test-model',
     harness: 'test',
@@ -36,18 +37,18 @@ function createMockSession(responses: string[]): AgentSession {
     supportsVision: false,
     messages: [],
     usage: { prompt: 100, completion: 50 },
-    
+
     async ask(prompt): Promise<AgentResult> {
       const response = responses[responseIndex] || '<anton-result>status: done</anton-result>';
       responseIndex++;
-      
+
       return {
         text: response,
         turns: 1,
         toolCalls: 0,
       };
     },
-    
+
     cancel: () => {},
     close: async () => {},
     setModel: () => {},
@@ -88,15 +89,15 @@ function createMockSession(responses: string[]): AgentSession {
 // Create temp git repo with initial commit
 async function createTempGitRepo(): Promise<string> {
   const tmpDir = await mkdtemp(join(tmpdir(), 'anton-ctrl-'));
-  
+
   execSync('git init', { cwd: tmpDir, stdio: 'pipe' });
   execSync('git config user.name "Test User"', { cwd: tmpDir, stdio: 'pipe' });
   execSync('git config user.email "test@example.com"', { cwd: tmpDir, stdio: 'pipe' });
-  
+
   await writeFile(join(tmpDir, 'README.md'), '# Test Project\n');
   execSync('git add .', { cwd: tmpDir, stdio: 'pipe' });
   execSync('git commit -m "Initial commit"', { cwd: tmpDir, stdio: 'pipe' });
-  
+
   return tmpDir;
 }
 
@@ -179,7 +180,6 @@ function createMockProgressCallback(): AntonProgressCallback & {
 
 // Concurrency 1 because all tests share the global anton.lock
 describe('Anton Controller', { concurrency: 1 }, () => {
-
   // Release lock before each test to avoid contention
   beforeEach(async () => {
     await releaseAntonLock();
@@ -190,13 +190,10 @@ describe('Anton Controller', { concurrency: 1 }, () => {
 
   test('1. Happy path: 3 tasks pass → completed=3, completedAll=true', async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [ ] Task 1',
-      '- [ ] Task 2',
-      '- [ ] Task 3',
-    ].join('\n'));
+    const taskFile = await createTaskFile(
+      tmpDir,
+      ['# Test Tasks', '', '- [ ] Task 1', '- [ ] Task 2', '- [ ] Task 3'].join('\n')
+    );
 
     const config = createTestConfig({ taskFile, projectDir: tmpDir });
     const progress = createMockProgressCallback();
@@ -225,11 +222,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
 
   test('2. Retry then pass → attempts.length=2', async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [ ] Task 1',
-    ].join('\n'));
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
 
     const config = createTestConfig({ taskFile, projectDir: tmpDir });
     const progress = createMockProgressCallback();
@@ -252,18 +245,14 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       createSession,
     });
 
-    const taskAttempts = result.attempts.filter(a => a.taskKey === result.attempts[0]?.taskKey);
+    const taskAttempts = result.attempts.filter((a) => a.taskKey === result.attempts[0]?.taskKey);
     assert.equal(taskAttempts.length, 2);
     assert.equal(sessionCount, 2);
   });
 
   test('3. Max retries exceeded → skipped=1', async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [ ] Task 1',
-    ].join('\n'));
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
 
     const config = createTestConfig({
       taskFile,
@@ -289,14 +278,12 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.equal(result.completed, 0);
   });
 
-  test('4. Abort signal → stopReason=\'abort\'', async () => {
+  test("4. Abort signal → stopReason='abort'", async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [ ] Task 1',
-      '- [ ] Task 2',
-    ].join('\n'));
+    const taskFile = await createTaskFile(
+      tmpDir,
+      ['# Test Tasks', '', '- [ ] Task 1', '- [ ] Task 2'].join('\n')
+    );
 
     const config = createTestConfig({ taskFile, projectDir: tmpDir });
     const progress = createMockProgressCallback();
@@ -325,11 +312,10 @@ describe('Anton Controller', { concurrency: 1 }, () => {
 
   test('4b. Abort signal cancels an in-flight attempt', async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [ ] Long Task',
-    ].join('\n'));
+    const taskFile = await createTaskFile(
+      tmpDir,
+      ['# Test Tasks', '', '- [ ] Long Task'].join('\n')
+    );
 
     const config = createTestConfig({
       taskFile,
@@ -356,7 +342,11 @@ describe('Anton Controller', { concurrency: 1 }, () => {
             // Simulate a very long task that should be interrupted by /anton stop.
             setTimeout(() => {
               sig.removeEventListener('abort', onAbort);
-              resolve({ text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 });
+              resolve({
+                text: '<anton-result>status: done</anton-result>',
+                turns: 1,
+                toolCalls: 0,
+              });
             }, 60_000);
           });
         },
@@ -380,17 +370,20 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.ok(Date.now() - started < 10_000, 'abort should stop run promptly');
   });
 
-  test('5. Max iterations → stopReason=\'max_iterations\'', async () => {
+  test("5. Max iterations → stopReason='max_iterations'", async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [ ] Task 1',
-      '- [ ] Task 2',
-      '- [ ] Task 3',
-      '- [ ] Task 4',
-      '- [ ] Task 5',
-    ].join('\n'));
+    const taskFile = await createTaskFile(
+      tmpDir,
+      [
+        '# Test Tasks',
+        '',
+        '- [ ] Task 1',
+        '- [ ] Task 2',
+        '- [ ] Task 3',
+        '- [ ] Task 4',
+        '- [ ] Task 5',
+      ].join('\n')
+    );
 
     const config = createTestConfig({
       taskFile,
@@ -415,23 +408,19 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.equal(result.completed, 2);
   });
 
-  test('6. Total timeout → stopReason=\'total_timeout\'', async () => {
+  test("6. Total timeout → stopReason='total_timeout'", async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [ ] Task 1',
-    ].join('\n'));
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
 
     const config = createTestConfig({
       taskFile,
       projectDir: tmpDir,
-      totalTimeoutSec: 0.001,  // Tiny timeout
+      totalTimeoutSec: 0.001, // Tiny timeout
     });
     const progress = createMockProgressCallback();
 
     const createSession = async () => {
-      await new Promise(r => setTimeout(r, 5)); // Ensure time passes
+      await new Promise((r) => setTimeout(r, 5)); // Ensure time passes
       return createMockSession(['<anton-result>status: done</anton-result>']);
     };
 
@@ -446,14 +435,12 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.equal(result.stopReason, 'total_timeout');
   });
 
-  test('7. Token budget → stopReason=\'token_budget\'', async () => {
+  test("7. Token budget → stopReason='token_budget'", async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [ ] Task 1',
-      '- [ ] Task 2',
-    ].join('\n'));
+    const taskFile = await createTaskFile(
+      tmpDir,
+      ['# Test Tasks', '', '- [ ] Task 1', '- [ ] Task 2'].join('\n')
+    );
 
     const config = createTestConfig({
       taskFile,
@@ -477,13 +464,9 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.equal(result.stopReason, 'token_budget');
   });
 
-  test('8. skipOnFail=false → stopReason=\'fatal_error\'', async () => {
+  test("8. skipOnFail=false → stopReason='fatal_error'", async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [ ] Task 1',
-    ].join('\n'));
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
 
     const config = createTestConfig({
       taskFile,
@@ -511,17 +494,15 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     });
 
     assert.equal(result.stopReason, 'fatal_error');
-    assert.ok(result.attempts.some(a => a.status === 'error'));
+    assert.ok(result.attempts.some((a) => a.status === 'error'));
   });
 
   test('9. Pre-completed tasks skipped', async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [x] Already done',
-      '- [ ] Task 1',
-    ].join('\n'));
+    const taskFile = await createTaskFile(
+      tmpDir,
+      ['# Test Tasks', '', '- [x] Already done', '- [ ] Task 1'].join('\n')
+    );
 
     const config = createTestConfig({ taskFile, projectDir: tmpDir });
     const progress = createMockProgressCallback();
@@ -545,11 +526,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
 
   test('10. autoCommit=false → no commits', async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [ ] Task 1',
-    ].join('\n'));
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
 
     const config = createTestConfig({
       taskFile,
@@ -575,11 +552,10 @@ describe('Anton Controller', { concurrency: 1 }, () => {
 
   test('11. Decomposition → sub-tasks inserted', async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [ ] Big task',
-    ].join('\n'));
+    const taskFile = await createTaskFile(
+      tmpDir,
+      ['# Test Tasks', '', '- [ ] Big task'].join('\n')
+    );
 
     const config = createTestConfig({
       taskFile,
@@ -593,7 +569,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       sessionCount++;
       if (sessionCount === 1) {
         return createMockSession([
-          '<anton-result>status: decompose\n- Sub task 1\n- Sub task 2</anton-result>'
+          '<anton-result>status: decompose\n- Sub task 1\n- Sub task 2</anton-result>',
         ]);
       }
       // Subsequent sessions handle the sub-tasks
@@ -608,18 +584,16 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       createSession,
     });
 
-    const decomposedAttempts = result.attempts.filter(a => a.status === 'decomposed');
+    const decomposedAttempts = result.attempts.filter((a) => a.status === 'decomposed');
     assert.ok(decomposedAttempts.length >= 1);
   });
 
   test('12. Each attempt gets fresh session (factory called N times)', async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [ ] Task 1',
-      '- [ ] Task 2',
-    ].join('\n'));
+    const taskFile = await createTaskFile(
+      tmpDir,
+      ['# Test Tasks', '', '- [ ] Task 1', '- [ ] Task 2'].join('\n')
+    );
 
     const config = createTestConfig({ taskFile, projectDir: tmpDir });
     const progress = createMockProgressCallback();
@@ -643,11 +617,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
 
   test('13. Lock released on error', async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [ ] Task 1',
-    ].join('\n'));
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
 
     const config = createTestConfig({ taskFile, projectDir: tmpDir });
     const progress = createMockProgressCallback();
@@ -679,11 +649,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
 
   test('15. Timeout calls session.cancel() before close', async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [ ] Task 1',
-    ].join('\n'));
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
 
     const config = createTestConfig({
       taskFile,
@@ -699,10 +665,12 @@ describe('Anton Controller', { concurrency: 1 }, () => {
         ...mock,
         async ask() {
           // Simulate slow operation that exceeds taskTimeoutSec
-          await new Promise(resolve => setTimeout(resolve, 200));
+          await new Promise((resolve) => setTimeout(resolve, 200));
           return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 };
         },
-        cancel() { cancelCalled = true; },
+        cancel() {
+          cancelCalled = true;
+        },
       };
     };
 
@@ -714,19 +682,18 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       createSession,
     });
 
-    const timeoutAttempts = result.attempts.filter(a => a.status === 'timeout' || a.status === 'error');
+    const timeoutAttempts = result.attempts.filter(
+      (a) => a.status === 'timeout' || a.status === 'error'
+    );
     assert.ok(timeoutAttempts.length > 0 || cancelCalled, 'Expected timeout or cancel');
   });
 
   test('16. Decomposed parent auto-completed when all children pass', async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [ ] Parent task',
-      '  - [ ] Child 1',
-      '  - [ ] Child 2',
-    ].join('\n'));
+    const taskFile = await createTaskFile(
+      tmpDir,
+      ['# Test Tasks', '', '- [ ] Parent task', '  - [ ] Child 1', '  - [ ] Child 2'].join('\n')
+    );
 
     const config = createTestConfig({ taskFile, projectDir: tmpDir });
     const progress = createMockProgressCallback();
@@ -748,17 +715,20 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.equal(result.completedAll, true);
   });
 
-  test('17. maxTotalTasks exceeded → stopReason=\'max_tasks_exceeded\'', async () => {
+  test("17. maxTotalTasks exceeded → stopReason='max_tasks_exceeded'", async () => {
     const tmpDir = await createTempGitRepo();
-    const taskFile = await createTaskFile(tmpDir, [
-      '# Test Tasks',
-      '',
-      '- [ ] Task 1',
-      '- [ ] Task 2',
-      '- [ ] Task 3',
-      '- [ ] Task 4',
-      '- [ ] Task 5',
-    ].join('\n'));
+    const taskFile = await createTaskFile(
+      tmpDir,
+      [
+        '# Test Tasks',
+        '',
+        '- [ ] Task 1',
+        '- [ ] Task 2',
+        '- [ ] Task 3',
+        '- [ ] Task 4',
+        '- [ ] Task 5',
+      ].join('\n')
+    );
 
     const config = createTestConfig({
       taskFile,

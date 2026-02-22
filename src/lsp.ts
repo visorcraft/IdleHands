@@ -1,6 +1,7 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+
 import { encodeJsonRpcFrame, extractMessages } from './jsonrpc.js';
 import { PKG_VERSION, shellEscape } from './utils.js';
 
@@ -172,16 +173,15 @@ export class LspClient {
         },
         rootUri,
         capabilities: this.opts.capabilities ?? {},
-        workspaceFolders: [
-          { uri: rootUri, name: path.basename(rootPath) || 'workspace' }
-        ],
+        workspaceFolders: [{ uri: rootUri, name: path.basename(rootPath) || 'workspace' }],
       },
       this.opts.requestTimeoutMs ?? 15000
     );
 
-    this.serverCapabilities = initializeResult?.capabilities && typeof initializeResult.capabilities === 'object'
-      ? initializeResult.capabilities
-      : {};
+    this.serverCapabilities =
+      initializeResult?.capabilities && typeof initializeResult.capabilities === 'object'
+        ? initializeResult.capabilities
+        : {};
 
     await this.notify('initialized', {});
   }
@@ -215,7 +215,11 @@ export class LspClient {
     this.failAll(new Error('lsp: client stopped'));
   }
 
-  async request(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<any> {
+  async request(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs?: number
+  ): Promise<any> {
     if (!this.child || this.closed) throw new Error('lsp: client is not running');
 
     const id = this.nextId++;
@@ -244,7 +248,12 @@ export class LspClient {
     this.writeMessage({ jsonrpc: '2.0', method, params });
   }
 
-  async didOpen(filePath: string, text: string, languageId = 'plaintext', version = 1): Promise<void> {
+  async didOpen(
+    filePath: string,
+    text: string,
+    languageId = 'plaintext',
+    version = 1
+  ): Promise<void> {
     const uri = LspClient.filePathToUri(filePath);
     await this.notify('textDocument/didOpen', {
       textDocument: {
@@ -323,7 +332,10 @@ export class LspClient {
     if (msg?.method === 'textDocument/publishDiagnostics') {
       const params = msg.params as PublishDiagnosticsParams;
       if (params?.uri) {
-        this.diagnosticsByUri.set(params.uri, Array.isArray(params.diagnostics) ? params.diagnostics : []);
+        this.diagnosticsByUri.set(
+          params.uri,
+          Array.isArray(params.diagnostics) ? params.diagnostics : []
+        );
       }
       this.onDiagnostics?.({
         uri: String(params?.uri ?? ''),
@@ -347,9 +359,10 @@ export function detectInstalledLspServers(opts?: {
   candidates?: LspServerCandidate[];
   hasCommand?: (command: string) => boolean;
 }): DetectedLspServer[] {
-  const candidates = Array.isArray(opts?.candidates) && opts!.candidates.length
-    ? opts!.candidates
-    : DEFAULT_LSP_CANDIDATES;
+  const candidates =
+    Array.isArray(opts?.candidates) && opts!.candidates.length
+      ? opts!.candidates
+      : DEFAULT_LSP_CANDIDATES;
   const hasCommand = opts?.hasCommand ?? commandExists;
 
   const byLanguage = new Map<string, DetectedLspServer>();
@@ -371,22 +384,40 @@ export function detectInstalledLspServers(opts?: {
 }
 
 const EXT_TO_LANG: Record<string, string> = {
-  '.ts': 'typescript', '.tsx': 'typescript', '.js': 'javascript', '.jsx': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript',
-  '.py': 'python', '.pyi': 'python',
+  '.ts': 'typescript',
+  '.tsx': 'typescript',
+  '.js': 'javascript',
+  '.jsx': 'javascript',
+  '.mjs': 'javascript',
+  '.cjs': 'javascript',
+  '.py': 'python',
+  '.pyi': 'python',
   '.go': 'go',
   '.rs': 'rust',
-  '.c': 'c', '.h': 'c',
-  '.cpp': 'cpp', '.cc': 'cpp', '.cxx': 'cpp', '.hpp': 'cpp', '.hh': 'cpp',
+  '.c': 'c',
+  '.h': 'c',
+  '.cpp': 'cpp',
+  '.cc': 'cpp',
+  '.cxx': 'cpp',
+  '.hpp': 'cpp',
+  '.hh': 'cpp',
   '.java': 'java',
   '.rb': 'ruby',
   '.lua': 'lua',
-  '.sh': 'shellscript', '.bash': 'shellscript', '.zsh': 'shellscript',
-  '.json': 'json', '.jsonc': 'jsonc',
-  '.yaml': 'yaml', '.yml': 'yaml',
+  '.sh': 'shellscript',
+  '.bash': 'shellscript',
+  '.zsh': 'shellscript',
+  '.json': 'json',
+  '.jsonc': 'jsonc',
+  '.yaml': 'yaml',
+  '.yml': 'yaml',
   '.toml': 'toml',
   '.md': 'markdown',
-  '.css': 'css', '.scss': 'scss', '.less': 'less',
-  '.html': 'html', '.htm': 'html',
+  '.css': 'css',
+  '.scss': 'scss',
+  '.less': 'less',
+  '.html': 'html',
+  '.htm': 'html',
   '.xml': 'xml',
   '.sql': 'sql',
   '.zig': 'zig',
@@ -431,11 +462,7 @@ export class LspManager {
 
   onDiagnostics?: (params: PublishDiagnosticsParams) => void;
 
-  constructor(opts: {
-    rootPath: string;
-    severityThreshold?: number;
-    quiet?: boolean;
-  }) {
+  constructor(opts: { rootPath: string; severityThreshold?: number; quiet?: boolean }) {
     this.rootPath = opts.rootPath;
     this.severityThreshold = opts.severityThreshold ?? 1;
     this.quiet = opts.quiet ?? false;
@@ -470,7 +497,9 @@ export class LspManager {
       });
     } catch (e: any) {
       if (!this.quiet) {
-        console.warn(`[lsp] failed to start ${cfg.language} server (${cfg.command}): ${e?.message ?? e}`);
+        console.warn(
+          `[lsp] failed to start ${cfg.language} server (${cfg.command}): ${e?.message ?? e}`
+        );
       }
     }
   }
@@ -528,8 +557,7 @@ export class LspManager {
     if (filePath) {
       const client = this.clientForFile(filePath);
       if (!client) return `[lsp] no language server available for ${filePath}`;
-      const diags = client.getDiagnostics(filePath)
-        .filter((d) => (d.severity ?? 1) <= threshold);
+      const diags = client.getDiagnostics(filePath).filter((d) => (d.severity ?? 1) <= threshold);
       if (!diags.length) return `No diagnostics for ${path.basename(filePath)}`;
       return formatDiagnostics(filePath, diags, 20);
     }
@@ -567,7 +595,8 @@ export class LspManager {
         textDocument: { uri },
       });
 
-      if (!Array.isArray(result) || !result.length) return `No symbols found in ${path.basename(filePath)}`;
+      if (!Array.isArray(result) || !result.length)
+        return `No symbols found in ${path.basename(filePath)}`;
 
       return result
         .slice(0, 100)
@@ -633,7 +662,12 @@ export class LspManager {
     }
   }
 
-  async getReferences(filePath: string, line: number, character: number, maxResults = 50): Promise<string> {
+  async getReferences(
+    filePath: string,
+    line: number,
+    character: number,
+    maxResults = 50
+  ): Promise<string> {
     const client = this.clientForFile(filePath);
     if (!client) return `[lsp] no language server available for ${filePath}`;
 
@@ -691,11 +725,31 @@ function formatDiagnostics(filePath: string, diags: LspDiagnostic[], cap: number
 
 function symbolKindName(kind: number): string {
   const names: Record<number, string> = {
-    1: 'File', 2: 'Module', 3: 'Namespace', 4: 'Package', 5: 'Class',
-    6: 'Method', 7: 'Property', 8: 'Field', 9: 'Constructor', 10: 'Enum',
-    11: 'Interface', 12: 'Function', 13: 'Variable', 14: 'Constant', 15: 'String',
-    16: 'Number', 17: 'Boolean', 18: 'Array', 19: 'Object', 20: 'Key',
-    21: 'Null', 22: 'EnumMember', 23: 'Struct', 24: 'Event', 25: 'Operator',
+    1: 'File',
+    2: 'Module',
+    3: 'Namespace',
+    4: 'Package',
+    5: 'Class',
+    6: 'Method',
+    7: 'Property',
+    8: 'Field',
+    9: 'Constructor',
+    10: 'Enum',
+    11: 'Interface',
+    12: 'Function',
+    13: 'Variable',
+    14: 'Constant',
+    15: 'String',
+    16: 'Number',
+    17: 'Boolean',
+    18: 'Array',
+    19: 'Object',
+    20: 'Key',
+    21: 'Null',
+    22: 'EnumMember',
+    23: 'Struct',
+    24: 'Event',
+    25: 'Operator',
     26: 'TypeParameter',
   };
   return names[kind] ?? `Kind(${kind})`;
@@ -706,7 +760,7 @@ function extractHoverText(contents: any): string {
   if (typeof contents?.value === 'string') return contents.value;
   if (Array.isArray(contents)) {
     return contents
-      .map((c: any) => (typeof c === 'string' ? c : c?.value ?? ''))
+      .map((c: any) => (typeof c === 'string' ? c : (c?.value ?? '')))
       .filter(Boolean)
       .join('\n');
   }

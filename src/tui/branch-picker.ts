@@ -3,10 +3,12 @@
  * Extracted from controller.ts to stay within the 400-line TUI file cap.
  */
 
-import type { BranchPickerItem } from './types.js';
-import { listConversationBranches, conversationBranchPath } from '../cli/session-state.js';
-import type { AgentSession } from '../agent.js';
 import fs from 'node:fs/promises';
+
+import type { AgentSession } from '../agent.js';
+import { listConversationBranches, conversationBranchPath } from '../cli/session-state.js';
+
+import type { BranchPickerItem } from './types.js';
 
 /** Load branches and return BRANCH_PICKER_OPEN event data. */
 export async function loadBranches(action: 'checkout' | 'merge' | 'browse'): Promise<{
@@ -25,7 +27,9 @@ export async function loadBranches(action: 'checkout' | 'merge' | 'browse'): Pro
       messageCount = msgs.length;
       const last = msgs.filter((m: any) => m.role !== 'system').pop();
       if (last?.content) preview = String(last.content).slice(0, 80).replace(/\n/g, ' ');
-    } catch { /* skip bad files */ }
+    } catch {
+      /* skip bad files */
+    }
     items.push({ name: r.name, ts: r.ts, messageCount, preview });
   }
   return { branches: items, action };
@@ -41,7 +45,7 @@ export interface BranchSelectResult {
 export async function executeBranchSelect(
   session: AgentSession,
   branchName: string,
-  action: 'checkout' | 'merge' | 'browse',
+  action: 'checkout' | 'merge' | 'browse'
 ): Promise<BranchSelectResult> {
   if (action === 'browse') {
     return { ok: true, message: undefined };
@@ -62,14 +66,21 @@ export async function executeBranchSelect(
         return { ok: false, message: `Invalid branch: ${branchName}`, level: 'error' };
       }
       session.restore(msgs as any);
-      if (parsed?.model) try { session.setModel(String(parsed.model)); } catch {}
+      if (parsed?.model)
+        try {
+          session.setModel(String(parsed.model));
+        } catch {}
       return { ok: true, message: `Checked out '${branchName}' (${msgs.length} messages)` };
     }
 
     // merge
     const toAppend = msgs.filter((m: any, idx: number) => !(idx === 0 && m?.role === 'system'));
     if (!toAppend.length) {
-      return { ok: false, message: `Branch '${branchName}' has no mergeable messages.`, level: 'warn' };
+      return {
+        ok: false,
+        message: `Branch '${branchName}' has no mergeable messages.`,
+        level: 'warn',
+      };
     }
     session.restore([...session.messages, ...toAppend] as any);
     return { ok: true, message: `Merged ${toAppend.length} message(s) from '${branchName}'` };

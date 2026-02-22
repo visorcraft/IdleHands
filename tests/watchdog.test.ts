@@ -1,5 +1,5 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
 
 import {
   resolveWatchdogSettings,
@@ -16,7 +16,7 @@ describe('watchdog helpers', () => {
         watchdog_idle_grace_timeouts: -1,
         debug_abort_reason: true,
       },
-      undefined,
+      undefined
     );
 
     assert.equal(cfg.timeoutMs, 30_000);
@@ -38,7 +38,7 @@ describe('watchdog helpers', () => {
         watchdog_max_compactions: 9,
         watchdog_idle_grace_timeouts: 4,
         debug_abort_reason: true,
-      },
+      }
     );
 
     assert.equal(cfg.timeoutMs, 180_000);

@@ -16,5 +16,13 @@ export function calculateLayout(rows: number, cols = 120): TuiLayout {
   const toolsRows = 2;
   const inputRows = 2;
   const transcriptRows = Math.max(3, safeRows - statusRows - alertRows - toolsRows - inputRows);
-  return { cols: safeCols, rows: safeRows, statusRows, alertRows, toolsRows, inputRows, transcriptRows };
+  return {
+    cols: safeCols,
+    rows: safeRows,
+    statusRows,
+    alertRows,
+    toolsRows,
+    inputRows,
+    transcriptRows,
+  };
 }

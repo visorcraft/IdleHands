@@ -1,5 +1,5 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
 
 import { renderMarkdown } from '../dist/markdown.js';
 
@@ -53,14 +53,20 @@ describe('markdown renderer', () => {
   });
 
   it('collapses think blocks when not verbose', () => {
-    const out = renderMarkdown('<think>\nlong reasoning here\n</think>\nAnswer', { color: true, verbose: false });
+    const out = renderMarkdown('<think>\nlong reasoning here\n</think>\nAnswer', {
+      color: true,
+      verbose: false,
+    });
     assert.ok(out.includes('[thinking...'));
     assert.ok(out.includes('Answer'));
     assert.ok(!out.includes('long reasoning'));
   });
 
   it('shows think blocks in verbose mode', () => {
-    const out = renderMarkdown('<think>\nreasoning\n</think>\nAnswer', { color: true, verbose: true });
+    const out = renderMarkdown('<think>\nreasoning\n</think>\nAnswer', {
+      color: true,
+      verbose: true,
+    });
     assert.ok(out.includes('reasoning'));
     assert.ok(out.includes('Answer'));
   });

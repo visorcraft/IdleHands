@@ -1,7 +1,7 @@
-import type { TuiState, ToolEvent } from './types.js';
-import { clearScreen } from './screen.js';
 import { calculateLayout } from './layout.js';
+import { clearScreen } from './screen.js';
 import { resolveTuiTheme, type TuiColors } from './theme.js';
+import type { TuiState, ToolEvent } from './types.js';
 
 /** Cached theme colors — set once via setRenderTheme(). */
 let C: TuiColors = resolveTuiTheme('default');
@@ -21,8 +21,14 @@ function secs(ms: number): string {
 }
 
 function formatToolUsage(e: ToolEvent): string {
-  const durationMs = typeof e.durationMs === 'number' ? e.durationMs : Math.max(0, Date.now() - e.ts);
-  const icon = e.phase === 'error' ? `${C.red}✗${C.reset}` : e.phase === 'end' ? `${C.green}✓${C.reset}` : `${C.yellow}⠋${C.reset}`;
+  const durationMs =
+    typeof e.durationMs === 'number' ? e.durationMs : Math.max(0, Date.now() - e.ts);
+  const icon =
+    e.phase === 'error'
+      ? `${C.red}✗${C.reset}`
+      : e.phase === 'end'
+        ? `${C.green}✓${C.reset}`
+        : `${C.yellow}⠋${C.reset}`;
   const base = `${icon} ${e.name} (${secs(durationMs)})`;
   if (e.phase === 'start' && e.detail) return `${base} — ${truncate(e.detail, 70)}`;
   return base;
@@ -56,7 +62,12 @@ function buildBranchOverlay(state: TuiState, width: number, height: number): str
   if (!picker) return [];
   const inner = Math.max(10, width - 2);
   const lines: string[] = [];
-  const title = picker.action === 'browse' ? 'Branches' : picker.action === 'checkout' ? 'Checkout Branch' : 'Merge Branch';
+  const title =
+    picker.action === 'browse'
+      ? 'Branches'
+      : picker.action === 'checkout'
+        ? 'Checkout Branch'
+        : 'Merge Branch';
   lines.push(`${C.bold}${title}${C.reset}  (↑/↓ select, Enter confirm, Esc cancel)`);
   lines.push('');
   if (!picker.branches.length) {
@@ -116,7 +127,9 @@ function buildStepNavigatorOverlay(state: TuiState, width: number, height: numbe
   if (!nav) return [];
   const inner = Math.max(20, width - 2);
   const lines: string[] = [];
-  lines.push(`${C.bold}Step Navigator${C.reset}  (↑/↓ move, Enter jump, type to filter, Backspace, Esc close)`);
+  lines.push(
+    `${C.bold}Step Navigator${C.reset}  (↑/↓ move, Enter jump, type to filter, Backspace, Esc close)`
+  );
   lines.push(`${C.dim}Filter:${C.reset} ${nav.query || '(none)'}`);
   lines.push('');
 
@@ -183,7 +196,10 @@ function buildHooksInspectorOverlay(state: TuiState, width: number, height: numb
   lines.push('');
 
   const visibleRows = Math.max(4, height - 4);
-  const start = Math.max(0, Math.min(inspector.offset, Math.max(0, inspector.lines.length - visibleRows)));
+  const start = Math.max(
+    0,
+    Math.min(inspector.offset, Math.max(0, inspector.lines.length - visibleRows))
+  );
   const slice = inspector.lines.slice(start, start + visibleRows);
 
   if (!slice.length) {
@@ -251,7 +267,8 @@ export function renderTui(state: TuiState): void {
 
   const alert = state.alerts[state.alerts.length - 1];
   const statusText = state.statusText;
-  const scrollStatus = newerBelow > 0 ? `↓${newerBelow} more` : olderAbove > 0 ? `↑${olderAbove} more` : '';
+  const scrollStatus =
+    newerBelow > 0 ? `↓${newerBelow} more` : olderAbove > 0 ? `↑${olderAbove} more` : '';
 
   const showAlert = alert && (alert.level === 'warn' || alert.level === 'error');
   if (showAlert && alert) {
@@ -272,25 +289,53 @@ export function renderTui(state: TuiState): void {
     visible[0] = placeRight(visible[0] ?? '', `${C.dim}↑${olderAbove}${C.reset}`, cols);
   }
   if (newerBelow > 0 && visible.length > 0) {
-    visible[visible.length - 1] = placeRight(visible[visible.length - 1] ?? '', `${C.dim}↓${newerBelow}${C.reset}`, cols);
+    visible[visible.length - 1] = placeRight(
+      visible[visible.length - 1] ?? '',
+      `${C.dim}↓${newerBelow}${C.reset}`,
+      cols
+    );
   }
 
   // Overlay rendering (confirm or branch picker — mutually exclusive)
   const activeOverlay = state.confirmPending
-    ? buildOverlay(state, Math.min(Math.max(36, Math.floor(cols * 0.75)), cols - 2),
-        Math.min(layout.transcriptRows, state.confirmPending.showDiff ? Math.max(8, Math.floor(layout.transcriptRows * 0.9)) : 6))
+    ? buildOverlay(
+        state,
+        Math.min(Math.max(36, Math.floor(cols * 0.75)), cols - 2),
+        Math.min(
+          layout.transcriptRows,
+          state.confirmPending.showDiff ? Math.max(8, Math.floor(layout.transcriptRows * 0.9)) : 6
+        )
+      )
     : state.branchPicker
-      ? buildBranchOverlay(state, Math.min(Math.max(36, Math.floor(cols * 0.75)), cols - 2),
-          Math.min(layout.transcriptRows, Math.max(8, Math.floor(layout.transcriptRows * 0.9))))
+      ? buildBranchOverlay(
+          state,
+          Math.min(Math.max(36, Math.floor(cols * 0.75)), cols - 2),
+          Math.min(layout.transcriptRows, Math.max(8, Math.floor(layout.transcriptRows * 0.9)))
+        )
       : state.stepNavigator
-        ? buildStepNavigatorOverlay(state, Math.min(Math.max(44, Math.floor(cols * 0.8)), cols - 2),
-            Math.min(layout.transcriptRows, Math.max(10, Math.floor(layout.transcriptRows * 0.92))))
+        ? buildStepNavigatorOverlay(
+            state,
+            Math.min(Math.max(44, Math.floor(cols * 0.8)), cols - 2),
+            Math.min(layout.transcriptRows, Math.max(10, Math.floor(layout.transcriptRows * 0.92)))
+          )
         : state.settingsMenu
-          ? buildSettingsOverlay(state, Math.min(Math.max(44, Math.floor(cols * 0.8)), cols - 2),
-              Math.min(layout.transcriptRows, Math.max(10, Math.floor(layout.transcriptRows * 0.92))))
+          ? buildSettingsOverlay(
+              state,
+              Math.min(Math.max(44, Math.floor(cols * 0.8)), cols - 2),
+              Math.min(
+                layout.transcriptRows,
+                Math.max(10, Math.floor(layout.transcriptRows * 0.92))
+              )
+            )
           : state.hooksInspector
-            ? buildHooksInspectorOverlay(state, Math.min(Math.max(50, Math.floor(cols * 0.85)), cols - 2),
-                Math.min(layout.transcriptRows, Math.max(10, Math.floor(layout.transcriptRows * 0.92))))
+            ? buildHooksInspectorOverlay(
+                state,
+                Math.min(Math.max(50, Math.floor(cols * 0.85)), cols - 2),
+                Math.min(
+                  layout.transcriptRows,
+                  Math.max(10, Math.floor(layout.transcriptRows * 0.92))
+                )
+              )
             : null;
 
   if (activeOverlay) {
@@ -312,8 +357,12 @@ export function renderTui(state: TuiState): void {
   const t1 = recent.length ? recent.map(formatToolUsage).join(' | ') : `${C.dim}idle${C.reset}`;
   process.stdout.write(truncate(t1, cols) + '\n');
 
-  const done = [...state.toolEvents].reverse().find((e) => e.phase === 'end' || e.phase === 'error');
-  const summary = done ? `${done.name}: ${done.summary ?? done.detail ?? 'completed'}` : 'no completed tools yet';
+  const done = [...state.toolEvents]
+    .reverse()
+    .find((e) => e.phase === 'end' || e.phase === 'error');
+  const summary = done
+    ? `${done.name}: ${done.summary ?? done.detail ?? 'completed'}`
+    : 'no completed tools yet';
   process.stdout.write(truncate(`${C.dim}last:${C.reset} ${summary}`, cols) + '\n');
 
   process.stdout.write('─'.repeat(Math.max(10, Math.min(cols, 80))) + '\n');

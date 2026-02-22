@@ -1,7 +1,13 @@
-export type TuiMode = "chat" | "command" | "help" | "search";
-export type PanelId = "transcript" | "input" | "status" | "tools" | "alerts";
+export type TuiMode = 'chat' | 'command' | 'help' | 'search';
+export type PanelId = 'transcript' | 'input' | 'status' | 'tools' | 'alerts';
 
-export type TranscriptRole = "user" | "assistant" | "assistant_streaming" | "tool" | "system" | "error";
+export type TranscriptRole =
+  | 'user'
+  | 'assistant'
+  | 'assistant_streaming'
+  | 'tool'
+  | 'system'
+  | 'error';
 
 export interface TranscriptItem {
   id: string;
@@ -14,7 +20,7 @@ export interface TranscriptItem {
 export interface ToolEvent {
   id: string;
   name: string;
-  phase: "start" | "end" | "error";
+  phase: 'start' | 'end' | 'error';
   ts: number;
   detail?: string;
   summary?: string;
@@ -23,7 +29,7 @@ export interface ToolEvent {
 
 export interface AlertItem {
   id: string;
-  level: "info" | "warn" | "error";
+  level: 'info' | 'warn' | 'error';
   text: string;
   ts: number;
 }

@@ -1,8 +1,8 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { describe, it } from 'node:test';
 
 import { loadHookPlugins } from '../dist/hooks/loader.js';
 
@@ -13,7 +13,9 @@ describe('hooks loader', () => {
       const okPlugin = path.join(dir, 'ok.mjs');
       const badPlugin = path.join(dir, 'bad.mjs');
 
-      await fs.writeFile(okPlugin, `
+      await fs.writeFile(
+        okPlugin,
+        `
         export default {
           hooks: {
             ask_start: ({ askId }, ctx) => {
@@ -21,7 +23,9 @@ describe('hooks loader', () => {
             }
           }
         };
-      `, 'utf8');
+      `,
+        'utf8'
+      );
 
       await fs.writeFile(badPlugin, `export const foo = 123;`, 'utf8');
 
@@ -51,7 +55,7 @@ describe('hooks loader', () => {
           cwd: dir,
           strict: true,
         }),
-        /did not export a valid hook plugin|failed to load plugin/i,
+        /did not export a valid hook plugin|failed to load plugin/i
       );
     } finally {
       await fs.rm(dir, { recursive: true, force: true });

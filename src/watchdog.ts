@@ -17,19 +17,19 @@ export const WATCHDOG_RECOMMENDED_TUNING_TEXT =
 
 export function resolveWatchdogSettings(
   primary?: WatchdogConfigInput,
-  fallback?: WatchdogConfigInput,
+  fallback?: WatchdogConfigInput
 ): WatchdogSettings {
   const timeoutMs = Math.max(
     30_000,
-    Math.floor(primary?.watchdog_timeout_ms ?? fallback?.watchdog_timeout_ms ?? 120_000),
+    Math.floor(primary?.watchdog_timeout_ms ?? fallback?.watchdog_timeout_ms ?? 120_000)
   );
   const maxCompactions = Math.max(
     0,
-    Math.floor(primary?.watchdog_max_compactions ?? fallback?.watchdog_max_compactions ?? 3),
+    Math.floor(primary?.watchdog_max_compactions ?? fallback?.watchdog_max_compactions ?? 3)
   );
   const idleGraceTimeouts = Math.max(
     0,
-    Math.floor(primary?.watchdog_idle_grace_timeouts ?? fallback?.watchdog_idle_grace_timeouts ?? 1),
+    Math.floor(primary?.watchdog_idle_grace_timeouts ?? fallback?.watchdog_idle_grace_timeouts ?? 1)
   );
 
   return {

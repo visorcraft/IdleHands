@@ -1,8 +1,8 @@
-import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { describe, it, before, after } from 'node:test';
 
 import { loadCustomCommands, expandArgs } from '../dist/commands.js';
 

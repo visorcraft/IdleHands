@@ -1,6 +1,7 @@
-import type { TrifectaMode } from './types.js';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+
+import type { TrifectaMode } from './types.js';
 import { configDir } from './utils.js';
 
 export type HarnessThinking = {
@@ -62,89 +63,197 @@ export type Harness = {
 };
 
 /** Default behavioral configs used to fill gaps in user-defined harnesses and inline definitions */
-const DEFAULT_THINKING: HarnessThinking = { format: 'xml', openTag: '<think>', closeTag: '</think>', strip: true };
-const DEFAULT_TOOL_CALLS: HarnessToolCalls = { reliableToolCallsArray: false, contentFallbackLikely: true, parallelCalls: true, retryOnMalformed: 3 };
-const DEFAULT_QUIRKS: HarnessQuirks = { omitsRequiredParams: false, loopsOnToolError: false, emitsMarkdownInToolArgs: false, needsExplicitToolCallFormatReminder: false };
-const QUIRKS_NEEDS_REMINDER: HarnessQuirks = { ...DEFAULT_QUIRKS, needsExplicitToolCallFormatReminder: true };
+const DEFAULT_THINKING: HarnessThinking = {
+  format: 'xml',
+  openTag: '<think>',
+  closeTag: '</think>',
+  strip: true,
+};
+const DEFAULT_TOOL_CALLS: HarnessToolCalls = {
+  reliableToolCallsArray: false,
+  contentFallbackLikely: true,
+  parallelCalls: true,
+  retryOnMalformed: 3,
+};
+const DEFAULT_QUIRKS: HarnessQuirks = {
+  omitsRequiredParams: false,
+  loopsOnToolError: false,
+  emitsMarkdownInToolArgs: false,
+  needsExplicitToolCallFormatReminder: false,
+};
+const QUIRKS_NEEDS_REMINDER: HarnessQuirks = {
+  ...DEFAULT_QUIRKS,
+  needsExplicitToolCallFormatReminder: true,
+};
 
 const HARNESS: Harness[] = [
   {
     id: 'qwen3-coder',
     match: [/qwen3-coder/i],
     description: 'Qwen3-Coder family (tool-native MoE)',
-    defaults: { temperature: 0.2, top_p: 0.95, max_tokens: 32768, trifecta: { vaultMode: 'active' } },
+    defaults: {
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 32768,
+      trifecta: { vaultMode: 'active' },
+    },
     thinking: { format: 'xml', openTag: '<think>', closeTag: '</think>', strip: true },
-    toolCalls: { reliableToolCallsArray: false, contentFallbackLikely: true, parallelCalls: true, retryOnMalformed: 3 },
+    toolCalls: {
+      reliableToolCallsArray: false,
+      contentFallbackLikely: true,
+      parallelCalls: true,
+      retryOnMalformed: 3,
+    },
     quirks: DEFAULT_QUIRKS,
-    systemPromptSuffix: 'Prefer apply_patch or edit_range for most edits. Use write_file for full rewrites, and use edit_file only for exact old_text replacement when necessary.\nWhen answering questions about code, search first (search_files or grep), then read only the relevant files. Never scan an entire directory by reading files one by one.'
+    systemPromptSuffix:
+      'Prefer apply_patch or edit_range for most edits. Use write_file for full rewrites, and use edit_file only for exact old_text replacement when necessary.\nWhen answering questions about code, search first (search_files or grep), then read only the relevant files. Never scan an entire directory by reading files one by one.',
   },
   {
     id: 'qwen3-moe',
     match: [/qwen3/i],
     description: 'Qwen3 MoE family (non-coder variants)',
-    defaults: { temperature: 0.2, top_p: 0.95, max_tokens: 16384, trifecta: { vaultMode: 'passive' } },
+    defaults: {
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 16384,
+      trifecta: { vaultMode: 'passive' },
+    },
     thinking: { format: 'xml', openTag: '<think>', closeTag: '</think>', strip: true },
-    toolCalls: { reliableToolCallsArray: true, contentFallbackLikely: true, parallelCalls: true, retryOnMalformed: 2 },
+    toolCalls: {
+      reliableToolCallsArray: true,
+      contentFallbackLikely: true,
+      parallelCalls: true,
+      retryOnMalformed: 2,
+    },
     quirks: QUIRKS_NEEDS_REMINDER,
-    systemPromptSuffix: 'When answering questions about code, search first (search_files or grep), then read only the relevant files. Never scan an entire directory by reading files one by one.'
+    systemPromptSuffix:
+      'When answering questions about code, search first (search_files or grep), then read only the relevant files. Never scan an entire directory by reading files one by one.',
   },
   {
     id: 'qwen',
     match: [/qwen/i],
     description: 'Qwen family (generic, includes Qwen2.5)',
-    defaults: { temperature: 0.2, top_p: 0.95, max_tokens: 16384, trifecta: { vaultMode: 'passive' } },
+    defaults: {
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 16384,
+      trifecta: { vaultMode: 'passive' },
+    },
     thinking: { format: 'none', strip: false },
-    toolCalls: { reliableToolCallsArray: true, contentFallbackLikely: true, parallelCalls: true, retryOnMalformed: 2 },
-    quirks: QUIRKS_NEEDS_REMINDER
+    toolCalls: {
+      reliableToolCallsArray: true,
+      contentFallbackLikely: true,
+      parallelCalls: true,
+      retryOnMalformed: 2,
+    },
+    quirks: QUIRKS_NEEDS_REMINDER,
   },
   {
     id: 'nemotron',
     match: [/nemotron/i],
     description: 'Nemotron family — loops on errors, omits params, low agent quality',
-    defaults: { temperature: 0.2, top_p: 0.95, max_tokens: 16384, trifecta: { vaultMode: 'passive' } },
+    defaults: {
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 16384,
+      trifecta: { vaultMode: 'passive' },
+    },
     thinking: { format: 'none', strip: false },
-    toolCalls: { reliableToolCallsArray: false, contentFallbackLikely: true, parallelCalls: false, retryOnMalformed: 1 },
-    quirks: { ...QUIRKS_NEEDS_REMINDER, omitsRequiredParams: true, loopsOnToolError: true, maxIterationsOverride: 10 }
+    toolCalls: {
+      reliableToolCallsArray: false,
+      contentFallbackLikely: true,
+      parallelCalls: false,
+      retryOnMalformed: 1,
+    },
+    quirks: {
+      ...QUIRKS_NEEDS_REMINDER,
+      omitsRequiredParams: true,
+      loopsOnToolError: true,
+      maxIterationsOverride: 10,
+    },
   },
   {
     id: 'mistral',
     match: [/mistral/i],
     description: 'Mistral family — no thinking tokens, may need chat-template-file',
-    defaults: { temperature: 0.2, top_p: 0.95, max_tokens: 16384, trifecta: { vaultMode: 'passive' } },
+    defaults: {
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 16384,
+      trifecta: { vaultMode: 'passive' },
+    },
     thinking: { format: 'none', strip: false },
-    toolCalls: { reliableToolCallsArray: true, contentFallbackLikely: false, parallelCalls: true, retryOnMalformed: 2 },
-    quirks: DEFAULT_QUIRKS
+    toolCalls: {
+      reliableToolCallsArray: true,
+      contentFallbackLikely: false,
+      parallelCalls: true,
+      retryOnMalformed: 2,
+    },
+    quirks: DEFAULT_QUIRKS,
   },
   {
     id: 'gpt-oss',
     match: [/gpt-oss/i, /gpt_oss/i],
     description: 'GPT-OSS — correct tool format but bad decisions, scans everything',
-    defaults: { temperature: 0.2, top_p: 0.95, max_tokens: 16384, trifecta: { vaultMode: 'passive' } },
+    defaults: {
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 16384,
+      trifecta: { vaultMode: 'passive' },
+    },
     thinking: { format: 'none', strip: false },
-    toolCalls: { reliableToolCallsArray: true, contentFallbackLikely: false, parallelCalls: true, retryOnMalformed: 2 },
+    toolCalls: {
+      reliableToolCallsArray: true,
+      contentFallbackLikely: false,
+      parallelCalls: true,
+      retryOnMalformed: 2,
+    },
     quirks: { ...DEFAULT_QUIRKS, maxIterationsOverride: 10 },
-    systemPromptSuffix: 'When answering questions about code, search first (search_files or grep), then read only the relevant files. Never scan an entire directory by reading files one by one.'
+    systemPromptSuffix:
+      'When answering questions about code, search first (search_files or grep), then read only the relevant files. Never scan an entire directory by reading files one by one.',
   },
   {
     id: 'llama',
     match: [/llama/i],
     description: 'Llama family (llama.cpp style)',
-    defaults: { temperature: 0.2, top_p: 0.95, max_tokens: 16384, trifecta: { vaultMode: 'passive' } },
+    defaults: {
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 16384,
+      trifecta: { vaultMode: 'passive' },
+    },
     thinking: { format: 'none', strip: false },
-    toolCalls: { reliableToolCallsArray: false, contentFallbackLikely: true, parallelCalls: false, retryOnMalformed: 2 },
+    toolCalls: {
+      reliableToolCallsArray: false,
+      contentFallbackLikely: true,
+      parallelCalls: false,
+      retryOnMalformed: 2,
+    },
     quirks: QUIRKS_NEEDS_REMINDER,
-    systemPromptSuffix: 'When answering questions about code, search first (search_files or grep), then read only the relevant files. Never scan an entire directory by reading files one by one.'
+    systemPromptSuffix:
+      'When answering questions about code, search first (search_files or grep), then read only the relevant files. Never scan an entire directory by reading files one by one.',
   },
   {
     id: 'generic',
     match: [/.*/],
     description: 'Generic fallback harness — conservative, all fallbacks enabled',
-    defaults: { temperature: 0.2, top_p: 0.95, max_tokens: 16384, trifecta: { vaultMode: 'passive' } },
+    defaults: {
+      temperature: 0.2,
+      top_p: 0.95,
+      max_tokens: 16384,
+      trifecta: { vaultMode: 'passive' },
+    },
     thinking: { format: 'xml', openTag: '<think>', closeTag: '</think>', strip: true },
-    toolCalls: { reliableToolCallsArray: false, contentFallbackLikely: true, parallelCalls: true, retryOnMalformed: 3 },
+    toolCalls: {
+      reliableToolCallsArray: false,
+      contentFallbackLikely: true,
+      parallelCalls: true,
+      retryOnMalformed: 3,
+    },
     quirks: DEFAULT_QUIRKS,
-    systemPromptSuffix: 'When answering questions about code, search first (search_files or grep), then read only the relevant files. Never scan an entire directory by reading files one by one.'
-  }
+    systemPromptSuffix:
+      'When answering questions about code, search first (search_files or grep), then read only the relevant files. Never scan an entire directory by reading files one by one.',
+  },
 ];
 
 /**
@@ -156,7 +265,7 @@ function loadUserHarnesses(): Harness[] {
   const dir = join(configDir(), 'harnesses');
   let files: string[];
   try {
-    files = readdirSync(dir).filter(f => f.endsWith('.json'));
+    files = readdirSync(dir).filter((f) => f.endsWith('.json'));
   } catch {
     return [];
   }
@@ -178,16 +287,18 @@ function loadUserHarnesses(): Harness[] {
           temperature: raw.params?.temperature ?? raw.defaults?.temperature,
           top_p: raw.params?.top_p ?? raw.defaults?.top_p,
           max_tokens: raw.params?.max_tokens ?? raw.defaults?.max_tokens,
-          trifecta: raw.defaults?.trifecta
+          trifecta: raw.defaults?.trifecta,
         },
         thinking: { ...DEFAULT_THINKING, ...(raw.thinking ?? {}) },
         toolCalls: { ...DEFAULT_TOOL_CALLS, ...(raw.toolCalls ?? {}) },
         quirks: { ...DEFAULT_QUIRKS, ...(raw.quirks ?? {}) },
-        systemPromptSuffix: raw.systemPromptSuffix
+        systemPromptSuffix: raw.systemPromptSuffix,
       };
       result.push(harness);
     } catch (e) {
-      console.warn(`[warn] failed to load harness ${f}: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(
+        `[warn] failed to load harness ${f}: ${e instanceof Error ? e.message : String(e)}`
+      );
     }
   }
   return result;
@@ -206,11 +317,8 @@ function getMergedHarnesses(): Harness[] {
   }
 
   // User harnesses override built-ins by id, then remaining built-ins follow
-  const userIds = new Set(user.map(h => h.id));
-  const merged = [
-    ...user,
-    ...HARNESS.filter(h => !userIds.has(h.id))
-  ];
+  const userIds = new Set(user.map((h) => h.id));
+  const merged = [...user, ...HARNESS.filter((h) => !userIds.has(h.id))];
   _mergedHarnesses = merged;
   return merged;
 }

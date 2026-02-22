@@ -1,47 +1,48 @@
-import test from "node:test";
-import assert from "node:assert/strict";
-import * as screen from "../../dist/tui/screen.js";
-import { calculateLayout } from "../../dist/tui/layout.js";
+import assert from 'node:assert/strict';
+import test from 'node:test';
 
-const hasProbe = typeof (screen as any).probeTermCapabilities === "function";
-const hasValidate = typeof (screen as any).validateTerminal === "function";
+import { calculateLayout } from '../../dist/tui/layout.js';
+import * as screen from '../../dist/tui/screen.js';
+
+const hasProbe = typeof (screen as any).probeTermCapabilities === 'function';
+const hasValidate = typeof (screen as any).validateTerminal === 'function';
 
 if (hasProbe && hasValidate) {
-  test("probeTermCapabilities returns expected capability shape", () => {
+  test('probeTermCapabilities returns expected capability shape', () => {
     const caps = (screen as any).probeTermCapabilities();
     for (const key of [
-      "altScreen",
-      "colors256",
-      "trueColor",
-      "unicode",
-      "rows",
-      "cols",
-      "term",
-      "isTmux",
-      "isScreen",
-      "isSsh",
+      'altScreen',
+      'colors256',
+      'trueColor',
+      'unicode',
+      'rows',
+      'cols',
+      'term',
+      'isTmux',
+      'isScreen',
+      'isSsh',
     ]) {
       assert.ok(key in caps, `missing key: ${key}`);
     }
   });
 
-  test("validateTerminal returns { ok } with optional reason string", () => {
+  test('validateTerminal returns { ok } with optional reason string', () => {
     const result = (screen as any).validateTerminal();
-    assert.equal(typeof result, "object");
-    assert.equal(typeof result.ok, "boolean");
+    assert.equal(typeof result, 'object');
+    assert.equal(typeof result.ok, 'boolean');
     if (result.ok === false) {
-      assert.equal(typeof result.reason, "string");
+      assert.equal(typeof result.reason, 'string');
       assert.ok(result.reason.length > 0);
     }
   });
 } else {
   // probeTermCapabilities/validateTerminal are not exported yet in dist/tui/screen.js.
   // Replace todos with real tests when capability probing and validation are implemented.
-  test.todo("probeTermCapabilities returns valid capability object shape");
-  test.todo("validateTerminal returns { ok } and a reason string when invalid");
+  test.todo('probeTermCapabilities returns valid capability object shape');
+  test.todo('validateTerminal returns { ok } and a reason string when invalid');
 }
 
-test("layout fallback for small terminals still returns valid dimensions", () => {
+test('layout fallback for small terminals still returns valid dimensions', () => {
   const layout = calculateLayout(5, 30);
   assert.equal(layout.rows, 5);
   assert.equal(layout.cols, 30);
@@ -51,7 +52,7 @@ test("layout fallback for small terminals still returns valid dimensions", () =>
   assert.ok(layout.inputRows >= 0);
 });
 
-test("layout minimum guarantees keep transcript and row counts positive", () => {
+test('layout minimum guarantees keep transcript and row counts positive', () => {
   for (const [rows, cols] of [
     [1, 10],
     [2, 20],

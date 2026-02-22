@@ -9,9 +9,11 @@
  * Custom:   ~/.config/idlehands/themes/<name>.json
  */
 
-import pc from 'picocolors';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+
+import pc from 'picocolors';
+
 import { configDir } from './utils.js';
 
 /** Color slot names that a theme can remap. */
@@ -47,8 +49,8 @@ const PC: Record<string, (s: string) => string> = {
 
 /** Resolve a palette string like "bold+cyan" to a composed function. */
 function resolveColor(spec: string): ((s: string) => string) | undefined {
-  const parts = spec.split('+').map(p => p.trim().toLowerCase());
-  const fns = parts.map(p => PC[p]).filter(Boolean);
+  const parts = spec.split('+').map((p) => p.trim().toLowerCase());
+  const fns = parts.map((p) => PC[p]).filter(Boolean);
   if (fns.length === 0) return undefined;
   if (fns.length === 1) return fns[0];
   return (s: string) => fns.reduce((acc, fn) => fn(acc), s);
@@ -56,8 +58,14 @@ function resolveColor(spec: string): ((s: string) => string) | undefined {
 
 /** The default (identity) palette — no remapping. */
 const DEFAULT_PALETTE: Required<ThemePalette> = {
-  dim: 'dim', bold: 'bold', red: 'red', yellow: 'yellow',
-  green: 'green', cyan: 'cyan', magenta: 'magenta', blue: 'blue',
+  dim: 'dim',
+  bold: 'bold',
+  red: 'red',
+  yellow: 'yellow',
+  green: 'green',
+  cyan: 'cyan',
+  magenta: 'magenta',
+  blue: 'blue',
 };
 
 const BUILTIN_PALETTES: Record<string, ThemePalette> = {

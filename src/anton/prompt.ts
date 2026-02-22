@@ -4,10 +4,11 @@
  * Builds prompts with task context, vault search results, and structured result parsing.
  */
 
-import type { VaultStore } from '../vault.js';
 import type { LensStore } from '../lens.js';
-import type { AntonTask, AntonTaskFile, AntonRunConfig, AntonAgentResult } from './types.js';
 import { estimateTokens } from '../utils.js';
+import type { VaultStore } from '../vault.js';
+
+import type { AntonTask, AntonTaskFile, AntonRunConfig, AntonAgentResult } from './types.js';
 
 export interface AntonPromptOpts {
   task: AntonTask;
@@ -38,7 +39,11 @@ export async function buildAntonPrompt(opts: AntonPromptOpts): Promise<string> {
 
   // 4. Relevant context from Vault (if available)
   if (opts.vault) {
-    const vaultSection = await buildVaultContextSection(opts.task, opts.vault, opts.maxContextTokens);
+    const vaultSection = await buildVaultContextSection(
+      opts.task,
+      opts.vault,
+      opts.maxContextTokens
+    );
     if (vaultSection) {
       sections.push(vaultSection);
     }
@@ -62,12 +67,12 @@ export function parseAntonResult(agentOutput: string): AntonAgentResult {
   // Find all <anton-result> blocks (use last one if multiple)
   const blockRegex = /<anton-result>([\s\S]*?)<\/anton-result>/g;
   const matches = Array.from(agentOutput.matchAll(blockRegex));
-  
+
   if (matches.length === 0) {
     return {
       status: 'blocked',
       reason: 'Agent did not emit structured result',
-      subtasks: []
+      subtasks: [],
     };
   }
 
@@ -80,7 +85,7 @@ export function parseAntonResult(agentOutput: string): AntonAgentResult {
     return {
       status: 'blocked',
       reason: 'No status line found in result block',
-      subtasks: []
+      subtasks: [],
     };
   }
 
@@ -89,7 +94,7 @@ export function parseAntonResult(agentOutput: string): AntonAgentResult {
     return {
       status: 'blocked',
       reason: `Unknown status: ${status}`,
-      subtasks: []
+      subtasks: [],
     };
   }
 
@@ -107,7 +112,7 @@ export function parseAntonResult(agentOutput: string): AntonAgentResult {
   return {
     status: status as any,
     reason,
-    subtasks
+    subtasks,
   };
 }
 
@@ -197,18 +202,49 @@ async function buildVaultContextSection(
 function extractKeywords(text: string): string[] {
   // Simple keyword extraction: split on whitespace, filter stop words
   const stopWords = new Set([
-    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from',
-    'has', 'he', 'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the',
-    'to', 'was', 'were', 'will', 'with', 'this', 'these', 'they',
-    'should', 'would', 'could', 'can', 'may', 'might', 'must'
+    'a',
+    'an',
+    'and',
+    'are',
+    'as',
+    'at',
+    'be',
+    'by',
+    'for',
+    'from',
+    'has',
+    'he',
+    'in',
+    'is',
+    'it',
+    'its',
+    'of',
+    'on',
+    'that',
+    'the',
+    'to',
+    'was',
+    'were',
+    'will',
+    'with',
+    'this',
+    'these',
+    'they',
+    'should',
+    'would',
+    'could',
+    'can',
+    'may',
+    'might',
+    'must',
   ]);
 
   return text
     .toLowerCase()
     .split(/\s+/)
-    .filter(word => word.length > 2)
-    .filter(word => !stopWords.has(word))
-    .filter(word => /^[a-zA-Z]+$/.test(word))
+    .filter((word) => word.length > 2)
+    .filter((word) => !stopWords.has(word))
+    .filter((word) => /^[a-zA-Z]+$/.test(word))
     .slice(0, 10); // Take top 10 keywords
 }
 

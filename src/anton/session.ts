@@ -2,9 +2,10 @@
  * Anton autonomous task runner — session config builders and factory wrapper.
  */
 
-import type { IdlehandsConfig } from '../types.js';
 import type { AgentSession } from '../agent.js';
 import { createSession } from '../agent.js';
+import type { IdlehandsConfig } from '../types.js';
+
 import type { AntonRunConfig } from './types.js';
 
 /**
@@ -48,10 +49,13 @@ export function buildVerifyConfig(base: IdlehandsConfig, config: AntonRunConfig)
  * Default session factory for autonomous execution.
  * Auto-approves all agent confirmations.
  */
-export async function defaultCreateSession(config: IdlehandsConfig, apiKey?: string): Promise<AgentSession> {
+export async function defaultCreateSession(
+  config: IdlehandsConfig,
+  apiKey?: string
+): Promise<AgentSession> {
   return createSession({
     config,
     apiKey,
-    confirm: async () => true,  // auto-approve for autonomous loop
+    confirm: async () => true, // auto-approve for autonomous loop
   });
 }

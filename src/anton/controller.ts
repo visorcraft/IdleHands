@@ -5,44 +5,45 @@
  * Structured as a deterministic orchestration flow for autonomous task execution.
  */
 
-import type { 
-  AntonRunConfig, 
-  AntonRunResult, 
-  AntonProgressCallback, 
-  AntonProgress, 
-  AntonAttempt, 
-  AntonStopReason,
-  AntonAttemptStatus
-} from './types.js';
-import type { IdlehandsConfig } from '../types.js';
 import type { AgentSession } from '../agent.js';
-import type { VaultStore } from '../vault.js';
+import {
+  ensureCleanWorkingTree,
+  getWorkingDiff,
+  commitAll,
+  restoreTrackedChanges,
+  cleanUntracked,
+  createBranch,
+} from '../git.js';
 import type { LensStore } from '../lens.js';
-import { 
-  parseTaskFile, 
-  findRunnablePendingTasks, 
-  markTaskChecked, 
-  insertSubTasks, 
-  autoCompleteAncestors 
-} from './parser.js';
-import { buildAntonPrompt, parseAntonResult } from './prompt.js';
-import { detectVerificationCommands, runVerification } from './verifier.js';
-import { acquireAntonLock, releaseAntonLock, touchAntonLock } from './lock.js';
-import { loadRuntimes } from '../runtime/store.js';
-import { plan } from '../runtime/planner.js';
 import { execute, loadActiveRuntime, runOnHost } from '../runtime/executor.js';
 import { waitForModelsReady } from '../runtime/health.js';
-import { buildSessionConfig, buildVerifyConfig, defaultCreateSession } from './session.js';
-import { formatDryRunPlan } from './reporter.js';
-import { 
-  ensureCleanWorkingTree, 
-  getWorkingDiff, 
-  commitAll, 
-  restoreTrackedChanges, 
-  cleanUntracked, 
-  createBranch 
-} from '../git.js';
+import { plan } from '../runtime/planner.js';
+import { loadRuntimes } from '../runtime/store.js';
+import type { IdlehandsConfig } from '../types.js';
 import { estimateTokens } from '../utils.js';
+import type { VaultStore } from '../vault.js';
+
+import { acquireAntonLock, releaseAntonLock, touchAntonLock } from './lock.js';
+import {
+  parseTaskFile,
+  findRunnablePendingTasks,
+  markTaskChecked,
+  insertSubTasks,
+  autoCompleteAncestors,
+} from './parser.js';
+import { buildAntonPrompt, parseAntonResult } from './prompt.js';
+import { formatDryRunPlan } from './reporter.js';
+import { buildSessionConfig, buildVerifyConfig, defaultCreateSession } from './session.js';
+import type {
+  AntonRunConfig,
+  AntonRunResult,
+  AntonProgressCallback,
+  AntonProgress,
+  AntonAttempt,
+  AntonStopReason,
+  AntonAttemptStatus,
+} from './types.js';
+import { detectVerificationCommands, runVerification } from './verifier.js';
 
 export interface RunAntonOpts {
   config: AntonRunConfig;
@@ -112,7 +113,7 @@ function classifyInfraError(err: unknown): 'infra_down' | 'loading' | 'other' {
 
 async function ensureAntonRuntimeReady(
   idlehandsConfig: IdlehandsConfig,
-  opts: { forceRestart: boolean; timeoutMs?: number },
+  opts: { forceRestart: boolean; timeoutMs?: number }
 ): Promise<{ ok: boolean; detail: string }> {
   const endpointProbe = await probeEndpointReady(idlehandsConfig.endpoint);
   if (endpointProbe.ok) return { ok: true, detail: 'endpoint-ready' };
@@ -122,7 +123,10 @@ async function ensureAntonRuntimeReady(
   try {
     rtConfig = await loadRuntimes();
   } catch {
-    return { ok: false, detail: `endpoint-not-ready (${endpointProbe.reason}); runtimes-unavailable` };
+    return {
+      ok: false,
+      detail: `endpoint-not-ready (${endpointProbe.reason}); runtimes-unavailable`,
+    };
   }
 
   const active = await loadActiveRuntime();
@@ -130,15 +134,25 @@ async function ensureAntonRuntimeReady(
 
   if (active?.modelId && rtConfig.models.some((m) => m.id === active.modelId && m.enabled)) {
     targetModelId = active.modelId;
-  } else if (typeof idlehandsConfig.model === 'string' && rtConfig.models.some((m) => m.id === idlehandsConfig.model && m.enabled)) {
+  } else if (
+    typeof idlehandsConfig.model === 'string' &&
+    rtConfig.models.some((m) => m.id === idlehandsConfig.model && m.enabled)
+  ) {
     targetModelId = idlehandsConfig.model;
   }
 
   if (!targetModelId) {
-    return { ok: false, detail: `endpoint-not-ready (${endpointProbe.reason}); no-runtime-model-mapping` };
+    return {
+      ok: false,
+      detail: `endpoint-not-ready (${endpointProbe.reason}); no-runtime-model-mapping`,
+    };
   }
 
-  const planOut = plan({ modelId: targetModelId, mode: 'live', forceRestart: opts.forceRestart }, rtConfig, active);
+  const planOut = plan(
+    { modelId: targetModelId, mode: 'live', forceRestart: opts.forceRestart },
+    rtConfig,
+    active
+  );
   if (!planOut.ok) {
     return { ok: false, detail: `runtime-plan-failed ${planOut.code}: ${planOut.reason}` };
   }
@@ -152,16 +166,27 @@ async function ensureAntonRuntimeReady(
     return { ok: false, detail: `runtime-exec-failed: ${execRes.error ?? 'unknown'}` };
   }
 
-  const timeoutMs = Math.max(10_000, opts.timeoutMs ?? ((planOut.model.launch.probe_timeout_sec ?? 600) * 1000));
+  const timeoutMs = Math.max(
+    10_000,
+    opts.timeoutMs ?? (planOut.model.launch.probe_timeout_sec ?? 600) * 1000
+  );
   for (const resolvedHost of planOut.hosts) {
     const hostCfg = rtConfig.hosts.find((h) => h.id === resolvedHost.id);
     if (!hostCfg) continue;
-    const ready = await waitForModelsReady(runOnHost as any, hostCfg, planOut.model.runtime_defaults?.port ?? 8080, {
-      timeoutMs,
-      intervalMs: planOut.model.launch.probe_interval_ms ?? 2000,
-    });
+    const ready = await waitForModelsReady(
+      runOnHost as any,
+      hostCfg,
+      planOut.model.runtime_defaults?.port ?? 8080,
+      {
+        timeoutMs,
+        intervalMs: planOut.model.launch.probe_interval_ms ?? 2000,
+      }
+    );
     if (!ready.ok) {
-      return { ok: false, detail: `wait-ready failed on ${resolvedHost.id}: ${ready.reason ?? 'timeout'}` };
+      return {
+        ok: false,
+        detail: `wait-ready failed on ${resolvedHost.id}: ${ready.reason ?? 'timeout'}`,
+      };
     }
   }
 
@@ -175,7 +200,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
   const { config, idlehandsConfig, progress, abortSignal, apiKey, vault, lens } = opts;
   const createSessionFn = opts.createSession || defaultCreateSession;
   const runtimeResilienceEnabled = !opts.createSession; // unit tests inject mock sessions; skip runtime orchestration there.
-  
+
   const startTimeMs = Date.now();
   let lockAcquired = false;
   let totalTokens = 0;
@@ -184,13 +209,13 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
   const attempts: AntonAttempt[] = [];
   const taskRetryCount: Map<string, number> = new Map();
   let lockHeartbeatTimer: NodeJS.Timeout | null = null;
-  
+
   // SIGINT handler
   const handleAbort = () => {
     abortSignal.aborted = true;
   };
   process.on('SIGINT', handleAbort);
-  
+
   try {
     // 1. Acquire Anton lock
     await acquireAntonLock(config.taskFile, config.projectDir);
@@ -199,21 +224,23 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
     // Keep Anton lock fresh + emit heartbeat while run is active.
     lockHeartbeatTimer = setInterval(() => {
       void touchAntonLock();
-      try { progress.onHeartbeat?.(); } catch {}
+      try {
+        progress.onHeartbeat?.();
+      } catch {}
     }, 5000);
-    
+
     // 2. Parse task file
     let taskFile = await parseTaskFile(config.taskFile);
     const initialPending = taskFile.pending.length;
     const initialCompleted = taskFile.completed.length;
-    
+
     // 3. Detect verification commands
     const commands = await detectVerificationCommands(config.projectDir, {
       build: config.buildCommand,
       test: config.testCommand,
       lint: config.lintCommand,
     });
-    
+
     // 4. Clean-tree check (unless allowDirty)
     if (!config.allowDirty) {
       const diff = await getWorkingDiff(config.projectDir);
@@ -221,18 +248,18 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         await ensureCleanWorkingTree(config.projectDir);
       }
     }
-    
+
     // 5. Branch creation (if --branch)
     if (config.branch) {
       const branchName = `anton-${Date.now()}`;
       await createBranch(config.projectDir, branchName);
     }
-    
+
     // 6. Dry-run early return
     if (config.dryRun) {
       const summary = formatDryRunPlan(taskFile, commands);
       console.log(summary);
-      
+
       return {
         totalTasks: taskFile.totalCount,
         preCompleted: initialCompleted,
@@ -260,47 +287,49 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         throw new Error(`Anton preflight failed: ${preflight.detail}`);
       }
     }
-    
+
     // 7. Main loop
     mainLoop: while (true) {
       // Re-parse task file each iteration
       taskFile = await parseTaskFile(config.taskFile);
-      
+
       // Find runnable pending tasks
-      const skippedKeys = new Set(attempts.filter(a => a.status === 'skipped').map(a => a.taskKey));
+      const skippedKeys = new Set(
+        attempts.filter((a) => a.status === 'skipped').map((a) => a.taskKey)
+      );
       const runnableTasks = findRunnablePendingTasks(taskFile, skippedKeys);
       if (runnableTasks.length === 0) break; // No more work
-      
+
       const currentTask = runnableTasks[0];
-      
+
       // Check stop conditions
       if (abortSignal.aborted) {
         break mainLoop;
       }
-      
+
       if (iterationsUsed >= config.maxIterations) {
         break mainLoop;
       }
-      
+
       const elapsedMs = Date.now() - startTimeMs;
       if (elapsedMs >= config.totalTimeoutSec * 1000) {
         break mainLoop;
       }
-      
+
       if (totalTokens >= config.maxTotalTokens) {
         break mainLoop;
       }
-      
+
       if (taskFile.totalCount > config.maxTotalTasks) {
         break mainLoop;
       }
-      
+
       // Progress tracking
       const currentProgress: AntonProgress = {
         currentIndex: 0,
         totalPending: initialPending,
         completedSoFar: taskFile.completed.length - initialCompleted,
-        skippedSoFar: attempts.filter(a => a.status === 'skipped').length,
+        skippedSoFar: attempts.filter((a) => a.status === 'skipped').length,
         iterationsUsed,
         elapsedMs: Date.now() - startTimeMs,
         estimatedRemainingMs: undefined,
@@ -312,9 +341,9 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         if (!config.skipOnFail) {
           break mainLoop;
         }
-        
+
         progress.onTaskSkip(currentTask, 'max retries exceeded', currentProgress);
-        
+
         // Mark as skipped and continue
         const skipAttempt: AntonAttempt = {
           taskKey: currentTask.key,
@@ -331,18 +360,18 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         taskRetryCount.set(currentTask.key, retries + 1);
         continue;
       }
-      
+
       const attemptNumber = retries + 1;
       progress.onTaskStart(currentTask, attemptNumber, currentProgress);
-      
+
       let session: AgentSession | undefined;
       let attempt: AntonAttempt;
-      
+
       try {
         // Spawn fresh session per attempt
         const sessionConfig = buildSessionConfig(idlehandsConfig, config);
         session = await createSessionFn(sessionConfig, apiKey);
-        
+
         // Set up timeout + stop propagation for the currently running attempt.
         // /anton stop flips abortSignal.aborted; we poll that and cancel session.ask immediately
         // instead of waiting for the task attempt to naturally finish.
@@ -350,7 +379,9 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         const cancelCurrentAttempt = () => {
           if (controller.signal.aborted) return;
           controller.abort();
-          try { session?.cancel(); } catch {}
+          try {
+            session?.cancel();
+          } catch {}
         };
 
         const timeoutHandle = setTimeout(() => {
@@ -365,7 +396,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
 
         try {
           const taskStartMs = Date.now();
-          
+
           // Build prompt and ask session
           const prompt = await buildAntonPrompt({
             task: currentTask,
@@ -382,7 +413,9 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           const promptText = typeof prompt === 'string' ? prompt : JSON.stringify(prompt);
           const estimatedPromptTokens = estimateTokens(promptText);
           if (estimatedPromptTokens > config.maxPromptTokensPerAttempt) {
-            throw new Error(`prompt-budget-exceeded: estimated=${estimatedPromptTokens} max=${config.maxPromptTokensPerAttempt}`);
+            throw new Error(
+              `prompt-budget-exceeded: estimated=${estimatedPromptTokens} max=${config.maxPromptTokensPerAttempt}`
+            );
           }
 
           let result: Awaited<ReturnType<AgentSession['ask']>>;
@@ -393,7 +426,13 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               break;
             } catch (e) {
               const infraKind = classifyInfraError(e);
-              if (!runtimeResilienceEnabled || abortSignal.aborted || controller.signal.aborted || recoveredInfra || infraKind === 'other') {
+              if (
+                !runtimeResilienceEnabled ||
+                abortSignal.aborted ||
+                controller.signal.aborted ||
+                recoveredInfra ||
+                infraKind === 'other'
+              ) {
                 throw e;
               }
 
@@ -410,24 +449,24 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               // Retry the same attempt once after infra recovery without incrementing retry counters.
             }
           }
-          
+
           const taskEndMs = Date.now();
           const durationMs = taskEndMs - taskStartMs;
           const tokensUsed = session.usage.prompt + session.usage.completion;
-          
+
           // Parse structured result
           const agentResult = parseAntonResult(result.text);
-          
+
           let status: AntonAttemptStatus;
           let commitHash: string | undefined;
           let verification;
-          
+
           if (agentResult.status === 'decompose') {
             // Handle decomposition
             if (config.decompose && currentTask.depth < config.maxDecomposeDepth) {
               await insertSubTasks(config.taskFile, currentTask.key, agentResult.subtasks);
               status = 'decomposed';
-              
+
               // Check if total tasks exceeded after decomposition
               const updatedTaskFile = await parseTaskFile(config.taskFile);
               if (updatedTaskFile.totalCount > config.maxTotalTasks) {
@@ -448,27 +487,29 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               commands,
               config,
               diff,
-              createVerifySession: config.verifyAi ? async () => {
-                const verifyConfig = buildVerifyConfig(idlehandsConfig, config);
-                const session = await createSessionFn(verifyConfig, apiKey);
-                return {
-                  ask: async (prompt: string) => {
-                    const result = await session.ask(prompt);
-                    return result.text;
-                  },
-                  close: () => session.close(),
-                };
-              } : undefined,
+              createVerifySession: config.verifyAi
+                ? async () => {
+                    const verifyConfig = buildVerifyConfig(idlehandsConfig, config);
+                    const session = await createSessionFn(verifyConfig, apiKey);
+                    return {
+                      ask: async (prompt: string) => {
+                        const result = await session.ask(prompt);
+                        return result.text;
+                      },
+                      close: () => session.close(),
+                    };
+                  }
+                : undefined,
             });
-            
+
             if (verification.passed) {
               status = 'passed';
-              
+
               if (config.autoCommit) {
                 // Mark task as checked and auto-complete ancestors first
                 await markTaskChecked(config.taskFile, currentTask.key);
                 await autoCompleteAncestors(config.taskFile, currentTask.key);
-                
+
                 commitHash = commitAll(config.projectDir, `Anton: ${currentTask.text}`);
                 if (commitHash) totalCommits++;
               } else {
@@ -477,16 +518,16 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               }
             } else {
               status = 'failed';
-              
+
               // Restore tracked changes
               await restoreTrackedChanges(config.projectDir);
-              
+
               if (config.aggressiveCleanOnFail) {
                 await cleanUntracked(config.projectDir);
               }
             }
           }
-          
+
           attempt = {
             taskKey: currentTask.key,
             taskText: currentTask.text,
@@ -498,10 +539,9 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             error: undefined,
             commitHash,
           };
-          
+
           totalTokens += tokensUsed;
           iterationsUsed++;
-          
         } catch (error) {
           const isTimeout = controller.signal.aborted;
           attempt = {
@@ -515,21 +555,20 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             error: error instanceof Error ? error.message : String(error),
             commitHash: undefined,
           };
-          
+
           totalTokens += attempt.tokensUsed;
         } finally {
           clearTimeout(timeoutHandle);
           clearInterval(abortPoll);
         }
-        
       } finally {
         if (session) {
           await session.close();
         }
       }
-      
+
       attempts.push(attempt);
-      
+
       // Update retry count
       if (attempt.status !== 'passed') {
         if ((attempt.error ?? '').startsWith('prompt-budget-exceeded')) {
@@ -539,23 +578,23 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           taskRetryCount.set(currentTask.key, attemptNumber);
         }
       }
-      
+
       // Report task end
       progress.onTaskEnd(currentTask, attempt, currentProgress);
-      
+
       // Break on fatal error if not skipping
       if ((attempt.status === 'failed' || attempt.status === 'error') && !config.skipOnFail) {
         break mainLoop;
       }
     }
-    
+
     // Final task file parse to get current state
     const finalTaskFile = await parseTaskFile(config.taskFile);
     const finalCompleted = finalTaskFile.completed.length - initialCompleted;
-    const skipped = attempts.filter(a => a.status === 'skipped').length;
-    const failed = attempts.filter(a => ['failed', 'error'].includes(a.status)).length;
+    const skipped = attempts.filter((a) => a.status === 'skipped').length;
+    const failed = attempts.filter((a) => ['failed', 'error'].includes(a.status)).length;
     const remaining = finalTaskFile.pending.length;
-    
+
     // Determine stop reason
     let stopReason: AntonStopReason;
     if (abortSignal.aborted) {
@@ -573,7 +612,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
     } else {
       stopReason = 'all_done';
     }
-    
+
     const result: AntonRunResult = {
       totalTasks: taskFile.totalCount,
       preCompleted: initialCompleted,
@@ -588,10 +627,9 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
       completedAll: remaining === 0,
       stopReason,
     };
-    
+
     progress.onRunComplete(result);
     return result;
-    
   } finally {
     if (lockHeartbeatTimer) {
       clearInterval(lockHeartbeatTimer);
@@ -602,7 +640,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
     if (lockAcquired) {
       await releaseAntonLock();
     }
-    
+
     process.off('SIGINT', handleAbort);
   }
 }

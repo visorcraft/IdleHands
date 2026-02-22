@@ -6,8 +6,8 @@
  * summaries before and after execution.
  */
 
-import type { ToolCallEvent, ToolResultEvent } from './types.js';
 import type { Styler } from './term.js';
+import type { ToolCallEvent, ToolResultEvent } from './types.js';
 
 const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const INTERVAL = 80; // ms per frame
@@ -37,7 +37,7 @@ export class CliSpinner {
     this.currentTool = null;
     // In dumb terminals, print a single status line instead of animated frames
     if (process.env.TERM === 'dumb' || !process.stderr.isTTY) {
-      process.stderr.write(this.S.dim("  Waiting for response...\n"));
+      process.stderr.write(this.S.dim('  Waiting for response...\n'));
       return;
     }
     this.timer = setInterval(() => this.render(), INTERVAL);
@@ -86,12 +86,9 @@ export class CliSpinner {
       return;
     }
 
-    const icon = event.success
-      ? this.S.green('✓')
-      : this.S.red('✗');
-    const summary = event.summary.length > 120
-      ? event.summary.slice(0, 117) + '...'
-      : event.summary;
+    const icon = event.success ? this.S.green('✓') : this.S.red('✗');
+    const summary =
+      event.summary.length > 120 ? event.summary.slice(0, 117) + '...' : event.summary;
     process.stderr.write(`  ${icon} ${this.S.dim(`${event.name}: ${summary}`)}\n`);
 
     // Phase 7: rich display (only in verbose mode or for key outputs)
@@ -215,7 +212,8 @@ export class CliSpinner {
     switch (event.name) {
       case 'read_file': {
         const p = a.path ?? a.file_path ?? '';
-        const range = a.offset && a.limit ? ` (lines ${a.offset}-${Number(a.offset) + Number(a.limit)})` : '';
+        const range =
+          a.offset && a.limit ? ` (lines ${a.offset}-${Number(a.offset) + Number(a.limit)})` : '';
         const search = a.search ? ` search="${a.search}"` : '';
         return `${p}${range}${search}`;
       }
@@ -248,7 +246,10 @@ export class CliSpinner {
       case 'undo_path':
         return `${a.path ?? '(last edit)'}`;
       default:
-        return Object.keys(a).slice(0, 3).map(k => `${k}=${JSON.stringify(a[k]).slice(0, 30)}`).join(' ');
+        return Object.keys(a)
+          .slice(0, 3)
+          .map((k) => `${k}=${JSON.stringify(a[k]).slice(0, 30)}`)
+          .join(' ');
     }
   }
 }

@@ -1,8 +1,9 @@
-import { setTimeout as delay } from 'node:timers/promises';
 import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ChatCompletionResponse, ChatMessage, ModelsResponse, ToolSchema } from './types.js';
+import { setTimeout as delay } from 'node:timers/promises';
+
+import type { ChatCompletionResponse, ChatMessage, ModelsResponse, ToolSchema } from './types.js';
 
 export type ClientError = Error & {
   status?: number;
@@ -176,10 +177,7 @@ export class OpenAIClient {
    * Built-in model name patterns known to need content-mode tool calls.
    * Can be extended dynamically via ~/.config/idlehands/compat-models.json
    */
-  static readonly CONTENT_MODE_PATTERNS: RegExp[] = [
-    /qwen3\.5.*397b/i,
-    /qwen3\.5.*moe/i,
-  ];
+  static readonly CONTENT_MODE_PATTERNS: RegExp[] = [/qwen3\.5.*397b/i, /qwen3\.5.*moe/i];
 
   /** Telemetry counters for compatibility behavior. */
   private compatTelemetry = {
@@ -192,7 +190,10 @@ export class OpenAIClient {
   private static loadDynamicCompatPatterns(): RegExp[] {
     try {
       const now = Date.now();
-      if (OpenAIClient.dynamicPatternsCache && now - OpenAIClient.dynamicPatternsCache.loadedAt < 30_000) {
+      if (
+        OpenAIClient.dynamicPatternsCache &&
+        now - OpenAIClient.dynamicPatternsCache.loadedAt < 30_000
+      ) {
         return OpenAIClient.dynamicPatternsCache.patterns;
       }
 
@@ -224,15 +225,18 @@ export class OpenAIClient {
   /** Check if a model name matches built-in or dynamic content-mode patterns. */
   static needsContentMode(modelName: string): boolean {
     const dynamic = OpenAIClient.loadDynamicCompatPatterns();
-    return [...OpenAIClient.CONTENT_MODE_PATTERNS, ...dynamic].some(p => p.test(modelName));
+    return [...OpenAIClient.CONTENT_MODE_PATTERNS, ...dynamic].some((p) => p.test(modelName));
   }
-
 
   recordKnownPatternMatch(): void {
     this.compatTelemetry.knownPatternMatches += 1;
   }
 
-  getCompatTelemetry(): { knownPatternMatches: number; autoSwitches: number; contentModeActive: boolean } {
+  getCompatTelemetry(): {
+    knownPatternMatches: number;
+    autoSwitches: number;
+    contentModeActive: boolean;
+  } {
     return {
       knownPatternMatches: this.compatTelemetry.knownPatternMatches,
       autoSwitches: this.compatTelemetry.autoSwitches,
@@ -283,18 +287,22 @@ export class OpenAIClient {
 
     const url = `${this.endpoint}/models`;
     try {
-      await this.fetchWithConnTimeout(url, {
-        method: 'GET',
-        headers: this.headers(),
-        signal,
-      }, this.initialConnectionProbeTimeoutMs);
+      await this.fetchWithConnTimeout(
+        url,
+        {
+          method: 'GET',
+          headers: this.headers(),
+          signal,
+        },
+        this.initialConnectionProbeTimeoutMs
+      );
       this.initialConnectionProbeComplete = true;
     } catch (e: any) {
       if (signal?.aborted) throw e;
       throw makeClientError(
         `Initial connection check failed (${this.initialConnectionProbeTimeoutMs}ms) to ${url}: ${e?.message ?? String(e)}`,
         undefined,
-        true,
+        true
       );
     }
   }
@@ -326,7 +334,7 @@ export class OpenAIClient {
 
   private headers() {
     const h: Record<string, string> = {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
     };
     if (this.apiKey) h.Authorization = `Bearer ${this.apiKey}`;
     return h;
@@ -338,7 +346,11 @@ export class OpenAIClient {
 
   async models(signal?: AbortSignal): Promise<ModelsResponse> {
     const url = `${this.endpoint}/models`;
-    const res = await this.fetchWithConnTimeout(url, { method: 'GET', headers: this.headers(), signal }, 10_000);
+    const res = await this.fetchWithConnTimeout(
+      url,
+      { method: 'GET', headers: this.headers(), signal },
+      10_000
+    );
     if (!res.ok) {
       throw new Error(`GET /models failed: ${res.status} ${res.statusText}`);
     }
@@ -347,9 +359,17 @@ export class OpenAIClient {
 
   async health(signal?: AbortSignal): Promise<any> {
     const url = `${this.rootEndpoint()}/health`;
-    const res = await this.fetchWithConnTimeout(url, { method: 'GET', headers: this.headers(), signal }, 5_000);
+    const res = await this.fetchWithConnTimeout(
+      url,
+      { method: 'GET', headers: this.headers(), signal },
+      5_000
+    );
     if (!res.ok) {
-      throw makeClientError(`GET /health failed: ${res.status} ${res.statusText}`, res.status, true);
+      throw makeClientError(
+        `GET /health failed: ${res.status} ${res.statusText}`,
+        res.status,
+        true
+      );
     }
 
     const ct = String(res.headers.get('content-type') ?? '');
@@ -374,7 +394,11 @@ export class OpenAIClient {
       }
       await delay(pollMs);
     }
-    throw makeClientError(`Server not ready after ${timeoutMs}ms (${this.endpoint})`, undefined, true);
+    throw makeClientError(
+      `Server not ready after ${timeoutMs}ms (${this.endpoint})`,
+      undefined,
+      true
+    );
   }
 
   sanitizeRequest(body: any) {
@@ -416,16 +440,20 @@ export class OpenAIClient {
       if (Array.isArray(body.messages)) {
         // Check if system message already has content-mode tool instructions
         const sysMsg = body.messages.find((m: any) => m?.role === 'system');
-        const hasToolInstructions = sysMsg?.content && /Available tools:/i.test(String(sysMsg.content));
+        const hasToolInstructions =
+          sysMsg?.content && /Available tools:/i.test(String(sysMsg.content));
 
         if (!hasToolInstructions && toolSchemas?.length && sysMsg) {
           // Mid-session auto-switch: inject tool descriptions into system prompt
-          let toolBlock = '\n\nYou have access to the following tools. To call a tool, output a JSON block like:\n{"name": "tool_name", "arguments": {"param": "value"}}\nAvailable tools:\n';
+          let toolBlock =
+            '\n\nYou have access to the following tools. To call a tool, output a JSON block like:\n{"name": "tool_name", "arguments": {"param": "value"}}\nAvailable tools:\n';
           for (const t of toolSchemas) {
             const fn = (t as any)?.function;
             if (fn?.name) {
               const params = fn.parameters?.properties
-                ? Object.entries(fn.parameters.properties).map(([k, v]: [string, any]) => `${k}: ${(v as any).type ?? 'any'}`).join(', ')
+                ? Object.entries(fn.parameters.properties)
+                    .map(([k, v]: [string, any]) => `${k}: ${(v as any).type ?? 'any'}`)
+                    .join(', ')
                 : '';
               toolBlock += `- ${fn.name}(${params}): ${fn.description ?? ''}\n`;
             }
@@ -466,20 +494,21 @@ export class OpenAIClient {
   }): any {
     const body: any = {
       model: opts.model,
-      messages: opts.messages.map((m) => ({ ...m })),  // shallow copy to avoid mutating session state
+      messages: opts.messages.map((m) => ({ ...m })), // shallow copy to avoid mutating session state
       temperature: opts.temperature,
       top_p: opts.top_p,
       max_tokens: opts.max_tokens,
       tools: opts.tools,
       tool_choice: opts.tool_choice,
       stream: opts.stream ?? false,
-      ...opts.extra
+      ...opts.extra,
     };
 
     // Ask streaming servers to include usage in the terminal SSE chunk.
     // llama.cpp emits this as a usage-only chunk (choices=[]), which we parse below.
     if (body.stream === true) {
-      const so = (body.stream_options && typeof body.stream_options === 'object') ? body.stream_options : {};
+      const so =
+        body.stream_options && typeof body.stream_options === 'object' ? body.stream_options : {};
       if ((so as any).include_usage === undefined) {
         body.stream_options = { ...so, include_usage: true };
       }
@@ -492,7 +521,11 @@ export class OpenAIClient {
   }
 
   /** Wrap fetch with a configurable connection/header timeout. */
-  private async fetchWithConnTimeout(url: string, init: RequestInit, connTimeoutMs?: number): Promise<Response> {
+  private async fetchWithConnTimeout(
+    url: string,
+    init: RequestInit,
+    connTimeoutMs?: number
+  ): Promise<Response> {
     // Default follows response timeout (or explicit connection_timeout), with a small floor.
     if (!connTimeoutMs) connTimeoutMs = Math.max(5_000, this.defaultConnectionTimeoutMs);
 
@@ -543,12 +576,20 @@ export class OpenAIClient {
     // Rate-limit delay (§6e: back off if too many 503s in rolling window)
     const rlDelay = this.rateLimiter.getDelay();
     if (rlDelay > 0) {
-      this.log(`rate-limit backoff: waiting ${rlDelay}ms (${this.rateLimiter.recentCount} 503s in window)`);
-      console.warn(`[warn] server returned 503 ${this.rateLimiter.recentCount} times in 60s, backing off ${(rlDelay / 1000).toFixed(1)}s`);
+      this.log(
+        `rate-limit backoff: waiting ${rlDelay}ms (${this.rateLimiter.recentCount} 503s in window)`
+      );
+      console.warn(
+        `[warn] server returned 503 ${this.rateLimiter.recentCount} times in 60s, backing off ${(rlDelay / 1000).toFixed(1)}s`
+      );
       await delay(rlDelay);
     }
 
-    let lastErr: unknown = makeClientError(`POST /chat/completions failed without response`, 503, true);
+    let lastErr: unknown = makeClientError(
+      `POST /chat/completions failed without response`,
+      503,
+      true
+    );
     const reqStart = Date.now();
 
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -564,14 +605,18 @@ export class OpenAIClient {
           method: 'POST',
           headers: this.headers(),
           body: JSON.stringify(clean),
-          signal: timeoutAc.signal
+          signal: timeoutAc.signal,
         });
 
         if (res.status === 503) {
           this.rateLimiter.record503();
           const backoff = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
           this.log(`503 model loading, retrying in ${backoff}ms...`);
-          lastErr = makeClientError(`POST /chat/completions returned 503 (model loading), attempt ${attempt + 1}/3`, 503, true);
+          lastErr = makeClientError(
+            `POST /chat/completions returned 503 (model loading), attempt ${attempt + 1}/3`,
+            503,
+            true
+          );
           if (attempt < 2) {
             await delay(backoff);
             continue;
@@ -595,8 +640,12 @@ export class OpenAIClient {
         if (bp.warn) {
           const avgS = (bp.avg / 1000).toFixed(1);
           const curS = (bp.current / 1000).toFixed(1);
-          this.log(`backpressure warning: response ${curS}s > ${this.backpressure.multiplier}× avg ${avgS}s — consider reducing context size`);
-          console.warn(`[warn] server response time (${curS}s) exceeds ${this.backpressure.multiplier}× session average (${avgS}s) — consider reducing context size`);
+          this.log(
+            `backpressure warning: response ${curS}s > ${this.backpressure.multiplier}× avg ${avgS}s — consider reducing context size`
+          );
+          console.warn(
+            `[warn] server response time (${curS}s) exceeds ${this.backpressure.multiplier}× session average (${avgS}s) — consider reducing context size`
+          );
         }
         (result as any).meta = { total_ms: totalMs, streamed: false };
         this.emitExchange({
@@ -635,7 +684,9 @@ export class OpenAIClient {
 
         if (isConnRefused(e) || isFetchFailed(e)) {
           if (attempt < 2) {
-            this.log(`Connection error (${e?.message ?? 'unknown'}), retrying in 2s (attempt ${attempt + 1}/3)...`);
+            this.log(
+              `Connection error (${e?.message ?? 'unknown'}), retrying in 2s (attempt ${attempt + 1}/3)...`
+            );
             await delay(2000);
             continue;
           }
@@ -687,14 +738,22 @@ export class OpenAIClient {
     // Rate-limit delay (§6e: back off if too many 503s in rolling window)
     const rlDelay = this.rateLimiter.getDelay();
     if (rlDelay > 0) {
-      this.log(`rate-limit backoff: waiting ${rlDelay}ms (${this.rateLimiter.recentCount} 503s in window)`);
-      console.warn(`[warn] server returned 503 ${this.rateLimiter.recentCount} times in 60s, backing off ${(rlDelay / 1000).toFixed(1)}s`);
+      this.log(
+        `rate-limit backoff: waiting ${rlDelay}ms (${this.rateLimiter.recentCount} 503s in window)`
+      );
+      console.warn(
+        `[warn] server returned 503 ${this.rateLimiter.recentCount} times in 60s, backing off ${(rlDelay / 1000).toFixed(1)}s`
+      );
       await delay(rlDelay);
     }
 
-    let lastErr: unknown = makeClientError('POST /chat/completions (stream) failed without response', 503, true);
+    let lastErr: unknown = makeClientError(
+      'POST /chat/completions (stream) failed without response',
+      503,
+      true
+    );
     const reqStart = Date.now();
-    const seen5xxMessages: string[] = [];  // Track 5xx error messages to detect deterministic failures
+    const seen5xxMessages: string[] = []; // Track 5xx error messages to detect deterministic failures
     let switchedToContentModeThisCall = false;
 
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -704,7 +763,7 @@ export class OpenAIClient {
           method: 'POST',
           headers: this.headers(),
           body: JSON.stringify(clean),
-          signal: opts.signal
+          signal: opts.signal,
         });
       } catch (e: any) {
         lastErr = asError(e, `POST /chat/completions (stream) attempt ${attempt + 1} failed`);
@@ -721,7 +780,9 @@ export class OpenAIClient {
 
         if (isConnRefused(e) || isFetchFailed(e)) {
           if (attempt < 2) {
-            this.log(`Connection error (${e?.message ?? 'unknown'}), retrying in 2s (attempt ${attempt + 1}/3)...`);
+            this.log(
+              `Connection error (${e?.message ?? 'unknown'}), retrying in 2s (attempt ${attempt + 1}/3)...`
+            );
             await delay(2000);
             continue;
           }
@@ -744,7 +805,11 @@ export class OpenAIClient {
       if (res.status === 503) {
         this.rateLimiter.record503();
         const backoff = Math.pow(2, attempt + 1) * 1000;
-        lastErr = makeClientError(`POST /chat/completions (stream) returned 503 (model loading), attempt ${attempt + 1}/3`, 503, true);
+        lastErr = makeClientError(
+          `POST /chat/completions (stream) returned 503 (model loading), attempt ${attempt + 1}/3`,
+          503,
+          true
+        );
         this.log(`503 model loading, retrying in ${backoff}ms...`);
         if (attempt < 2) {
           await delay(backoff);
@@ -774,8 +839,12 @@ ${text.slice(0, 2000)}`,
               false
             );
           }
-          this.log('Detected tool-call template incompatibility (|items on String) — switching to content-mode tool calls');
-          console.warn('[warn] Server template cannot handle tool_calls format. Switching to content-mode (tools in system prompt).');
+          this.log(
+            'Detected tool-call template incompatibility (|items on String) — switching to content-mode tool calls'
+          );
+          console.warn(
+            '[warn] Server template cannot handle tool_calls format. Switching to content-mode (tools in system prompt).'
+          );
           this.contentModeToolCalls = true;
           this.compatTelemetry.autoSwitches += 1;
           switchedToContentModeThisCall = true;
@@ -785,11 +854,13 @@ ${text.slice(0, 2000)}`,
 
         // Detect deterministic server errors (same error body repeated) — bail immediately
         if (seen5xxMessages.includes(errSig)) {
-          this.log(`Deterministic server error detected (same ${res.status} repeated) — not retrying`);
+          this.log(
+            `Deterministic server error detected (same ${res.status} repeated) — not retrying`
+          );
           throw makeClientError(
             `Server returns the same error repeatedly (${res.status}). This is likely a template or model compatibility issue, not a transient failure.\n${text.slice(0, 2000)}`,
             res.status,
-            false  // not retryable
+            false // not retryable
           );
         }
         seen5xxMessages.push(errSig);
@@ -797,7 +868,9 @@ ${text.slice(0, 2000)}`,
         // If we keep getting server errors, try a non-streaming request as a last resort.
         const allowFallback = (process.env.IDLEHANDS_STREAM_FALLBACK ?? '1') !== '0';
         if (allowFallback && attempt >= 1) {
-          this.log(`HTTP ${res.status} on stream request, falling back to non-streaming (attempt ${attempt + 1}/3)`);
+          this.log(
+            `HTTP ${res.status} on stream request, falling back to non-streaming (attempt ${attempt + 1}/3)`
+          );
           return this.chat({ ...opts, stream: false });
         }
 
@@ -823,7 +896,10 @@ ${text.slice(0, 2000)}`,
       const decoder = new TextDecoder();
       let buf = '';
 
-      const agg: ChatCompletionResponse = { id: 'stream', choices: [{ index: 0, delta: {}, finish_reason: null }] };
+      const agg: ChatCompletionResponse = {
+        id: 'stream',
+        choices: [{ index: 0, delta: {}, finish_reason: null }],
+      };
       const toolArgsByIndex: Record<number, string> = {};
       const toolNameByIndex: Record<number, string> = {};
       const toolIdByIndex: Record<number, string> = {};
@@ -838,7 +914,10 @@ ${text.slice(0, 2000)}`,
         const timeoutPromise = delay(readTimeout, undefined, { signal: timeoutAc.signal })
           .then(() => 'TIMEOUT' as const)
           .catch(() => 'CANCELLED' as const);
-        const readPromise = reader.read().then((r) => { timeoutAc.abort(); return r; });
+        const readPromise = reader.read().then((r) => {
+          timeoutAc.abort();
+          return r;
+        });
         const result = await Promise.race([readPromise, timeoutPromise]);
 
         if (result === 'TIMEOUT') {
@@ -859,10 +938,16 @@ ${text.slice(0, 2000)}`,
 
           if (sawDelta) {
             this.log(`read timeout after ${tokensReceived} tokens, returning partial`);
-            const partial = this.finalizeStreamAggregate(agg, toolIdByIndex, toolNameByIndex, toolArgsByIndex);
+            const partial = this.finalizeStreamAggregate(
+              agg,
+              toolIdByIndex,
+              toolNameByIndex,
+              toolArgsByIndex
+            );
             const content = partial.choices?.[0]?.message?.content;
             if (content) {
-              partial.choices[0].message!.content = content + `\n[connection lost after ${tokensReceived} tokens]`;
+              partial.choices[0].message!.content =
+                content + `\n[connection lost after ${tokensReceived} tokens]`;
             }
             const totalMs = Date.now() - reqStart;
             (partial as any).meta = {
@@ -885,7 +970,11 @@ ${text.slice(0, 2000)}`,
             return partial;
           }
 
-          throw makeClientError(`Stream read timeout (${readTimeout}ms) with no data received`, undefined, true);
+          throw makeClientError(
+            `Stream read timeout (${readTimeout}ms) with no data received`,
+            undefined,
+            true
+          );
         }
 
         if (result === 'CANCELLED') continue; // timeout was cancelled, read won
@@ -906,7 +995,12 @@ ${text.slice(0, 2000)}`,
             if (!m) continue;
             const data = m[1];
             if (data === '[DONE]') {
-              const doneResult = this.finalizeStreamAggregate(agg, toolIdByIndex, toolNameByIndex, toolArgsByIndex);
+              const doneResult = this.finalizeStreamAggregate(
+                agg,
+                toolIdByIndex,
+                toolNameByIndex,
+                toolArgsByIndex
+              );
               const totalMs = Date.now() - reqStart;
               (doneResult as any).meta = {
                 total_ms: totalMs,
@@ -990,15 +1084,24 @@ ${text.slice(0, 2000)}`,
         }
       }
 
-      const streamResult = this.finalizeStreamAggregate(agg, toolIdByIndex, toolNameByIndex, toolArgsByIndex);
+      const streamResult = this.finalizeStreamAggregate(
+        agg,
+        toolIdByIndex,
+        toolNameByIndex,
+        toolArgsByIndex
+      );
       const totalMs = Date.now() - reqStart;
       // Backpressure: track streaming response time
       const bp = this.backpressure.record(totalMs);
       if (bp.warn) {
         const avgS = (bp.avg / 1000).toFixed(1);
         const curS = (bp.current / 1000).toFixed(1);
-        this.log(`backpressure warning: response ${curS}s > ${this.backpressure.multiplier}× avg ${avgS}s — consider reducing context size`);
-        console.warn(`[warn] server response time (${curS}s) exceeds ${this.backpressure.multiplier}× session average (${avgS}s) — consider reducing context size`);
+        this.log(
+          `backpressure warning: response ${curS}s > ${this.backpressure.multiplier}× avg ${avgS}s — consider reducing context size`
+        );
+        console.warn(
+          `[warn] server response time (${curS}s) exceeds ${this.backpressure.multiplier}× session average (${avgS}s) — consider reducing context size`
+        );
       }
       (streamResult as any).meta = {
         total_ms: totalMs,
@@ -1007,7 +1110,8 @@ ${text.slice(0, 2000)}`,
       };
       const tgSpeed = (() => {
         const completionTokens = streamResult.usage?.completion_tokens;
-        if (completionTokens == null || !Number.isFinite(completionTokens) || totalMs <= 0) return undefined;
+        if (completionTokens == null || !Number.isFinite(completionTokens) || totalMs <= 0)
+          return undefined;
         const genMs = Math.max(1, totalMs - (firstDeltaMs ?? 0));
         return completionTokens / (genMs / 1000);
       })();
@@ -1037,7 +1141,17 @@ ${text.slice(0, 2000)}`,
     const testMessages: ChatMessage[] = [
       { role: 'system', content: 'You are a test.' },
       { role: 'user', content: 'test' },
-      { role: 'assistant', content: '', tool_calls: [{ id: 'test_1', type: 'function', function: { name: 'test_tool', arguments: '{"key":"value"}' } }] },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'test_1',
+            type: 'function',
+            function: { name: 'test_tool', arguments: '{"key":"value"}' },
+          },
+        ],
+      },
       { role: 'tool', tool_call_id: 'test_1', content: 'ok' },
     ];
     try {
@@ -1072,26 +1186,27 @@ ${text.slice(0, 2000)}`,
     const content = agg.choices[0].delta?.content ?? '';
     const toolCalls: any[] = [];
 
-    const indices = Object.keys(toolNameByIndex).map(Number).sort((a, b) => a - b);
+    const indices = Object.keys(toolNameByIndex)
+      .map(Number)
+      .sort((a, b) => a - b);
     for (const idx of indices) {
       toolCalls.push({
         id: toolIdByIndex[idx] ?? `call_${idx}`,
         type: 'function',
         function: {
           name: toolNameByIndex[idx],
-          arguments: toolArgsByIndex[idx] ?? ''
-        }
+          arguments: toolArgsByIndex[idx] ?? '',
+        },
       });
     }
 
     agg.choices[0].message = {
       role: 'assistant',
       content: content.length ? content : null,
-      tool_calls: toolCalls.length ? toolCalls : undefined
+      tool_calls: toolCalls.length ? toolCalls : undefined,
     };
 
     delete agg.choices[0].delta;
     return agg;
   }
-
 }

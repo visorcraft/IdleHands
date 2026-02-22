@@ -1,5 +1,10 @@
 import type { SlashCommand } from '../command-registry.js';
-import { runBackendsSubcommand, runHostsSubcommand, runModelsSubcommand, runSelectSubcommand } from '../runtime-cmds.js';
+import {
+  runBackendsSubcommand,
+  runHostsSubcommand,
+  runModelsSubcommand,
+  runSelectSubcommand,
+} from '../runtime-cmds.js';
 
 export const runtimeCommands: SlashCommand[] = [
   {

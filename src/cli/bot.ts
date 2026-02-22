@@ -5,13 +5,14 @@
  * and bot startup for both frontends.
  */
 
-import readline from 'node:readline/promises';
-import { stdin as input, stdout as output } from 'node:process';
-import path from 'node:path';
-import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
-import { spawnSync } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
+import { stdin as input, stdout as output } from 'node:process';
+import readline from 'node:readline/promises';
+
 import { loadConfig } from '../config.js';
 import { projectDir } from '../utils.js';
 
@@ -21,8 +22,8 @@ export interface BotSetupConfig {
   token: string;
   allowed_users: number[];
   default_dir: string;
-  guild_id?: string;       // Discord only
-  allow_guilds?: boolean;  // Discord only
+  guild_id?: string; // Discord only
+  allow_guilds?: boolean; // Discord only
 }
 
 export function parseUserIds(raw: string): number[] {
@@ -91,24 +92,25 @@ export async function installBotService(): Promise<boolean> {
   const unitPath = path.join(unitDir, UNIFIED_SERVICE);
   await fs.mkdir(unitDir, { recursive: true });
 
-  const content = [
-    '[Unit]',
-    'Description=Idle Hands Bot Service',
-    'After=network-online.target',
-    'Wants=network-online.target',
-    '',
-    '[Service]',
-    'Type=simple',
-    // Resolve idlehands via PATH at service start time so upgrades/install-prefix
-    // changes do not bake in a stale absolute script path.
-    'ExecStart=/usr/bin/env idlehands bot --all',
-    'Restart=on-failure',
-    'RestartSec=10',
-    `Environment=PATH=${process.env.PATH || '/usr/local/bin:/usr/bin:/bin'}`,
-    '',
-    '[Install]',
-    'WantedBy=default.target',
-  ].join('\n') + '\n';
+  const content =
+    [
+      '[Unit]',
+      'Description=Idle Hands Bot Service',
+      'After=network-online.target',
+      'Wants=network-online.target',
+      '',
+      '[Service]',
+      'Type=simple',
+      // Resolve idlehands via PATH at service start time so upgrades/install-prefix
+      // changes do not bake in a stale absolute script path.
+      'ExecStart=/usr/bin/env idlehands bot --all',
+      'Restart=on-failure',
+      'RestartSec=10',
+      `Environment=PATH=${process.env.PATH || '/usr/local/bin:/usr/bin:/bin'}`,
+      '',
+      '[Install]',
+      'WantedBy=default.target',
+    ].join('\n') + '\n';
 
   await fs.writeFile(unitPath, content, 'utf8');
   spawnSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'pipe' });
@@ -226,7 +228,11 @@ export async function runBotSubcommand(opts: BotSubcommandOpts): Promise<void> {
     let botConfig = config.bot?.telegram ?? {};
     const envToken = process.env.IDLEHANDS_TG_TOKEN;
     const envAllowed = process.env.IDLEHANDS_TG_ALLOWED_USERS;
-    const effectiveAllowed = envAllowed ? parseUserIds(envAllowed) : (Array.isArray(botConfig.allowed_users) ? botConfig.allowed_users : []);
+    const effectiveAllowed = envAllowed
+      ? parseUserIds(envAllowed)
+      : Array.isArray(botConfig.allowed_users)
+        ? botConfig.allowed_users
+        : [];
     const hasConfig = Boolean(envToken || botConfig.token) && effectiveAllowed.length > 0;
 
     if (!hasConfig) {
@@ -239,18 +245,24 @@ export async function runBotSubcommand(opts: BotSubcommandOpts): Promise<void> {
       try {
         console.log('[bot] Telegram setup wizard');
         const tokenIn = (await rlSetup.question('Bot token (from @BotFather): ')).trim();
-        const usersIn = (await rlSetup.question('Allowed Telegram user IDs (comma-separated): ')).trim();
+        const usersIn = (
+          await rlSetup.question('Allowed Telegram user IDs (comma-separated): ')
+        ).trim();
         const dirDefault = botConfig.default_dir || projectDir(config);
         const dirIn = (await rlSetup.question(`Default working dir [${dirDefault}]: `)).trim();
 
         const ids = parseUserIds(usersIn);
         if (!tokenIn || ids.length === 0) {
-          console.error('[bot] Setup cancelled: token and at least one allowed user ID are required.');
+          console.error(
+            '[bot] Setup cancelled: token and at least one allowed user ID are required.'
+          );
           process.exit(0);
         }
 
         await writeConfigPatch(configPath, {
-          bot: { telegram: { token: tokenIn, allowed_users: ids, default_dir: dirIn || dirDefault } }
+          bot: {
+            telegram: { token: tokenIn, allowed_users: ids, default_dir: dirIn || dirDefault },
+          },
         });
 
         const loaded = await loadConfig({ configPath, cli: cliCfg });
@@ -266,18 +278,30 @@ export async function runBotSubcommand(opts: BotSubcommandOpts): Promise<void> {
     if (isTTY && st.active) {
       const rlDbg = readline.createInterface({ input, output });
       try {
-        const ans = (await rlDbg.question(`Service ${serviceName} is active. Run in debug foreground instead? [y/N] `)).trim().toLowerCase();
+        const ans = (
+          await rlDbg.question(
+            `Service ${serviceName} is active. Run in debug foreground instead? [y/N] `
+          )
+        )
+          .trim()
+          .toLowerCase();
         if (ans !== 'y' && ans !== 'yes') {
           console.log('[bot] Service is active. Nothing else to do.');
           return;
         }
-        const confirm = (await rlDbg.question('Debug mode will stop the service temporarily. Continue? [y/N] ')).trim().toLowerCase();
+        const confirm = (
+          await rlDbg.question('Debug mode will stop the service temporarily. Continue? [y/N] ')
+        )
+          .trim()
+          .toLowerCase();
         if (confirm !== 'y' && confirm !== 'yes') {
           console.log('[bot] Keeping service mode. Exiting.');
           return;
         }
         spawnSync('systemctl', ['--user', 'stop', serviceName], { stdio: 'inherit' });
-        console.log(`[bot] Service stopped for debug. Restart with: systemctl --user start ${serviceName}`);
+        console.log(
+          `[bot] Service stopped for debug. Restart with: systemctl --user start ${serviceName}`
+        );
       } finally {
         rlDbg.close();
       }

@@ -4,7 +4,7 @@
  */
 
 import { estimateTokensFromMessages } from '../history.js';
-import { makeStyler } from '../term.js';
+import type { makeStyler } from '../term.js';
 import { fetchWithTimeout } from '../utils.js';
 
 // ── Server health ────────────────────────────────────────────────────
@@ -103,7 +103,10 @@ function healthCandidateUrls(endpoint: string): string[] {
 }
 
 /* shared fetchWithTimeout in utils */
-export async function queryServerHealth(endpoint: string, timeoutMs = 2000): Promise<ServerHealthSnapshot> {
+export async function queryServerHealth(
+  endpoint: string,
+  timeoutMs = 2000
+): Promise<ServerHealthSnapshot> {
   const candidates = healthCandidateUrls(endpoint);
   let saw404 = false;
   let lastError = '';
@@ -150,13 +153,44 @@ export async function queryServerHealth(endpoint: string, timeoutMs = 2000): Pro
     }
 
     const model = pickStringDeep(payload, ['model', 'model_name', 'loaded_model', 'current_model']);
-    const contextSize = pickNumberDeep(payload, ['context_size', 'context_window', 'n_ctx', 'ctx_size']);
+    const contextSize = pickNumberDeep(payload, [
+      'context_size',
+      'context_window',
+      'n_ctx',
+      'ctx_size',
+    ]);
     const slotCount = pickNumberDeep(payload, ['slots_total', 'slot_count', 'slots', 'n_slots']);
-    const pendingRequests = pickNumberDeep(payload, ['pending_requests', 'queue', 'queued_requests', 'requests_pending']);
-    const kvUsed = pickNumberDeep(payload, ['kv_used', 'kv_cache_used', 'kv_tokens', 'cache_tokens']);
-    const kvTotal = pickNumberDeep(payload, ['kv_total', 'kv_cache_total', 'context_size', 'context_window', 'n_ctx']);
-    const ppTps = pickNumberDeep(payload, ['pp_tps', 'prompt_tps', 'prompt_tokens_per_second', 'pp_tokens_per_second']);
-    const tgTps = pickNumberDeep(payload, ['tg_tps', 'generation_tps', 'tokens_per_second', 'gen_tps']);
+    const pendingRequests = pickNumberDeep(payload, [
+      'pending_requests',
+      'queue',
+      'queued_requests',
+      'requests_pending',
+    ]);
+    const kvUsed = pickNumberDeep(payload, [
+      'kv_used',
+      'kv_cache_used',
+      'kv_tokens',
+      'cache_tokens',
+    ]);
+    const kvTotal = pickNumberDeep(payload, [
+      'kv_total',
+      'kv_cache_total',
+      'context_size',
+      'context_window',
+      'n_ctx',
+    ]);
+    const ppTps = pickNumberDeep(payload, [
+      'pp_tps',
+      'prompt_tps',
+      'prompt_tokens_per_second',
+      'pp_tokens_per_second',
+    ]);
+    const tgTps = pickNumberDeep(payload, [
+      'tg_tps',
+      'generation_tps',
+      'tokens_per_second',
+      'gen_tps',
+    ]);
 
     const statusFromPayload = pickStringDeep(payload, ['status', 'state']) || statusText || 'ok';
 
@@ -225,7 +259,8 @@ export function percentile(nums: number[], p: number): number | undefined {
 
 export function formatStatusLine(session: any, cfg: any, S: ReturnType<typeof makeStyler>): string {
   const usedReported = (session?.usage?.prompt ?? 0) + (session?.usage?.completion ?? 0);
-  const used = usedReported > 0 ? usedReported : estimateTokensFromMessages(session?.messages ?? []);
+  const used =
+    usedReported > 0 ? usedReported : estimateTokensFromMessages(session?.messages ?? []);
   const ctx = session?.contextWindow ?? 0;
   const pct = ctx > 0 ? ((used / ctx) * 100).toFixed(1) : '?';
 
@@ -255,8 +290,16 @@ const MODEL_COST_PROFILES: ModelCostProfile[] = [
   { pattern: /gpt-4o\b/i, promptPerMillionUsd: 5.0, completionPerMillionUsd: 15.0 },
   { pattern: /gpt-4o-mini\b/i, promptPerMillionUsd: 0.15, completionPerMillionUsd: 0.6 },
   { pattern: /gpt-4\.1-mini\b/i, promptPerMillionUsd: 0.4, completionPerMillionUsd: 1.6 },
-  { pattern: /claude-3-5-sonnet|claude-3\.5-sonnet/i, promptPerMillionUsd: 3.0, completionPerMillionUsd: 15.0 },
-  { pattern: /claude-opus|claude-3-opus/i, promptPerMillionUsd: 15.0, completionPerMillionUsd: 75.0 },
+  {
+    pattern: /claude-3-5-sonnet|claude-3\.5-sonnet/i,
+    promptPerMillionUsd: 3.0,
+    completionPerMillionUsd: 15.0,
+  },
+  {
+    pattern: /claude-opus|claude-3-opus/i,
+    promptPerMillionUsd: 15.0,
+    completionPerMillionUsd: 75.0,
+  },
 ];
 
 function isPrivateHost(host: string): boolean {
@@ -312,7 +355,10 @@ export function estimateCostLine(opts: {
 export async function replayCaptureFile(filePath: string, cfg: any): Promise<void> {
   const { default: fs } = await import('node:fs/promises');
   const raw = await fs.readFile(filePath, 'utf8');
-  const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const lines = raw
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
   if (!lines.length) throw new Error('Capture file is empty.');
 
   const entries = lines.map((line, idx) => {
@@ -327,12 +373,14 @@ export async function replayCaptureFile(filePath: string, cfg: any): Promise<voi
   const { unifiedDiffFromBuffers } = await import('../replay_cli.js');
   const client = new OpenAIClient(cfg.endpoint, undefined, !!cfg.verbose);
 
-  console.log(`Replaying ${entries.length} capture entr${entries.length === 1 ? 'y' : 'ies'} against ${cfg.endpoint}`);
+  console.log(
+    `Replaying ${entries.length} capture entr${entries.length === 1 ? 'y' : 'ies'} against ${cfg.endpoint}`
+  );
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i] ?? {};
-    const request = (entry.request && typeof entry.request === 'object') ? entry.request : {};
-    const response = (entry.response && typeof entry.response === 'object') ? entry.response : {};
+    const request = entry.request && typeof entry.request === 'object' ? entry.request : {};
+    const response = entry.response && typeof entry.response === 'object' ? entry.response : {};
 
     const model = String(cfg.model || request.model || '').trim();
     if (!model) {
@@ -351,7 +399,8 @@ export async function replayCaptureFile(filePath: string, cfg: any): Promise<voi
       temperature: typeof request.temperature === 'number' ? request.temperature : undefined,
       top_p: typeof request.top_p === 'number' ? request.top_p : undefined,
       max_tokens: typeof request.max_tokens === 'number' ? request.max_tokens : undefined,
-      extra: request.cache_prompt !== undefined ? { cache_prompt: request.cache_prompt } : undefined,
+      extra:
+        request.cache_prompt !== undefined ? { cache_prompt: request.cache_prompt } : undefined,
     });
 
     const oldText = String((response as any)?.choices?.[0]?.message?.content ?? '');
@@ -391,7 +440,11 @@ export class StatusBar {
   constructor(_S?: ReturnType<typeof makeStyler>) {}
 
   canUse(): boolean {
-    return !!process.stdout.isTTY && typeof (process.stdout as any).rows === 'number' && (process.stdout as any).rows >= 10;
+    return (
+      !!process.stdout.isTTY &&
+      typeof (process.stdout as any).rows === 'number' &&
+      (process.stdout as any).rows >= 10
+    );
   }
 
   setEnabled(on: boolean): void {

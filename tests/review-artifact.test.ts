@@ -1,9 +1,9 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { describe, it } from 'node:test';
 
 import { createSession } from '../dist/agent.js';
 import { projectIndexKeys } from '../dist/indexer.js';
@@ -34,9 +34,9 @@ function baseConfig(dir: string, overrides?: Record<string, any>): any {
       enabled: true,
       vault: { enabled: true, mode: 'passive' },
       lens: { enabled: false },
-      replay: { enabled: false }
+      replay: { enabled: false },
     },
-    ...(overrides ?? {})
+    ...(overrides ?? {}),
   };
 }
 
@@ -86,7 +86,7 @@ function makeMemoryVault(initial: Record<string, string> = {}) {
     },
     async note() {
       return 'row-note';
-    }
+    },
   };
 
   return { vault, rows, getLatestKeys, upsertKeys };
@@ -128,21 +128,23 @@ describe('review artifact hardening matrix', () => {
 
         let llmCalls = 0;
         const fakeClient: any = {
-          async models() { return { data: [{ id: 'fake-model' }] }; },
+          async models() {
+            return { data: [{ id: 'fake-model' }] };
+          },
           async warmup() {},
           async chatStream() {
             llmCalls += 1;
             return {
               id: 'fake-1',
               choices: [{ index: 0, message: { role: 'assistant', content: 'should-not-run' } }],
-              usage: { prompt_tokens: 1, completion_tokens: 1 }
+              usage: { prompt_tokens: 1, completion_tokens: 1 },
             };
-          }
+          },
         };
 
         const session = await createSession({
           config: baseConfig(dir),
-          runtime: { client: fakeClient, vault }
+          runtime: { client: fakeClient, vault },
         });
 
         try {
@@ -152,7 +154,11 @@ describe('review artifact hardening matrix', () => {
 
           const cmdOut = await session.ask('/review print');
           assert.equal(cmdOut.text, 'stored review body');
-          assert.equal(llmCalls, 0, 'explicit /review print command should also bypass model generation');
+          assert.equal(
+            llmCalls,
+            0,
+            'explicit /review print command should also bypass model generation'
+          );
         } finally {
           await session.close();
         }
@@ -168,21 +174,25 @@ describe('review artifact hardening matrix', () => {
 
         let llmCalls = 0;
         const fakeClient: any = {
-          async models() { return { data: [{ id: 'fake-model' }] }; },
+          async models() {
+            return { data: [{ id: 'fake-model' }] };
+          },
           async warmup() {},
           async chatStream() {
             llmCalls += 1;
             return {
               id: 'fake-1',
-              choices: [{ index: 0, message: { role: 'assistant', content: 'generated review text' } }],
-              usage: { prompt_tokens: 10, completion_tokens: 10 }
+              choices: [
+                { index: 0, message: { role: 'assistant', content: 'generated review text' } },
+              ],
+              usage: { prompt_tokens: 10, completion_tokens: 10 },
             };
-          }
+          },
         };
 
         const session = await createSession({
           config: baseConfig(dir),
-          runtime: { client: fakeClient, vault }
+          runtime: { client: fakeClient, vault },
         });
 
         try {
@@ -199,7 +209,10 @@ describe('review artifact hardening matrix', () => {
           );
 
           assert.ok(rows.has(latestKey), 'latest review pointer should be stored after generation');
-          assert.ok(upsertKeys.some((k) => k.startsWith(byIdPrefix)), 'immutable review artifact row should also be stored');
+          assert.ok(
+            upsertKeys.some((k) => k.startsWith(byIdPrefix)),
+            'immutable review artifact row should also be stored'
+          );
         } finally {
           await session.close();
         }
@@ -216,21 +229,23 @@ describe('review artifact hardening matrix', () => {
 
         let llmCalls = 0;
         const fakeClient: any = {
-          async models() { return { data: [{ id: 'fake-model' }] }; },
+          async models() {
+            return { data: [{ id: 'fake-model' }] };
+          },
           async warmup() {},
           async chatStream() {
             llmCalls += 1;
             return {
               id: 'fake-1',
               choices: [{ index: 0, message: { role: 'assistant', content: 'should-not-run' } }],
-              usage: { prompt_tokens: 1, completion_tokens: 1 }
+              usage: { prompt_tokens: 1, completion_tokens: 1 },
             };
-          }
+          },
         };
 
         const session = await createSession({
           config: baseConfig(dir),
-          runtime: { client: fakeClient, vault }
+          runtime: { client: fakeClient, vault },
         });
 
         try {
@@ -252,38 +267,42 @@ describe('review artifact hardening matrix', () => {
           let llmB = 0;
 
           const clientA: any = {
-            async models() { return { data: [{ id: 'fake-model' }] }; },
+            async models() {
+              return { data: [{ id: 'fake-model' }] };
+            },
             async warmup() {},
             async chatStream() {
               llmA += 1;
               return {
                 id: `a-${llmA}`,
                 choices: [{ index: 0, message: { role: 'assistant', content: 'review-A' } }],
-                usage: { prompt_tokens: 5, completion_tokens: 5 }
+                usage: { prompt_tokens: 5, completion_tokens: 5 },
               };
-            }
+            },
           };
 
           const clientB: any = {
-            async models() { return { data: [{ id: 'fake-model' }] }; },
+            async models() {
+              return { data: [{ id: 'fake-model' }] };
+            },
             async warmup() {},
             async chatStream() {
               llmB += 1;
               return {
                 id: `b-${llmB}`,
                 choices: [{ index: 0, message: { role: 'assistant', content: 'review-B' } }],
-                usage: { prompt_tokens: 5, completion_tokens: 5 }
+                usage: { prompt_tokens: 5, completion_tokens: 5 },
               };
-            }
+            },
           };
 
           const sessionA = await createSession({
             config: baseConfig(projectA),
-            runtime: { client: clientA, vault: shared.vault }
+            runtime: { client: clientA, vault: shared.vault },
           });
           const sessionB = await createSession({
             config: baseConfig(projectB),
-            runtime: { client: clientB, vault: shared.vault }
+            runtime: { client: clientB, vault: shared.vault },
           });
 
           try {
@@ -304,8 +323,12 @@ describe('review artifact hardening matrix', () => {
             assert.ok(shared.rows.has(latestB));
             assert.notEqual(latestA, latestB, 'latest keys must be project-scoped');
 
-            const immutableA = Array.from(shared.rows.keys()).filter((k) => k.startsWith(`artifact:review:item:${idA}:`));
-            const immutableB = Array.from(shared.rows.keys()).filter((k) => k.startsWith(`artifact:review:item:${idB}:`));
+            const immutableA = Array.from(shared.rows.keys()).filter((k) =>
+              k.startsWith(`artifact:review:item:${idA}:`)
+            );
+            const immutableB = Array.from(shared.rows.keys()).filter((k) =>
+              k.startsWith(`artifact:review:item:${idB}:`)
+            );
             assert.equal(immutableA.length >= 1, true);
             assert.equal(immutableB.length >= 1, true);
           } finally {
@@ -322,21 +345,23 @@ describe('review artifact hardening matrix', () => {
 
         let llmCalls = 0;
         const fakeClient: any = {
-          async models() { return { data: [{ id: 'fake-model' }] }; },
+          async models() {
+            return { data: [{ id: 'fake-model' }] };
+          },
           async warmup() {},
           async chatStream() {
             llmCalls += 1;
             return {
               id: 'fake-1',
               choices: [{ index: 0, message: { role: 'assistant', content: 'fallback-analysis' } }],
-              usage: { prompt_tokens: 1, completion_tokens: 1 }
+              usage: { prompt_tokens: 1, completion_tokens: 1 },
             };
-          }
+          },
         };
 
         const session = await createSession({
           config: baseConfig(dir),
-          runtime: { client: fakeClient, vault }
+          runtime: { client: fakeClient, vault },
         });
 
         try {
@@ -357,21 +382,31 @@ describe('review artifact hardening matrix', () => {
 
         let llmCalls = 0;
         const fakeClient: any = {
-          async models() { return { data: [{ id: 'fake-model' }] }; },
+          async models() {
+            return { data: [{ id: 'fake-model' }] };
+          },
           async warmup() {},
           async chatStream() {
             llmCalls += 1;
             return {
               id: `fake-${llmCalls}`,
-              choices: [{ index: 0, message: { role: 'assistant', content: '## Full Review\n\n- Finding 1\n- Finding 2' } }],
-              usage: { prompt_tokens: 12, completion_tokens: 9 }
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: 'assistant',
+                    content: '## Full Review\n\n- Finding 1\n- Finding 2',
+                  },
+                },
+              ],
+              usage: { prompt_tokens: 12, completion_tokens: 9 },
             };
-          }
+          },
         };
 
         const session = await createSession({
           config: baseConfig(dir),
-          runtime: { client: fakeClient, vault }
+          runtime: { client: fakeClient, vault },
         });
 
         try {
@@ -394,21 +429,25 @@ describe('review artifact hardening matrix', () => {
 
         let llmCalls = 0;
         const fakeClient: any = {
-          async models() { return { data: [{ id: 'fake-model' }] }; },
+          async models() {
+            return { data: [{ id: 'fake-model' }] };
+          },
           async warmup() {},
           async chatStream() {
             llmCalls += 1;
             return {
               id: `fake-${llmCalls}`,
-              choices: [{ index: 0, message: { role: 'assistant', content: 'durable review content' } }],
-              usage: { prompt_tokens: 40, completion_tokens: 20 }
+              choices: [
+                { index: 0, message: { role: 'assistant', content: 'durable review content' } },
+              ],
+              usage: { prompt_tokens: 40, completion_tokens: 20 },
             };
-          }
+          },
         };
 
         const session = await createSession({
           config: baseConfig(dir, { context_window: 256, max_tokens: 64 }),
-          runtime: { client: fakeClient, vault }
+          runtime: { client: fakeClient, vault },
         });
 
         try {
@@ -423,7 +462,11 @@ describe('review artifact hardening matrix', () => {
 
           const replay = await session.ask('show the full code review');
           assert.equal(replay.text, 'durable review content');
-          assert.equal(llmCalls, 1, 'replay should come from artifact even under heavy context pressure');
+          assert.equal(
+            llmCalls,
+            1,
+            'replay should come from artifact even under heavy context pressure'
+          );
         } finally {
           await session.close();
         }
@@ -441,21 +484,23 @@ describe('review artifact hardening matrix', () => {
 
         let llmCalls = 0;
         const fakeClient: any = {
-          async models() { return { data: [{ id: 'fake-model' }] }; },
+          async models() {
+            return { data: [{ id: 'fake-model' }] };
+          },
           async warmup() {},
           async chatStream() {
             llmCalls += 1;
             return {
               id: 'fake-1',
               choices: [{ index: 0, message: { role: 'assistant', content: 'should-not-run' } }],
-              usage: { prompt_tokens: 1, completion_tokens: 1 }
+              usage: { prompt_tokens: 1, completion_tokens: 1 },
             };
-          }
+          },
         };
 
         const session = await createSession({
           config: baseConfig(dir),
-          runtime: { client: fakeClient, vault }
+          runtime: { client: fakeClient, vault },
         });
 
         try {
@@ -494,21 +539,23 @@ describe('review artifact hardening matrix', () => {
 
         let llmCalls = 0;
         const fakeClient: any = {
-          async models() { return { data: [{ id: 'fake-model' }] }; },
+          async models() {
+            return { data: [{ id: 'fake-model' }] };
+          },
           async warmup() {},
           async chatStream() {
             llmCalls += 1;
             return {
               id: 'fake-1',
               choices: [{ index: 0, message: { role: 'assistant', content: 'should-not-run' } }],
-              usage: { prompt_tokens: 1, completion_tokens: 1 }
+              usage: { prompt_tokens: 1, completion_tokens: 1 },
             };
-          }
+          },
         };
 
         const session = await createSession({
           config: baseConfig(dir),
-          runtime: { client: fakeClient, vault }
+          runtime: { client: fakeClient, vault },
         });
 
         try {
@@ -547,16 +594,18 @@ describe('review artifact hardening matrix', () => {
 
         let llmCalls = 0;
         const fakeClient: any = {
-          async models() { return { data: [{ id: 'fake-model' }] }; },
+          async models() {
+            return { data: [{ id: 'fake-model' }] };
+          },
           async warmup() {},
           async chatStream() {
             llmCalls += 1;
             return {
               id: 'fake-1',
               choices: [{ index: 0, message: { role: 'assistant', content: 'should-not-run' } }],
-              usage: { prompt_tokens: 1, completion_tokens: 1 }
+              usage: { prompt_tokens: 1, completion_tokens: 1 },
             };
-          }
+          },
         };
 
         const session = await createSession({
@@ -568,7 +617,7 @@ describe('review artifact hardening matrix', () => {
               replay: { enabled: false },
             },
           }),
-          runtime: { client: fakeClient, vault }
+          runtime: { client: fakeClient, vault },
         });
 
         try {
@@ -596,35 +645,49 @@ describe('review artifact hardening matrix', () => {
         let callsB = 0;
 
         const clientA: any = {
-          async models() { return { data: [{ id: 'fake-model' }] }; },
+          async models() {
+            return { data: [{ id: 'fake-model' }] };
+          },
           async warmup() {},
           async chatStream() {
             callsA += 1;
             await new Promise((r) => setTimeout(r, 25));
             return {
               id: `a-${callsA}`,
-              choices: [{ index: 0, message: { role: 'assistant', content: 'concurrent-review-A' } }],
-              usage: { prompt_tokens: 8, completion_tokens: 8 }
+              choices: [
+                { index: 0, message: { role: 'assistant', content: 'concurrent-review-A' } },
+              ],
+              usage: { prompt_tokens: 8, completion_tokens: 8 },
             };
-          }
+          },
         };
 
         const clientB: any = {
-          async models() { return { data: [{ id: 'fake-model' }] }; },
+          async models() {
+            return { data: [{ id: 'fake-model' }] };
+          },
           async warmup() {},
           async chatStream() {
             callsB += 1;
             await new Promise((r) => setTimeout(r, 5));
             return {
               id: `b-${callsB}`,
-              choices: [{ index: 0, message: { role: 'assistant', content: 'concurrent-review-B' } }],
-              usage: { prompt_tokens: 8, completion_tokens: 8 }
+              choices: [
+                { index: 0, message: { role: 'assistant', content: 'concurrent-review-B' } },
+              ],
+              usage: { prompt_tokens: 8, completion_tokens: 8 },
             };
-          }
+          },
         };
 
-        const sessionA = await createSession({ config: baseConfig(dir), runtime: { client: clientA, vault: shared.vault } });
-        const sessionB = await createSession({ config: baseConfig(dir), runtime: { client: clientB, vault: shared.vault } });
+        const sessionA = await createSession({
+          config: baseConfig(dir),
+          runtime: { client: clientA, vault: shared.vault },
+        });
+        const sessionB = await createSession({
+          config: baseConfig(dir),
+          runtime: { client: clientB, vault: shared.vault },
+        });
 
         try {
           await Promise.all([
@@ -636,10 +699,19 @@ describe('review artifact hardening matrix', () => {
           const latestKey = `artifact:review:latest:${projectId}`;
           const latestRaw = shared.rows.get(latestKey) ?? '';
           const latest = JSON.parse(latestRaw);
-          assert.equal(['concurrent-review-A', 'concurrent-review-B'].includes(latest.content), true);
+          assert.equal(
+            ['concurrent-review-A', 'concurrent-review-B'].includes(latest.content),
+            true
+          );
 
-          const immutable = Array.from(shared.rows.keys()).filter((k) => k.startsWith(`artifact:review:item:${projectId}:`));
-          assert.equal(immutable.length >= 2, true, 'both concurrent writes should keep immutable records');
+          const immutable = Array.from(shared.rows.keys()).filter((k) =>
+            k.startsWith(`artifact:review:item:${projectId}:`)
+          );
+          assert.equal(
+            immutable.length >= 2,
+            true,
+            'both concurrent writes should keep immutable records'
+          );
         } finally {
           await sessionA.close();
           await sessionB.close();
@@ -674,27 +746,35 @@ describe('review artifact hardening matrix', () => {
             rows.set(key, value);
             return `row-${upsertCount}`;
           },
-          async archiveToolMessages() { return 0; },
-          async note() { return 'row-note'; },
+          async archiveToolMessages() {
+            return 0;
+          },
+          async note() {
+            return 'row-note';
+          },
         };
 
         let llmCalls = 0;
         const fakeClient: any = {
-          async models() { return { data: [{ id: 'fake-model' }] }; },
+          async models() {
+            return { data: [{ id: 'fake-model' }] };
+          },
           async warmup() {},
           async chatStream() {
             llmCalls += 1;
             return {
               id: `fake-${llmCalls}`,
-              choices: [{ index: 0, message: { role: 'assistant', content: 'crash-tolerant-review' } }],
-              usage: { prompt_tokens: 5, completion_tokens: 5 }
+              choices: [
+                { index: 0, message: { role: 'assistant', content: 'crash-tolerant-review' } },
+              ],
+              usage: { prompt_tokens: 5, completion_tokens: 5 },
             };
-          }
+          },
         };
 
         const session = await createSession({
           config: baseConfig(dir),
-          runtime: { client: fakeClient, vault: flakyVault }
+          runtime: { client: fakeClient, vault: flakyVault },
         });
 
         try {
@@ -748,24 +828,32 @@ describe('review artifact hardening matrix', () => {
         const latestKey = `artifact:review:latest:${projectId}`;
 
         // Case 1: malformed/partial payload.
-        const corrupted = JSON.stringify({ kind: 'code_review', content: 'missing required fields' });
+        const corrupted = JSON.stringify({
+          kind: 'code_review',
+          content: 'missing required fields',
+        });
         const firstVault = makeMemoryVault({ [latestKey]: corrupted });
 
         let llmCalls = 0;
         const fakeClient: any = {
-          async models() { return { data: [{ id: 'fake-model' }] }; },
+          async models() {
+            return { data: [{ id: 'fake-model' }] };
+          },
           async warmup() {},
           async chatStream() {
             llmCalls += 1;
             return {
               id: 'fake-1',
               choices: [{ index: 0, message: { role: 'assistant', content: 'should-not-run' } }],
-              usage: { prompt_tokens: 1, completion_tokens: 1 }
+              usage: { prompt_tokens: 1, completion_tokens: 1 },
             };
-          }
+          },
         };
 
-        const session1 = await createSession({ config: baseConfig(dir), runtime: { client: fakeClient, vault: firstVault.vault } });
+        const session1 = await createSession({
+          config: baseConfig(dir),
+          runtime: { client: fakeClient, vault: firstVault.vault },
+        });
         try {
           const out = await session1.ask('print the full code review');
           assert.match(out.text, /No stored full code review found yet/i);
@@ -786,7 +874,10 @@ describe('review artifact hardening matrix', () => {
           content: 'wrong-project-review',
         });
         const secondVault = makeMemoryVault({ [latestKey]: mismatched });
-        const session2 = await createSession({ config: baseConfig(dir), runtime: { client: fakeClient, vault: secondVault.vault } });
+        const session2 = await createSession({
+          config: baseConfig(dir),
+          runtime: { client: fakeClient, vault: secondVault.vault },
+        });
         try {
           const out = await session2.ask('print the full code review');
           assert.match(out.text, /No stored full code review found yet/i);
@@ -806,18 +897,23 @@ describe('review artifact hardening matrix', () => {
         const { vault } = makeMemoryVault({ [latestKey]: makeArtifact(dir, 'zero-tools-review') });
 
         const fakeClient: any = {
-          async models() { return { data: [{ id: 'fake-model' }] }; },
+          async models() {
+            return { data: [{ id: 'fake-model' }] };
+          },
           async warmup() {},
           async chatStream() {
             return {
               id: 'fake-1',
               choices: [{ index: 0, message: { role: 'assistant', content: 'should-not-run' } }],
-              usage: { prompt_tokens: 1, completion_tokens: 1 }
+              usage: { prompt_tokens: 1, completion_tokens: 1 },
             };
-          }
+          },
         };
 
-        const session = await createSession({ config: baseConfig(dir), runtime: { client: fakeClient, vault } });
+        const session = await createSession({
+          config: baseConfig(dir),
+          runtime: { client: fakeClient, vault },
+        });
         try {
           const out = await session.ask('show the full code review');
           assert.equal(out.toolCalls, 0);
@@ -836,31 +932,40 @@ describe('review artifact hardening matrix', () => {
 
         let llmCalls = 0;
         const fakeClient: any = {
-          async models() { return { data: [{ id: 'fake-model' }] }; },
+          async models() {
+            return { data: [{ id: 'fake-model' }] };
+          },
           async warmup() {},
           async chatStream() {
             llmCalls += 1;
             // If retrieval accidentally enters model loop, this would try to start a read-heavy pattern.
             return {
               id: `fake-${llmCalls}`,
-              choices: [{
-                index: 0,
-                message: {
-                  role: 'assistant',
-                  content: 'loop candidate',
-                  tool_calls: [{
-                    id: 'call-1',
-                    type: 'function',
-                    function: { name: 'list_dir', arguments: JSON.stringify({ path: '.' }) }
-                  }]
-                }
-              }],
-              usage: { prompt_tokens: 5, completion_tokens: 5 }
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: 'assistant',
+                    content: 'loop candidate',
+                    tool_calls: [
+                      {
+                        id: 'call-1',
+                        type: 'function',
+                        function: { name: 'list_dir', arguments: JSON.stringify({ path: '.' }) },
+                      },
+                    ],
+                  },
+                },
+              ],
+              usage: { prompt_tokens: 5, completion_tokens: 5 },
             };
-          }
+          },
         };
 
-        const session = await createSession({ config: baseConfig(dir), runtime: { client: fakeClient, vault } });
+        const session = await createSession({
+          config: baseConfig(dir),
+          runtime: { client: fakeClient, vault },
+        });
         try {
           const out = await session.ask('print the full code review');
           assert.equal(out.text, 'loop-immune-review');
@@ -881,19 +986,24 @@ describe('review artifact hardening matrix', () => {
 
         let llmCalls = 0;
         const fakeClient: any = {
-          async models() { return { data: [{ id: 'fake-model' }] }; },
+          async models() {
+            return { data: [{ id: 'fake-model' }] };
+          },
           async warmup() {},
           async chatStream() {
             llmCalls += 1;
             return {
               id: 'fake-1',
               choices: [{ index: 0, message: { role: 'assistant', content: 'should-not-run' } }],
-              usage: { prompt_tokens: 1, completion_tokens: 1 }
+              usage: { prompt_tokens: 1, completion_tokens: 1 },
             };
-          }
+          },
         };
 
-        const session = await createSession({ config: baseConfig(dir), runtime: { client: fakeClient, vault } });
+        const session = await createSession({
+          config: baseConfig(dir),
+          runtime: { client: fakeClient, vault },
+        });
         try {
           const first = await session.ask('print the full code review');
           const second = await session.ask('print the full code review');

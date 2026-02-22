@@ -1,8 +1,8 @@
-import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { describe, it, before, after } from 'node:test';
 
 import { createSession, parseToolCallsFromContent } from '../dist/agent.js';
 
@@ -41,9 +41,9 @@ function baseConfig(tmpDir: string, overrides?: Record<string, any>): any {
       enabled: true,
       vault: { enabled: true, mode: 'passive' },
       lens: { enabled: true },
-      replay: { enabled: false }
+      replay: { enabled: false },
     },
-    ...(overrides ?? {})
+    ...(overrides ?? {}),
   };
 }
 
@@ -150,7 +150,9 @@ describe('context overflow recovery', () => {
       async chatStream() {
         calls++;
         if (calls === 1) {
-          const err: any = new Error('POST /chat/completions failed: 400 Bad Request {"error":{"code":400,"message":"request (64330 tokens) exceeds the available context size (64000 tokens)"}}');
+          const err: any = new Error(
+            'POST /chat/completions failed: 400 Bad Request {"error":{"code":400,"message":"request (64330 tokens) exceeds the available context size (64000 tokens)"}}'
+          );
           err.status = 400;
           err.retryable = false;
           throw err;
@@ -169,12 +171,12 @@ describe('context overflow recovery', () => {
           ],
           usage: { prompt_tokens: 120, completion_tokens: 8 },
         };
-      }
+      },
     };
 
     const session = await createSession({
       config: baseConfig(tmpDir, { max_iterations: 3 }),
-      runtime: { client: fakeClient }
+      runtime: { client: fakeClient },
     });
 
     const result = await session.ask('trigger overflow recovery');
@@ -191,7 +193,7 @@ describe('agent failure persistence', () => {
       async note(key: string, value: string) {
         notes.push({ key, value });
       },
-      async upsertNote() {}
+      async upsertNote() {},
     };
 
     const fakeClient: any = {
@@ -214,16 +216,16 @@ describe('agent failure persistence', () => {
                     type: 'function',
                     function: {
                       name: 'list_dir',
-                      arguments: JSON.stringify({ path: '.' })
-                    }
-                  }
-                ]
-              }
-            }
+                      arguments: JSON.stringify({ path: '.' }),
+                    },
+                  },
+                ],
+              },
+            },
           ],
-          usage: { prompt_tokens: 50, completion_tokens: 10 }
+          usage: { prompt_tokens: 50, completion_tokens: 10 },
         };
-      }
+      },
     };
 
     const config = baseConfig(tmpDir, { max_iterations: 1 });
@@ -233,8 +235,8 @@ describe('agent failure persistence', () => {
       config,
       runtime: {
         client: fakeClient,
-        vault: fakeVault
-      }
+        vault: fakeVault,
+      },
     });
 
     await assert.rejects(() => session.ask('do too much'), /max iterations exceeded/);
@@ -253,7 +255,7 @@ describe('agent failure persistence', () => {
       async note(key: string, value: string) {
         notes.push({ key, value });
       },
-      async upsertNote() {}
+      async upsertNote() {},
     };
 
     const fakeClient: any = {
@@ -264,7 +266,7 @@ describe('agent failure persistence', () => {
       async chatStream() {
         calls += 1;
         throw new Error('should not be called when timeout is exceeded before first request');
-      }
+      },
     };
 
     const config = baseConfig(tmpDir, { timeout: -1 });
@@ -273,8 +275,8 @@ describe('agent failure persistence', () => {
       config,
       runtime: {
         client: fakeClient,
-        vault: fakeVault
-      }
+        vault: fakeVault,
+      },
     });
 
     await assert.rejects(() => session.ask('this should timeout fast'), /session timeout exceeded/);
@@ -303,7 +305,7 @@ describe('agent no-progress watchdog', () => {
           choices: [{ index: 0, message: { role: 'assistant', content: '' } }],
           usage: { prompt_tokens: 1, completion_tokens: 1 },
         };
-      }
+      },
     };
 
     const config = baseConfig(tmpDir, { max_iterations: 20, verbose: false });
@@ -340,7 +342,16 @@ describe('agent no-tool reprompt recovery', () => {
         if (callNo === 1) {
           return {
             id: 'r1',
-            choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: "I'll start by checking the project structure." } }],
+            choices: [
+              {
+                index: 0,
+                finish_reason: 'stop',
+                message: {
+                  role: 'assistant',
+                  content: "I'll start by checking the project structure.",
+                },
+              },
+            ],
             usage: { prompt_tokens: 1, completion_tokens: 1 },
           };
         }
@@ -348,7 +359,16 @@ describe('agent no-tool reprompt recovery', () => {
         if (callNo === 2) {
           return {
             id: 'r2',
-            choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'Next I will inspect key files before editing.' } }],
+            choices: [
+              {
+                index: 0,
+                finish_reason: 'stop',
+                message: {
+                  role: 'assistant',
+                  content: 'Next I will inspect key files before editing.',
+                },
+              },
+            ],
             usage: { prompt_tokens: 1, completion_tokens: 1 },
           };
         }
@@ -356,29 +376,35 @@ describe('agent no-tool reprompt recovery', () => {
         if (callNo === 3) {
           return {
             id: 'r3',
-            choices: [{
-              index: 0,
-              finish_reason: 'tool_calls',
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [{
-                  id: 'l1',
-                  type: 'function',
-                  function: { name: 'list_dir', arguments: JSON.stringify({ path: '.' }) },
-                }],
+            choices: [
+              {
+                index: 0,
+                finish_reason: 'tool_calls',
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'l1',
+                      type: 'function',
+                      function: { name: 'list_dir', arguments: JSON.stringify({ path: '.' }) },
+                    },
+                  ],
+                },
               },
-            }],
+            ],
             usage: { prompt_tokens: 1, completion_tokens: 1 },
           };
         }
 
         return {
           id: 'r4',
-          choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'done' } }],
+          choices: [
+            { index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'done' } },
+          ],
           usage: { prompt_tokens: 1, completion_tokens: 1 },
         };
-      }
+      },
     };
 
     const session = await createSession({
@@ -407,10 +433,16 @@ describe('agent no-tool reprompt recovery', () => {
         callNo += 1;
         return {
           id: `p-${callNo}`,
-          choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: "I'll continue planning the next step." } }],
+          choices: [
+            {
+              index: 0,
+              finish_reason: 'stop',
+              message: { role: 'assistant', content: "I'll continue planning the next step." },
+            },
+          ],
           usage: { prompt_tokens: 1, completion_tokens: 1 },
         };
-      }
+      },
     };
 
     const session = await createSession({
@@ -419,10 +451,7 @@ describe('agent no-tool reprompt recovery', () => {
     });
 
     try {
-      await assert.rejects(
-        () => session.ask('build it'),
-        /no-tool loop detected/i
-      );
+      await assert.rejects(() => session.ask('build it'), /no-tool loop detected/i);
       assert.equal(callNo, 4, `expected break on 4th planning-only turn, got ${callNo}`);
     } finally {
       await session.close();
@@ -445,18 +474,25 @@ describe('agent package-install retry guard', () => {
         if (callNo === 1) {
           return {
             id: 'pkg-1',
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [{
-                  id: 'e1',
-                  type: 'function',
-                  function: { name: 'exec', arguments: JSON.stringify({ command: 'npm install' }) }
-                }],
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'e1',
+                      type: 'function',
+                      function: {
+                        name: 'exec',
+                        arguments: JSON.stringify({ command: 'npm install' }),
+                      },
+                    },
+                  ],
+                },
               },
-            }],
+            ],
             usage: { prompt_tokens: 1, completion_tokens: 1 },
           };
         }
@@ -464,18 +500,25 @@ describe('agent package-install retry guard', () => {
         if (callNo === 2) {
           return {
             id: 'pkg-2',
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [{
-                  id: 'e2',
-                  type: 'function',
-                  function: { name: 'exec', arguments: JSON.stringify({ command: 'npm install --no-confirm' }) }
-                }],
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'e2',
+                      type: 'function',
+                      function: {
+                        name: 'exec',
+                        arguments: JSON.stringify({ command: 'npm install --no-confirm' }),
+                      },
+                    },
+                  ],
+                },
               },
-            }],
+            ],
             usage: { prompt_tokens: 1, completion_tokens: 1 },
           };
         }
@@ -485,7 +528,7 @@ describe('agent package-install retry guard', () => {
           choices: [{ index: 0, message: { role: 'assistant', content: 'should not reach here' } }],
           usage: { prompt_tokens: 1, completion_tokens: 1 },
         };
-      }
+      },
     };
 
     const config = baseConfig(tmpDir, {
@@ -501,7 +544,10 @@ describe('agent package-install retry guard', () => {
 
     try {
       await session.ask('install deps');
-      assert.ok(callNo <= 3, `expected guardrails to prevent long blocked-command loops, got ${callNo} model turns`);
+      assert.ok(
+        callNo <= 3,
+        `expected guardrails to prevent long blocked-command loops, got ${callNo} model turns`
+      );
     } finally {
       await session.close();
     }
@@ -520,7 +566,7 @@ describe('agent vault + replay synergy', () => {
       },
       async upsertNote() {
         // Mock for preserving user prompt before compaction
-      }
+      },
     };
 
     const listingFileCount = 320;
@@ -551,13 +597,13 @@ describe('agent vault + replay synergy', () => {
                     type: 'function',
                     function: {
                       name: 'list_dir',
-                      arguments: JSON.stringify({ path: '.' })
-                    }
-                  }))
-                }
-              }
+                      arguments: JSON.stringify({ path: '.' }),
+                    },
+                  })),
+                },
+              },
             ],
-            usage: { prompt_tokens: 50, completion_tokens: 20 }
+            usage: { prompt_tokens: 50, completion_tokens: 20 },
           };
         }
 
@@ -568,13 +614,13 @@ describe('agent vault + replay synergy', () => {
               index: 0,
               message: {
                 role: 'assistant',
-                content: 'done'
-              }
-            }
+                content: 'done',
+              },
+            },
           ],
-          usage: { prompt_tokens: 2, completion_tokens: 4 }
+          usage: { prompt_tokens: 2, completion_tokens: 4 },
         };
-      }
+      },
     };
 
     const config = baseConfig(tmpDir, { max_iterations: 2 });
@@ -583,8 +629,8 @@ describe('agent vault + replay synergy', () => {
       config,
       runtime: {
         client: fakeClient,
-        vault: fakeVault
-      }
+        vault: fakeVault,
+      },
     });
 
     // Pre-fill with token-heavy history so compaction has room to drop earlier tool messages.
@@ -595,12 +641,19 @@ describe('agent vault + replay synergy', () => {
     const out = await session.ask('list lots of files and return');
     assert.equal(out.text, 'done');
 
-    const toolMsgs = archived.filter((m) => m.role === 'tool' && m.tool_call_id?.startsWith('tool-'));
+    const toolMsgs = archived.filter(
+      (m) => m.role === 'tool' && m.tool_call_id?.startsWith('tool-')
+    );
     assert.ok(toolMsgs.length > 0, 'expected tool messages were archived');
 
     // Lens-enabled compaction path should shrink verbose tool output before archive.
     assert.ok(
-      toolMsgs.some((m) => typeof m.content === 'string' && m.content.includes('[truncated,') && m.content.includes('chars total'))
+      toolMsgs.some(
+        (m) =>
+          typeof m.content === 'string' &&
+          m.content.includes('[truncated,') &&
+          m.content.includes('chars total')
+      )
     );
   });
 });
@@ -618,27 +671,29 @@ describe('trifecta vault passive injection', () => {
             kind: 'note',
             key: 'deploy',
             value: 'run tests before restart',
-            updatedAt: '2026-02-16T00:00:00.000Z'
-          }
+            updatedAt: '2026-02-16T00:00:00.000Z',
+          },
         ];
       },
       async archiveToolMessages() {
         return 0;
       },
-      async upsertNote() {}
+      async upsertNote() {},
     };
 
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async warmup() {},
       async chatStream(opts: any) {
         seenMessages = opts.messages;
         return {
           id: 'fake',
           choices: [{ index: 0, message: { role: 'assistant', content: 'done' } }],
-          usage: { prompt_tokens: 5, completion_tokens: 2 }
+          usage: { prompt_tokens: 5, completion_tokens: 2 },
         };
-      }
+      },
     };
 
     const config = baseConfig(tmpDir, {
@@ -648,13 +703,13 @@ describe('trifecta vault passive injection', () => {
         enabled: true,
         vault: { enabled: true, mode: 'passive' },
         lens: { enabled: false },
-        replay: { enabled: false }
-      }
+        replay: { enabled: false },
+      },
     });
 
     const session = await createSession({
       config,
-      runtime: { client: fakeClient, vault: fakeVault }
+      runtime: { client: fakeClient, vault: fakeVault },
     });
 
     // Passive vault injection is triggered when compaction drops old turns.
@@ -696,7 +751,7 @@ describe('review artifact durability', () => {
       },
       async archiveToolMessages() {
         return 0;
-      }
+      },
     };
 
     let llmCalls = 0;
@@ -709,15 +764,23 @@ describe('review artifact durability', () => {
         llmCalls += 1;
         return {
           id: `fake-${llmCalls}`,
-          choices: [{ index: 0, message: { role: 'assistant', content: '## Full Code Review\n\n- Finding A\n- Finding B' } }],
-          usage: { prompt_tokens: 20, completion_tokens: 15 }
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: 'assistant',
+                content: '## Full Code Review\n\n- Finding A\n- Finding B',
+              },
+            },
+          ],
+          usage: { prompt_tokens: 20, completion_tokens: 15 },
         };
-      }
+      },
     };
 
     const session = await createSession({
       config: baseConfig(tmpDir, { max_iterations: 3 }),
-      runtime: { client: fakeClient, vault: fakeVault }
+      runtime: { client: fakeClient, vault: fakeVault },
     });
 
     const first = await session.ask('Please run a full code review of this repository.');
@@ -759,14 +822,14 @@ describe('agent loop dispatch + hooks', () => {
                       type: 'function',
                       function: {
                         name: 'list_dir',
-                        arguments: JSON.stringify({ path: '.' })
-                      }
-                    }
-                  ]
-                }
-              }
+                        arguments: JSON.stringify({ path: '.' }),
+                      },
+                    },
+                  ],
+                },
+              },
             ],
-            usage: { prompt_tokens: 30, completion_tokens: 10 }
+            usage: { prompt_tokens: 30, completion_tokens: 10 },
           };
         }
 
@@ -777,13 +840,13 @@ describe('agent loop dispatch + hooks', () => {
               index: 0,
               message: {
                 role: 'assistant',
-                content: 'done'
-              }
-            }
+                content: 'done',
+              },
+            },
           ],
-          usage: { prompt_tokens: 20, completion_tokens: 5 }
+          usage: { prompt_tokens: 20, completion_tokens: 5 },
         };
-      }
+      },
     };
 
     const config = baseConfig(tmpDir, { max_iterations: 5, no_confirm: true });
@@ -792,7 +855,7 @@ describe('agent loop dispatch + hooks', () => {
     const out = await session.ask('list files', {
       onToolCall: (ev) => calls.push(ev),
       onToolResult: (ev) => results.push(ev),
-      onTurnEnd: (ev) => turns.push(ev)
+      onTurnEnd: (ev) => turns.push(ev),
     });
 
     assert.equal(out.text, 'done');
@@ -819,28 +882,37 @@ describe('harness behavioral wiring', () => {
   it('nemotron harness breaks loop on first repeated identical call (loopsOnToolError)', async () => {
     let calls = 0;
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'nemotron-3-nano' }] }; },
+      async models() {
+        return { data: [{ id: 'nemotron-3-nano' }] };
+      },
       async warmup() {},
       async chatStream() {
         calls++;
         // Always emit the same tool call — nemotron loops on errors
         return {
           id: `fake-${calls}`,
-          choices: [{
-            index: 0,
-            message: {
-              role: 'assistant',
-              content: '',
-              tool_calls: [{
-                id: `tool-${calls}`,
-                type: 'function',
-                function: { name: 'write_file', arguments: JSON.stringify({ path: '/tmp/loop-test.txt', content: 'x' }) }
-              }]
-            }
-          }],
-          usage: { prompt_tokens: 50, completion_tokens: 10 }
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: 'assistant',
+                content: '',
+                tool_calls: [
+                  {
+                    id: `tool-${calls}`,
+                    type: 'function',
+                    function: {
+                      name: 'write_file',
+                      arguments: JSON.stringify({ path: '/tmp/loop-test.txt', content: 'x' }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+          usage: { prompt_tokens: 50, completion_tokens: 10 },
         };
-      }
+      },
     };
 
     const config = baseConfig(tmpDir, { max_iterations: 20, model: 'nemotron-3-nano' });
@@ -862,35 +934,47 @@ describe('harness behavioral wiring', () => {
 
     let calls = 0;
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async warmup() {},
       async chatStream() {
         calls++;
         if (calls <= 7) {
           return {
             id: `fake-${calls}`,
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [{
-                  id: `tool-${calls}`,
-                  type: 'function',
-                  function: { name: 'exec', arguments: JSON.stringify({ command: 'grep -n "hello" notes.txt', timeout: 10 }) }
-                }]
-              }
-            }],
-            usage: { prompt_tokens: 40, completion_tokens: 8 }
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: `tool-${calls}`,
+                      type: 'function',
+                      function: {
+                        name: 'exec',
+                        arguments: JSON.stringify({
+                          command: 'grep -n "hello" notes.txt',
+                          timeout: 10,
+                        }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+            usage: { prompt_tokens: 40, completion_tokens: 8 },
           };
         }
 
         return {
           id: `fake-${calls}`,
           choices: [{ index: 0, message: { role: 'assistant', content: 'done' } }],
-          usage: { prompt_tokens: 20, completion_tokens: 6 }
+          usage: { prompt_tokens: 20, completion_tokens: 6 },
         };
-      }
+      },
     };
 
     const config = baseConfig(work, { max_iterations: 12, context_window: 8192 });
@@ -901,8 +985,11 @@ describe('harness behavioral wiring', () => {
       assert.equal(out.text, 'done');
       assert.ok(calls >= 8, `expected loop to continue instead of hard-break; calls=${calls}`);
 
-      const sawCachedHint = session.messages.some((m: any) =>
-        m.role === 'tool' && typeof m.content === 'string' && m.content.includes('Reused cached output for repeated read-only exec call')
+      const sawCachedHint = session.messages.some(
+        (m: any) =>
+          m.role === 'tool' &&
+          typeof m.content === 'string' &&
+          m.content.includes('Reused cached output for repeated read-only exec call')
       );
       assert.equal(sawCachedHint, true, 'expected cached-observation hint in tool output');
     } finally {
@@ -917,7 +1004,9 @@ describe('harness behavioral wiring', () => {
 
     let calls = 0;
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async warmup() {},
       async chatStream() {
         calls++;
@@ -925,28 +1014,35 @@ describe('harness behavioral wiring', () => {
         if (calls <= 9) {
           return {
             id: `fake-${calls}`,
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [{
-                  id: `tool-${calls}`,
-                  type: 'function',
-                  function: { name: 'read_file', arguments: JSON.stringify({ path: 'repeat.txt', limit: 50 }) }
-                }]
-              }
-            }],
-            usage: { prompt_tokens: 40, completion_tokens: 8 }
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: `tool-${calls}`,
+                      type: 'function',
+                      function: {
+                        name: 'read_file',
+                        arguments: JSON.stringify({ path: 'repeat.txt', limit: 50 }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+            usage: { prompt_tokens: 40, completion_tokens: 8 },
           };
         }
 
         return {
           id: `fake-${calls}`,
           choices: [{ index: 0, message: { role: 'assistant', content: 'done' } }],
-          usage: { prompt_tokens: 20, completion_tokens: 6 }
+          usage: { prompt_tokens: 20, completion_tokens: 6 },
         };
-      }
+      },
     };
 
     const config = baseConfig(work, { max_iterations: 15, context_window: 8192 });
@@ -958,8 +1054,11 @@ describe('harness behavioral wiring', () => {
       // With threshold of 6, we expect the loop to continue via cache reuse
       assert.ok(calls >= 10, `expected loop to continue via cache reuse; calls=${calls}`);
 
-      const sawCachedHint = session.messages.some((m: any) =>
-        m.role === 'tool' && typeof m.content === 'string' && m.content.includes('[CACHE HIT] File unchanged since previous read.')
+      const sawCachedHint = session.messages.some(
+        (m: any) =>
+          m.role === 'tool' &&
+          typeof m.content === 'string' &&
+          m.content.includes('[CACHE HIT] File unchanged since previous read.')
       );
       assert.equal(sawCachedHint, true, 'expected cached read hint in tool output');
     } finally {
@@ -971,7 +1070,9 @@ describe('harness behavioral wiring', () => {
   it('nemotron harness limits max_iterations via maxIterationsOverride', async () => {
     let calls = 0;
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'nemotron-3-nano' }] }; },
+      async models() {
+        return { data: [{ id: 'nemotron-3-nano' }] };
+      },
       async warmup() {},
       async chatStream() {
         calls++;
@@ -981,51 +1082,63 @@ describe('harness behavioral wiring', () => {
         const n = calls;
         return {
           id: `fake-${n}`,
-          choices: [{
-            index: 0,
-            message: {
-              role: 'assistant',
-              content: '',
-              tool_calls: [{
-                id: `tool-${n}`,
-                type: 'function',
-                function: { name: 'list_dir', arguments: JSON.stringify({ path: `./unique-${n}` }) }
-              }]
-            }
-          }],
-          usage: { prompt_tokens: 50, completion_tokens: 10 }
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: 'assistant',
+                content: '',
+                tool_calls: [
+                  {
+                    id: `tool-${n}`,
+                    type: 'function',
+                    function: {
+                      name: 'list_dir',
+                      arguments: JSON.stringify({ path: `./unique-${n}` }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+          usage: { prompt_tokens: 50, completion_tokens: 10 },
         };
-      }
+      },
     };
 
     // User config says 20 iterations, but nemotron override caps at 10
-    const config = baseConfig(tmpDir, { max_iterations: 20, model: 'nemotron-3-nano', context_window: 1048576 });
+    const config = baseConfig(tmpDir, {
+      max_iterations: 20,
+      model: 'nemotron-3-nano',
+      context_window: 1048576,
+    });
     const session = await createSession({ config, runtime: { client: fakeClient } });
 
-    await assert.rejects(
-      () => session.ask('loop forever'),
-      /max iterations exceeded \(10\)/
-    );
+    await assert.rejects(() => session.ask('loop forever'), /max iterations exceeded \(10\)/);
     assert.equal(calls, 10);
   });
 
   it('thinking blocks are NOT stripped when harness.thinking.strip is false', async () => {
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'mistral-small-3.2' }] }; },
+      async models() {
+        return { data: [{ id: 'mistral-small-3.2' }] };
+      },
       async warmup() {},
       async chatStream() {
         return {
           id: 'fake',
-          choices: [{
-            index: 0,
-            message: {
-              role: 'assistant',
-              content: '<think>internal reasoning</think>The answer is 42.'
-            }
-          }],
-          usage: { prompt_tokens: 50, completion_tokens: 10 }
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: 'assistant',
+                content: '<think>internal reasoning</think>The answer is 42.',
+              },
+            },
+          ],
+          usage: { prompt_tokens: 50, completion_tokens: 10 },
         };
-      }
+      },
     };
 
     // Mistral has thinking.strip = false, so <think> blocks stay in output
@@ -1040,21 +1153,25 @@ describe('harness behavioral wiring', () => {
 
   it('thinking blocks ARE stripped when harness.thinking.strip is true', async () => {
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'qwen3-coder-next' }] }; },
+      async models() {
+        return { data: [{ id: 'qwen3-coder-next' }] };
+      },
       async warmup() {},
       async chatStream() {
         return {
           id: 'fake',
-          choices: [{
-            index: 0,
-            message: {
-              role: 'assistant',
-              content: '<think>internal reasoning</think>The answer is 42.'
-            }
-          }],
-          usage: { prompt_tokens: 50, completion_tokens: 10 }
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: 'assistant',
+                content: '<think>internal reasoning</think>The answer is 42.',
+              },
+            },
+          ],
+          usage: { prompt_tokens: 50, completion_tokens: 10 },
         };
-      }
+      },
     };
 
     const config = baseConfig(tmpDir, { model: 'qwen3-coder-next' });
@@ -1068,7 +1185,9 @@ describe('harness behavioral wiring', () => {
   it('malformed JSON breaks outer loop after retryOnMalformed exceeded (nemotron)', async () => {
     let calls = 0;
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'nemotron-3-nano' }] }; },
+      async models() {
+        return { data: [{ id: 'nemotron-3-nano' }] };
+      },
       async warmup() {},
       async chatStream() {
         calls++;
@@ -1076,25 +1195,33 @@ describe('harness behavioral wiring', () => {
         // Each call has unique malformed args so loop detection doesn't fire first
         return {
           id: `fake-${n}`,
-          choices: [{
-            index: 0,
-            message: {
-              role: 'assistant',
-              content: '',
-              tool_calls: [{
-                id: `tool-${n}`,
-                type: 'function',
-                function: { name: 'read_file', arguments: `{invalid json attempt ${n}` }
-              }]
-            }
-          }],
-          usage: { prompt_tokens: 50, completion_tokens: 10 }
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: 'assistant',
+                content: '',
+                tool_calls: [
+                  {
+                    id: `tool-${n}`,
+                    type: 'function',
+                    function: { name: 'read_file', arguments: `{invalid json attempt ${n}` },
+                  },
+                ],
+              },
+            },
+          ],
+          usage: { prompt_tokens: 50, completion_tokens: 10 },
         };
-      }
+      },
     };
 
     // nemotron has retryOnMalformed=1, so second malformed call breaks the loop
-    const config = baseConfig(tmpDir, { max_iterations: 20, model: 'nemotron-3-nano', context_window: 1048576 });
+    const config = baseConfig(tmpDir, {
+      max_iterations: 20,
+      model: 'nemotron-3-nano',
+      context_window: 1048576,
+    });
     const session = await createSession({ config, runtime: { client: fakeClient } });
 
     await assert.rejects(
@@ -1108,7 +1235,9 @@ describe('harness behavioral wiring', () => {
   it('parses tool calls from JSON array in content', async () => {
     let calls = 0;
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'llama-3' }] }; },
+      async models() {
+        return { data: [{ id: 'llama-3' }] };
+      },
       async warmup() {},
       async chatStream() {
         calls++;
@@ -1116,22 +1245,24 @@ describe('harness behavioral wiring', () => {
           // Model writes tool calls as a JSON array in content instead of tool_calls
           return {
             id: `fake-${calls}`,
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: `[{"name":"list_dir","arguments":{"path":"."}}]`
-              }
-            }],
-            usage: { prompt_tokens: 50, completion_tokens: 10 }
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: `[{"name":"list_dir","arguments":{"path":"."}}]`,
+                },
+              },
+            ],
+            usage: { prompt_tokens: 50, completion_tokens: 10 },
           };
         }
         return {
           id: `fake-${calls}`,
           choices: [{ index: 0, message: { role: 'assistant', content: 'done' } }],
-          usage: { prompt_tokens: 50, completion_tokens: 10 }
+          usage: { prompt_tokens: 50, completion_tokens: 10 },
         };
-      }
+      },
     };
 
     const config = baseConfig(tmpDir, { model: 'llama-3' });
@@ -1143,15 +1274,17 @@ describe('harness behavioral wiring', () => {
 
   it('injects tool_calls format reminder for models that need it', async () => {
     const fakeClient: any = {
-      async models() { return { data: [{ id: 'nemotron-3-nano' }] }; },
+      async models() {
+        return { data: [{ id: 'nemotron-3-nano' }] };
+      },
       async warmup() {},
       async chatStream() {
         return {
           id: 'fake',
           choices: [{ index: 0, message: { role: 'assistant', content: 'done' } }],
-          usage: { prompt_tokens: 50, completion_tokens: 10 }
+          usage: { prompt_tokens: 50, completion_tokens: 10 },
         };
-      }
+      },
     };
 
     const config = baseConfig(tmpDir, { model: 'nemotron-3-nano' });
@@ -1162,7 +1295,8 @@ describe('harness behavioral wiring', () => {
     const result = await session.ask('hello');
     const userMsg = session.messages[1];
     assert.ok(
-      typeof userMsg.content === 'string' && userMsg.content.includes('Use the tool_calls mechanism'),
+      typeof userMsg.content === 'string' &&
+        userMsg.content.includes('Use the tool_calls mechanism'),
       'expected tool_calls format reminder prepended to first user instruction'
     );
   });
@@ -1176,44 +1310,63 @@ describe('plan mode blocking', () => {
 
     let turnCount = 0;
     const fakeClient: any = {
-      async models() { return [{ id: 'fake-model' }]; },
+      async models() {
+        return [{ id: 'fake-model' }];
+      },
       async chatStream(params: any, callbacks: any) {
         turnCount++;
         if (turnCount === 1) {
           // First turn: model tries to edit a file (mutating) + read a file (read-only)
           return {
             id: 'fake',
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [
-                  {
-                    id: 'call_read',
-                    function: { name: 'read_file', arguments: JSON.stringify({ path: testFile }) }
-                  },
-                  {
-                    id: 'call_edit',
-                    function: { name: 'edit_file', arguments: JSON.stringify({ path: testFile, old_text: 'line one', new_text: 'LINE ONE' }) }
-                  },
-                  {
-                    id: 'call_exec',
-                    function: { name: 'exec', arguments: JSON.stringify({ command: 'echo hello' }) }
-                  }
-                ]
-              }
-            }],
-            usage: { prompt_tokens: 100, completion_tokens: 20 }
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'call_read',
+                      function: {
+                        name: 'read_file',
+                        arguments: JSON.stringify({ path: testFile }),
+                      },
+                    },
+                    {
+                      id: 'call_edit',
+                      function: {
+                        name: 'edit_file',
+                        arguments: JSON.stringify({
+                          path: testFile,
+                          old_text: 'line one',
+                          new_text: 'LINE ONE',
+                        }),
+                      },
+                    },
+                    {
+                      id: 'call_exec',
+                      function: {
+                        name: 'exec',
+                        arguments: JSON.stringify({ command: 'echo hello' }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+            usage: { prompt_tokens: 100, completion_tokens: 20 },
           };
         }
         // Second turn: model acknowledges the results
         return {
           id: 'fake',
-          choices: [{ index: 0, message: { role: 'assistant', content: 'Got it, 2 actions blocked.' } }],
-          usage: { prompt_tokens: 150, completion_tokens: 10 }
+          choices: [
+            { index: 0, message: { role: 'assistant', content: 'Got it, 2 actions blocked.' } },
+          ],
+          usage: { prompt_tokens: 150, completion_tokens: 10 },
         };
-      }
+      },
     };
 
     const config = baseConfig(tmpDir, { approval_mode: 'plan', no_confirm: false });
@@ -1223,15 +1376,18 @@ describe('plan mode blocking', () => {
       await session.ask('edit the file and run a test');
 
       // Plan steps should have accumulated
-      assert.ok(session.planSteps.length >= 2, `Expected at least 2 plan steps, got ${session.planSteps.length}`);
+      assert.ok(
+        session.planSteps.length >= 2,
+        `Expected at least 2 plan steps, got ${session.planSteps.length}`
+      );
 
       // Read-only tool (read_file) should NOT be in plan steps
-      const readSteps = session.planSteps.filter(s => s.tool === 'read_file');
+      const readSteps = session.planSteps.filter((s) => s.tool === 'read_file');
       assert.equal(readSteps.length, 0, 'read_file should not be blocked in plan mode');
 
       // Mutating tools should be in plan steps
-      const editSteps = session.planSteps.filter(s => s.tool === 'edit_file');
-      const execSteps = session.planSteps.filter(s => s.tool === 'exec');
+      const editSteps = session.planSteps.filter((s) => s.tool === 'edit_file');
+      const execSteps = session.planSteps.filter((s) => s.tool === 'exec');
       assert.equal(editSteps.length, 1, 'edit_file should be blocked in plan mode');
       assert.equal(execSteps.length, 1, 'exec should be blocked in plan mode');
 
@@ -1255,7 +1411,7 @@ describe('plan mode blocking', () => {
       assert.ok(afterEdit.includes('LINE ONE'), 'File should be modified after plan execution');
 
       // Verify steps are marked as executed
-      const executed = session.planSteps.filter(s => s.executed);
+      const executed = session.planSteps.filter((s) => s.executed);
       assert.ok(executed.length >= 1, 'At least one step should be executed');
 
       // Clear plan
@@ -1269,33 +1425,44 @@ describe('plan mode blocking', () => {
   it('can execute blocked spawn_task steps via executePlanStep()', async () => {
     let calls = 0;
     const fakeClient: any = {
-      async models() { return [{ id: 'fake-model' }]; },
+      async models() {
+        return [{ id: 'fake-model' }];
+      },
       async chatStream() {
         calls++;
         if (calls === 1) {
           return {
             id: 'fake-1',
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [{
-                  id: 'call_spawn_plan',
-                  function: {
-                    name: 'spawn_task',
-                    arguments: JSON.stringify({ task: 'summarize files in cwd' }),
-                  },
-                }],
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'call_spawn_plan',
+                      function: {
+                        name: 'spawn_task',
+                        arguments: JSON.stringify({ task: 'summarize files in cwd' }),
+                      },
+                    },
+                  ],
+                },
               },
-            }],
+            ],
             usage: { prompt_tokens: 30, completion_tokens: 10 },
           };
         }
         if (calls === 2) {
           return {
             id: 'fake-2',
-            choices: [{ index: 0, message: { role: 'assistant', content: 'spawn_task blocked in plan mode' } }],
+            choices: [
+              {
+                index: 0,
+                message: { role: 'assistant', content: 'spawn_task blocked in plan mode' },
+              },
+            ],
             usage: { prompt_tokens: 10, completion_tokens: 5 },
           };
         }
@@ -1325,12 +1492,17 @@ describe('plan mode blocking', () => {
       assert.ok(!spawnStep?.executed, 'spawn_task should not be executed yet');
 
       const results = await session.executePlanStep(spawnStep?.index);
-      assert.ok(results.some((r) => r.includes('✓')),
-        `expected an executed result row, got: ${results.join(' | ')}`);
+      assert.ok(
+        results.some((r) => r.includes('✓')),
+        `expected an executed result row, got: ${results.join(' | ')}`
+      );
 
       const updated = session.planSteps.find((s) => s.index === spawnStep?.index);
       assert.equal(updated?.executed, true, 'spawn_task plan step should be marked executed');
-      assert.ok(String(updated?.result ?? '').includes('[sub-agent] status='), 'spawn_task result should include sub-agent status');
+      assert.ok(
+        String(updated?.result ?? '').includes('[sub-agent] status='),
+        'spawn_task result should include sub-agent status'
+      );
     } finally {
       await session.close();
     }
@@ -1341,27 +1513,29 @@ describe('sys mode tool schema', () => {
   it('registers sys_context only when mode=sys', async () => {
     const seenTools: string[][] = [];
     const fakeClient: any = {
-      async models() { return [{ id: 'fake-model' }]; },
+      async models() {
+        return [{ id: 'fake-model' }];
+      },
       async chatStream(params: any) {
         const toolNames = (params.tools ?? []).map((t: any) => t?.function?.name).filter(Boolean);
         seenTools.push(toolNames);
         return {
           id: 'fake',
           choices: [{ index: 0, message: { role: 'assistant', content: 'done' } }],
-          usage: { prompt_tokens: 10, completion_tokens: 5 }
+          usage: { prompt_tokens: 10, completion_tokens: 5 },
         };
-      }
+      },
     };
 
     const codeSession = await createSession({
       config: baseConfig(tmpDir, { mode: 'code', approval_mode: 'auto-edit' }),
-      runtime: { client: fakeClient }
+      runtime: { client: fakeClient },
     });
     await codeSession.ask('hello');
 
     const sysSession = await createSession({
       config: baseConfig(tmpDir, { mode: 'sys', approval_mode: 'default' }),
-      runtime: { client: fakeClient }
+      runtime: { client: fakeClient },
     });
     await sysSession.ask('hello');
 
@@ -1389,7 +1563,7 @@ describe('capture tooling', () => {
         const response = {
           id: 'fake-capture-1',
           choices: [{ index: 0, message: { role: 'assistant', content: 'captured' } }],
-          usage: { prompt_tokens: 12, completion_tokens: 3 }
+          usage: { prompt_tokens: 12, completion_tokens: 3 },
         };
 
         await exchangeHook?.({
@@ -1403,16 +1577,16 @@ describe('capture tooling', () => {
             max_tokens: params.max_tokens,
           },
           response,
-          metrics: { total_ms: 25, ttft_ms: 7, tg_speed: 42.7 }
+          metrics: { total_ms: 25, ttft_ms: 7, tg_speed: 42.7 },
         });
 
         return response;
-      }
+      },
     };
 
     const session = await createSession({
       config: baseConfig(tmpDir, { model: 'fake-model' }),
-      runtime: { client: fakeClient }
+      runtime: { client: fakeClient },
     });
 
     const outDir = path.join(tmpDir, 'captures');
@@ -1452,14 +1626,14 @@ describe('capture tooling', () => {
         return {
           id: 'fake',
           choices: [{ index: 0, message: { role: 'assistant', content: 'done' } }],
-          usage: { prompt_tokens: 1, completion_tokens: 1 }
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
         };
-      }
+      },
     };
 
     const session = await createSession({
       config: baseConfig(tmpDir, { model: 'fake-model' }),
-      runtime: { client: fakeClient }
+      runtime: { client: fakeClient },
     });
 
     await assert.rejects(
@@ -1480,17 +1654,17 @@ describe('system prompt controls', () => {
         return {
           id: 'fake',
           choices: [{ index: 0, message: { role: 'assistant', content: 'ok' } }],
-          usage: { prompt_tokens: 1, completion_tokens: 1 }
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
         };
-      }
+      },
     };
 
     const session = await createSession({
       config: baseConfig(tmpDir, {
         model: 'fake-model',
-        system_prompt_override: 'OVERRIDE PROMPT'
+        system_prompt_override: 'OVERRIDE PROMPT',
       }),
-      runtime: { client: fakeClient }
+      runtime: { client: fakeClient },
     });
 
     assert.equal(session.getSystemPrompt(), 'OVERRIDE PROMPT');
@@ -1519,14 +1693,14 @@ describe('system prompt controls', () => {
         return {
           id: 'fake',
           choices: [{ index: 0, message: { role: 'assistant', content: 'ok' } }],
-          usage: { prompt_tokens: 1, completion_tokens: 1 }
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
         };
-      }
+      },
     };
 
     const session = await createSession({
       config: baseConfig(tmpDir, { model: 'fake-model' }),
-      runtime: { client: fakeClient }
+      runtime: { client: fakeClient },
     });
 
     assert.throws(() => session.setSystemPrompt('   '), /system prompt cannot be empty/i);
@@ -1545,46 +1719,62 @@ describe('MCP lazy schema loading', () => {
       },
       async chatStream(req: any) {
         calls += 1;
-        const toolNames = Array.isArray(req?.tools) ? req.tools.map((t: any) => String(t?.function?.name ?? '')) : [];
+        const toolNames = Array.isArray(req?.tools)
+          ? req.tools.map((t: any) => String(t?.function?.name ?? ''))
+          : [];
 
         if (calls === 1) {
-          assert.equal(toolNames.includes('mcp_echo'), false, 'MCP tool should not be exposed on first turn');
+          assert.equal(
+            toolNames.includes('mcp_echo'),
+            false,
+            'MCP tool should not be exposed on first turn'
+          );
           return {
             id: 'fake-1',
-            choices: [{ index: 0, message: { role: 'assistant', content: '[[MCP_TOOLS_REQUEST]]' } }],
-            usage: { prompt_tokens: 1, completion_tokens: 1 }
+            choices: [
+              { index: 0, message: { role: 'assistant', content: '[[MCP_TOOLS_REQUEST]]' } },
+            ],
+            usage: { prompt_tokens: 1, completion_tokens: 1 },
           };
         }
 
         if (calls === 2) {
-          assert.equal(toolNames.includes('mcp_echo'), true, 'MCP tool should be exposed after request token');
+          assert.equal(
+            toolNames.includes('mcp_echo'),
+            true,
+            'MCP tool should be exposed after request token'
+          );
           return {
             id: 'fake-2',
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [{
-                  id: 'call_1',
-                  type: 'function',
-                  function: {
-                    name: 'mcp_echo',
-                    arguments: JSON.stringify({ text: 'hi' })
-                  }
-                }]
-              }
-            }],
-            usage: { prompt_tokens: 1, completion_tokens: 1 }
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'call_1',
+                      type: 'function',
+                      function: {
+                        name: 'mcp_echo',
+                        arguments: JSON.stringify({ text: 'hi' }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+            usage: { prompt_tokens: 1, completion_tokens: 1 },
           };
         }
 
         return {
           id: 'fake-3',
           choices: [{ index: 0, message: { role: 'assistant', content: 'done' } }],
-          usage: { prompt_tokens: 1, completion_tokens: 1 }
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
         };
-      }
+      },
     };
 
     const session = await createSession({
@@ -1592,17 +1782,19 @@ describe('MCP lazy schema loading', () => {
         model: 'fake-model',
         max_iterations: 5,
         mcp: {
-          servers: [{
-            name: 'mock',
-            transport: 'stdio',
-            command: process.execPath,
-            args: [serverScript]
-          }]
+          servers: [
+            {
+              name: 'mock',
+              transport: 'stdio',
+              command: process.execPath,
+              args: [serverScript],
+            },
+          ],
         },
         mcp_tool_budget: 1000,
         mcp_call_timeout_sec: 5,
       }),
-      runtime: { client: fakeClient }
+      runtime: { client: fakeClient },
     });
 
     try {
@@ -1688,9 +1880,7 @@ process.stdin.on('data', (chunk) => {
         lsp: {
           enabled: true,
           auto_detect: false,
-          servers: [
-            { language: 'typescript', command: process.execPath, args: [serverScript] },
-          ],
+          servers: [{ language: 'typescript', command: process.execPath, args: [serverScript] }],
         },
       },
       runtime: {
@@ -1705,7 +1895,7 @@ process.stdin.on('data', (chunk) => {
           },
           models: async () => [],
           health: async () => ({ ok: true }),
-        }
+        },
       },
     });
 
@@ -1732,7 +1922,11 @@ process.stdin.on('data', (chunk) => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'idlehands-lsp-lens-agent-'));
     const serverScript = path.join(dir, 'mock-lsp-server.mjs');
     const sourceFile = path.join(tmpDir, 'lsp-lens-test.ts');
-    await fs.writeFile(sourceFile, 'function hello(name: string) {\n  return `hi ${name}`;\n}\n', 'utf8');
+    await fs.writeFile(
+      sourceFile,
+      'function hello(name: string) {\n  return `hi ${name}`;\n}\n',
+      'utf8'
+    );
 
     const src = `
 let buffer = Buffer.alloc(0);
@@ -1783,26 +1977,32 @@ process.stdin.on('data', (chunk) => {
 
     let turn = 0;
     const fakeClient: any = {
-      async models() { return [{ id: 'fake-model' }]; },
+      async models() {
+        return [{ id: 'fake-model' }];
+      },
       async chatStream() {
         turn++;
         if (turn === 1) {
           return {
             id: 'fake-lsp-1',
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [{
-                  id: 'call_lsp_symbols',
-                  function: {
-                    name: 'lsp_symbols',
-                    arguments: JSON.stringify({ path: sourceFile }),
-                  },
-                }],
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'call_lsp_symbols',
+                      function: {
+                        name: 'lsp_symbols',
+                        arguments: JSON.stringify({ path: sourceFile }),
+                      },
+                    },
+                  ],
+                },
               },
-            }],
+            ],
             usage: { prompt_tokens: 20, completion_tokens: 5 },
           };
         }
@@ -1818,8 +2018,12 @@ process.stdin.on('data', (chunk) => {
       async projectFile() {
         return '# lens:\n- function hello(name: string)';
       },
-      async summarizeToolOutput(text: string) { return text; },
-      async summarizeFailureMessage(text: string) { return text; },
+      async summarizeToolOutput(text: string) {
+        return text;
+      },
+      async summarizeFailureMessage(text: string) {
+        return text;
+      },
       close() {},
     };
 
@@ -1837,12 +2041,17 @@ process.stdin.on('data', (chunk) => {
 
     try {
       await session.ask('show me symbols');
-      const toolMsgs = session.messages.filter((m: any) => m.role === 'tool' && m.tool_call_id === 'call_lsp_symbols');
+      const toolMsgs = session.messages.filter(
+        (m: any) => m.role === 'tool' && m.tool_call_id === 'call_lsp_symbols'
+      );
       assert.equal(toolMsgs.length, 1, 'expected a single lsp_symbols tool result');
 
       const toolContent = String((toolMsgs[0] as any).content ?? '');
       assert.ok(toolContent.includes('hello'), 'semantic lsp symbol should be present');
-      assert.ok(toolContent.includes('[lens] Structural skeleton:'), 'lens structural context should be appended');
+      assert.ok(
+        toolContent.includes('[lens] Structural skeleton:'),
+        'lens structural context should be appended'
+      );
     } finally {
       await session.close();
       await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
@@ -1856,7 +2065,9 @@ describe('spawn_task tool registration and dispatch', () => {
     let toolNames: string[] = [];
     const fakeClient: any = {
       setExchangeHook() {},
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async chatStream(req: any) {
         toolNames = (req?.tools ?? []).map((t: any) => String(t?.function?.name ?? ''));
         return {
@@ -1884,7 +2095,9 @@ describe('spawn_task tool registration and dispatch', () => {
     let toolNames: string[] = [];
     const fakeClient: any = {
       setExchangeHook() {},
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async chatStream(req: any) {
         toolNames = (req?.tools ?? []).map((t: any) => String(t?.function?.name ?? ''));
         return {
@@ -1913,7 +2126,9 @@ describe('spawn_task tool registration and dispatch', () => {
     let toolNames: string[] = [];
     const fakeClient: any = {
       setExchangeHook() {},
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async chatStream(req: any) {
         toolNames = (req?.tools ?? []).map((t: any) => String(t?.function?.name ?? ''));
         return {
@@ -1931,7 +2146,10 @@ describe('spawn_task tool registration and dispatch', () => {
 
     try {
       await session.ask('hello');
-      assert.ok(!toolNames.includes('spawn_task'), 'spawn_task should NOT be registered when disabled');
+      assert.ok(
+        !toolNames.includes('spawn_task'),
+        'spawn_task should NOT be registered when disabled'
+      );
     } finally {
       await session.close();
     }
@@ -1942,28 +2160,34 @@ describe('spawn_task tool registration and dispatch', () => {
     let calls = 0;
     const fakeClient: any = {
       setExchangeHook() {},
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async chatStream() {
         calls++;
         if (calls === 1) {
           // Parent: emit spawn_task tool call
           return {
             id: `fake-${calls}`,
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [{
-                  id: 'call_spawn',
-                  type: 'function',
-                  function: {
-                    name: 'spawn_task',
-                    arguments: JSON.stringify({ task: 'list files in cwd' }),
-                  },
-                }],
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'call_spawn',
+                      type: 'function',
+                      function: {
+                        name: 'spawn_task',
+                        arguments: JSON.stringify({ task: 'list files in cwd' }),
+                      },
+                    },
+                  ],
+                },
               },
-            }],
+            ],
             usage: { prompt_tokens: 30, completion_tokens: 10 },
           };
         }
@@ -1989,14 +2213,25 @@ describe('spawn_task tool registration and dispatch', () => {
       await session.ask('delegate something');
 
       // The parent should have completed (sub-agent ran internally).
-      assert.ok(calls >= 3, `expected at least 3 LLM calls (parent + sub-agent + parent final), got ${calls}`);
+      assert.ok(
+        calls >= 3,
+        `expected at least 3 LLM calls (parent + sub-agent + parent final), got ${calls}`
+      );
 
       // The tool result injected into messages should have sub-agent structured output.
-      const toolMsgs = session.messages.filter((m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn');
+      const toolMsgs = session.messages.filter(
+        (m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn'
+      );
       assert.equal(toolMsgs.length, 1, 'should have exactly one spawn_task tool result');
       const toolContent = String((toolMsgs[0] as any).content ?? '');
-      assert.ok(toolContent.includes('[sub-agent]'), 'tool result should contain [sub-agent] prefix');
-      assert.ok(toolContent.includes('status=completed') || toolContent.includes('status=failed'), 'tool result should contain status');
+      assert.ok(
+        toolContent.includes('[sub-agent]'),
+        'tool result should contain [sub-agent] prefix'
+      );
+      assert.ok(
+        toolContent.includes('status=completed') || toolContent.includes('status=failed'),
+        'tool result should contain status'
+      );
     } finally {
       await session.close();
     }
@@ -2008,27 +2243,33 @@ describe('spawn_task tool registration and dispatch', () => {
 
     const fakeClient: any = {
       setExchangeHook() {},
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async chatStream() {
         calls++;
         if (calls === 1) {
           return {
             id: 'fake-1',
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [{
-                  id: 'call_spawn',
-                  type: 'function',
-                  function: {
-                    name: 'spawn_task',
-                    arguments: JSON.stringify({ task: 'generate a long response' }),
-                  },
-                }],
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'call_spawn',
+                      type: 'function',
+                      function: {
+                        name: 'spawn_task',
+                        arguments: JSON.stringify({ task: 'generate a long response' }),
+                      },
+                    },
+                  ],
+                },
               },
-            }],
+            ],
             usage: { prompt_tokens: 30, completion_tokens: 10 },
           };
         }
@@ -2060,13 +2301,21 @@ describe('spawn_task tool registration and dispatch', () => {
     try {
       await session.ask('delegate long task');
 
-      const toolMsgs = session.messages.filter((m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn');
+      const toolMsgs = session.messages.filter(
+        (m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn'
+      );
       assert.equal(toolMsgs.length, 1);
       const toolContent = String((toolMsgs[0] as any).content ?? '');
       // The result should mention truncation
-      assert.ok(toolContent.includes('truncated') || toolContent.includes('capped'), 'long result should be truncated');
+      assert.ok(
+        toolContent.includes('truncated') || toolContent.includes('capped'),
+        'long result should be truncated'
+      );
       // The raw long text should NOT be fully present
-      assert.ok(toolContent.length < longText.length, 'tool content should be shorter than raw long text');
+      assert.ok(
+        toolContent.length < longText.length,
+        'tool content should be shorter than raw long text'
+      );
     } finally {
       await session.close();
     }
@@ -2077,27 +2326,33 @@ describe('spawn_task tool registration and dispatch', () => {
 
     const fakeClient: any = {
       setExchangeHook() {},
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async chatStream() {
         calls++;
         if (calls === 1) {
           return {
             id: 'fake-1',
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [{
-                  id: 'call_spawn',
-                  type: 'function',
-                  function: {
-                    name: 'spawn_task',
-                    arguments: JSON.stringify({ task: 'do something' }),
-                  },
-                }],
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'call_spawn',
+                      type: 'function',
+                      function: {
+                        name: 'spawn_task',
+                        arguments: JSON.stringify({ task: 'do something' }),
+                      },
+                    },
+                  ],
+                },
               },
-            }],
+            ],
             usage: { prompt_tokens: 30, completion_tokens: 10 },
           };
         }
@@ -2123,9 +2378,14 @@ describe('spawn_task tool registration and dispatch', () => {
       await session.ask('delegate');
 
       // The tool result should show the inherited approval_mode
-      const toolMsgs = session.messages.filter((m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn');
+      const toolMsgs = session.messages.filter(
+        (m: any) => m.role === 'tool' && m.tool_call_id === 'call_spawn'
+      );
       const toolContent = String((toolMsgs[0] as any).content ?? '');
-      assert.ok(toolContent.includes('approval_mode: yolo'), 'sub-agent should inherit parent approval_mode');
+      assert.ok(
+        toolContent.includes('approval_mode: yolo'),
+        'sub-agent should inherit parent approval_mode'
+      );
     } finally {
       await session.close();
     }
@@ -2159,8 +2419,11 @@ export function restart(): void {
     assert.equal(result![0].function.name, 'write_file');
     const args = JSON.parse(result![0].function.arguments);
     assert.equal(args.path, '/home/user/project/src/service.ts');
-    assert.ok(args.content.includes("import { spawnSync }"), 'content should contain file text');
-    assert.ok(args.content.includes('export function restart()'), 'content should contain function');
+    assert.ok(args.content.includes('import { spawnSync }'), 'content should contain file text');
+    assert.ok(
+      args.content.includes('export function restart()'),
+      'content should contain function'
+    );
   });
 
   it('parses edit_file with old_text and new_text', () => {
@@ -2254,7 +2517,11 @@ src/broken.ts`;
 
   it('preserves existing JSON parsing (Case 1-3 still work)', () => {
     // Case 1: whole content is JSON
-    const json1 = JSON.stringify({ tool_calls: [{ id: 'c1', type: 'function', function: { name: 'exec', arguments: '{"command":"ls"}' } }] });
+    const json1 = JSON.stringify({
+      tool_calls: [
+        { id: 'c1', type: 'function', function: { name: 'exec', arguments: '{"command":"ls"}' } },
+      ],
+    });
     const r1 = parseToolCallsFromContent(json1);
     assert.ok(r1);
     assert.equal(r1![0].function.name, 'exec');
@@ -2286,7 +2553,10 @@ src/parser.xml
     assert.equal(result!.length, 1);
     const args = JSON.parse(result![0].function.arguments);
     assert.equal(args.path, 'src/parser.xml');
-    assert.ok(args.content.includes('<parameter=name>value</parameter>'), 'should preserve XML-like content');
+    assert.ok(
+      args.content.includes('<parameter=name>value</parameter>'),
+      'should preserve XML-like content'
+    );
     assert.ok(args.content.includes('<item>test</item>'), 'should preserve full content');
   });
 

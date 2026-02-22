@@ -8,7 +8,9 @@ export type HookPluginScaffoldResult = {
 };
 
 export function normalizePluginName(raw: string): string {
-  const cleaned = String(raw ?? '').trim().toLowerCase();
+  const cleaned = String(raw ?? '')
+    .trim()
+    .toLowerCase();
   if (!cleaned) return '';
   if (!/^[a-z0-9][a-z0-9._-]*$/.test(cleaned)) return '';
   return cleaned;
@@ -47,17 +49,17 @@ export async function scaffoldHookPlugin(opts: {
 
   const targetDir = path.resolve(opts.baseDir, pluginName);
 
-  const exists = await fs.stat(targetDir).then(() => true).catch(() => false);
+  const exists = await fs
+    .stat(targetDir)
+    .then(() => true)
+    .catch(() => false);
   if (exists && !opts.force) {
     throw new Error(`Target already exists: ${targetDir}`);
   }
 
   await fs.mkdir(targetDir, { recursive: true });
 
-  const files = [
-    path.join(targetDir, 'index.ts'),
-    path.join(targetDir, 'README.md'),
-  ];
+  const files = [path.join(targetDir, 'index.ts'), path.join(targetDir, 'README.md')];
 
   await fs.writeFile(files[0], templateIndex(pluginName), 'utf8');
   await fs.writeFile(files[1], templateReadme(pluginName), 'utf8');

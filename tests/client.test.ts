@@ -1,5 +1,6 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+
 import { OpenAIClient, RateLimiter, BackpressureMonitor } from '../dist/client.js';
 
 describe('OpenAIClient retry behavior', () => {
@@ -11,14 +12,22 @@ describe('OpenAIClient retry behavior', () => {
 
     client.setResponseTimeout(900);
     assert.equal(client.defaultResponseTimeoutMs, 900_000);
-    assert.equal(client.defaultConnectionTimeoutMs, 900_000, 'connection timeout should follow response timeout when not explicitly set');
+    assert.equal(
+      client.defaultConnectionTimeoutMs,
+      900_000,
+      'connection timeout should follow response timeout when not explicitly set'
+    );
 
     client.setConnectionTimeout(1200);
     assert.equal(client.defaultConnectionTimeoutMs, 1_200_000);
 
     client.setResponseTimeout(30);
     assert.equal(client.defaultResponseTimeoutMs, 30_000);
-    assert.equal(client.defaultConnectionTimeoutMs, 1_200_000, 'explicit connection timeout should remain pinned');
+    assert.equal(
+      client.defaultConnectionTimeoutMs,
+      1_200_000,
+      'explicit connection timeout should remain pinned'
+    );
   });
 
   it('runs initial connection probe once and supports fast probe timeout', async () => {
@@ -47,7 +56,9 @@ describe('OpenAIClient retry behavior', () => {
     client.fetchWithConnTimeout = async () => {
       calls += 1;
       if (calls === 1) {
-        const e: any = new Error('Connection timeout (10000ms) to http://example.invalid/v1/chat/completions');
+        const e: any = new Error(
+          'Connection timeout (10000ms) to http://example.invalid/v1/chat/completions'
+        );
         e.retryable = true;
         throw e;
       }
@@ -55,7 +66,7 @@ describe('OpenAIClient retry behavior', () => {
         JSON.stringify({
           id: 'ok',
           choices: [{ index: 0, message: { role: 'assistant', content: 'hello' } }],
-          usage: { prompt_tokens: 1, completion_tokens: 1 }
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
         }),
         { status: 200, headers: { 'content-type': 'application/json' } }
       );
@@ -65,8 +76,8 @@ describe('OpenAIClient retry behavior', () => {
       model: 'fake',
       messages: [
         { role: 'system', content: 's' },
-        { role: 'user', content: 'u' }
-      ]
+        { role: 'user', content: 'u' },
+      ],
     });
 
     assert.equal(resp.choices[0].message.content, 'hello');
@@ -85,7 +96,7 @@ describe('OpenAIClient retry behavior', () => {
     try {
       await client.chat({
         model: 'fake',
-        messages: [{ role: 'user', content: 'u' }]
+        messages: [{ role: 'user', content: 'u' }],
       });
     } catch (e) {
       threw = e;
@@ -111,7 +122,7 @@ describe('OpenAIClient retry behavior', () => {
     try {
       await client.chatStream({
         model: 'fake',
-        messages: [{ role: 'user', content: 'u' }]
+        messages: [{ role: 'user', content: 'u' }],
       });
     } catch (e) {
       threw = e;
@@ -147,15 +158,15 @@ describe('OpenAIClient request sanitization', () => {
             parameters: {
               type: 'object',
               strict: true,
-              properties: {}
-            }
-          }
-        }
+              properties: {},
+            },
+          },
+        },
       ],
       messages: [
         { role: 'developer', content: 'internal prompt' },
-        { role: 'user', content: 'hi' }
-      ]
+        { role: 'user', content: 'hi' },
+      ],
     });
 
     assert.equal(clean.store, undefined);
@@ -192,23 +203,27 @@ describe('OpenAIClient SSE parsing + malformed handling', () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(enc.encode('data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n'));
-        controller.enqueue(enc.encode('data: {"choices":[{"delta":{"content":"lo"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n'));
+        controller.enqueue(
+          enc.encode(
+            'data: {"choices":[{"delta":{"content":"lo"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n'
+          )
+        );
         controller.enqueue(enc.encode('data: [DONE]\n\n'));
         controller.close();
-      }
+      },
     });
 
     client.fetchWithConnTimeout = async () =>
       new Response(stream, {
         status: 200,
-        headers: { 'content-type': 'text/event-stream' }
+        headers: { 'content-type': 'text/event-stream' },
       });
 
     const resp = await client.chatStream({
       model: 'fake',
       messages: [{ role: 'user', content: 'u' }],
       onToken: (t: string) => chunks.push(t),
-      onFirstDelta: () => firstDeltaCalls.push(Date.now())
+      onFirstDelta: () => firstDeltaCalls.push(Date.now()),
     });
 
     assert.equal(chunks.join(''), 'Hello');
@@ -225,22 +240,28 @@ describe('OpenAIClient SSE parsing + malformed handling', () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(enc.encode('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'));
-        controller.enqueue(enc.encode('data: {"choices":[{"finish_reason":"stop","delta":{}}]}\n\n'));
-        controller.enqueue(enc.encode('data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}\n\n'));
+        controller.enqueue(
+          enc.encode('data: {"choices":[{"finish_reason":"stop","delta":{}}]}\n\n')
+        );
+        controller.enqueue(
+          enc.encode(
+            'data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}\n\n'
+          )
+        );
         controller.enqueue(enc.encode('data: [DONE]\n\n'));
         controller.close();
-      }
+      },
     });
 
     client.fetchWithConnTimeout = async () =>
       new Response(stream, {
         status: 200,
-        headers: { 'content-type': 'text/event-stream' }
+        headers: { 'content-type': 'text/event-stream' },
       });
 
     const resp = await client.chatStream({
       model: 'fake',
-      messages: [{ role: 'user', content: 'u' }]
+      messages: [{ role: 'user', content: 'u' }],
     });
 
     assert.equal(resp.choices?.[0]?.message?.content, 'ok');
@@ -258,18 +279,18 @@ describe('OpenAIClient SSE parsing + malformed handling', () => {
         controller.enqueue(enc.encode('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'));
         controller.enqueue(enc.encode('data: [DONE]\n\n'));
         controller.close();
-      }
+      },
     });
 
     client.fetchWithConnTimeout = async () =>
       new Response(stream, {
         status: 200,
-        headers: { 'content-type': 'text/event-stream' }
+        headers: { 'content-type': 'text/event-stream' },
       });
 
     const resp = await client.chatStream({
       model: 'fake',
-      messages: [{ role: 'user', content: 'u' }]
+      messages: [{ role: 'user', content: 'u' }],
     });
 
     assert.equal(resp.choices?.[0]?.message?.content, 'ok');
@@ -281,7 +302,7 @@ describe('OpenAIClient SSE parsing + malformed handling', () => {
     client.fetchWithConnTimeout = async () =>
       new Response('not-json', {
         status: 200,
-        headers: { 'content-type': 'application/json' }
+        headers: { 'content-type': 'application/json' },
       });
 
     await assert.rejects(
@@ -300,13 +321,21 @@ describe('OpenAIClient SSE parsing + malformed handling', () => {
         throw new Error('aborted');
       }
       return new Response(
-        JSON.stringify({ id: 'late', choices: [{ index: 0, message: { role: 'assistant', content: 'late' } }] }),
+        JSON.stringify({
+          id: 'late',
+          choices: [{ index: 0, message: { role: 'assistant', content: 'late' } }],
+        }),
         { status: 200, headers: { 'content-type': 'application/json' } }
       );
     };
 
     await assert.rejects(
-      () => client.chat({ model: 'fake', messages: [{ role: 'user', content: 'u' }], responseTimeoutMs: 5 }),
+      () =>
+        client.chat({
+          model: 'fake',
+          messages: [{ role: 'user', content: 'u' }],
+          responseTimeoutMs: 5,
+        }),
       /Response timeout/i
     );
   });

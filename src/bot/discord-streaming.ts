@@ -1,9 +1,14 @@
 import type { TextBasedChannel } from 'discord.js';
+
 import type { AgentHooks } from '../agent.js';
-import { splitDiscord, safeContent } from './discord-routing.js';
-import { formatToolCallSummary } from '../progress/tool-summary.js';
+import {
+  MessageEditScheduler,
+  classifyDiscordEditError,
+} from '../progress/message-edit-scheduler.js';
 import { ProgressPresenter } from '../progress/progress-presenter.js';
-import { MessageEditScheduler, classifyDiscordEditError } from '../progress/message-edit-scheduler.js';
+import { formatToolCallSummary } from '../progress/tool-summary.js';
+
+import { splitDiscord, safeContent } from './discord-routing.js';
 
 export class DiscordStreamingMessage {
   private banner: string | null = null;
@@ -23,7 +28,7 @@ export class DiscordStreamingMessage {
   constructor(
     private readonly placeholder: any | null,
     private readonly channel: TextBasedChannel,
-    private readonly opts?: { editIntervalMs?: number },
+    private readonly opts?: { editIntervalMs?: number }
   ) {}
 
   start(): void {
@@ -106,7 +111,9 @@ export class DiscordStreamingMessage {
 
     const snap = this.presenter.snapshot('stop');
     const toolLines = snap.toolLines.slice(-8);
-    const combined = safeContent((toolLines.length ? toolLines.join('\n') + '\n\n' : '') + `❌ ${errMsg}`);
+    const combined = safeContent(
+      (toolLines.length ? toolLines.join('\n') + '\n\n' : '') + `❌ ${errMsg}`
+    );
     const chunks = splitDiscord(combined);
 
     if (this.placeholder && chunks.length > 0) {

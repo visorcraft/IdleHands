@@ -1,5 +1,5 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
 
 import { HookManager } from '../dist/hooks/manager.js';
 
@@ -16,13 +16,21 @@ describe('hooks manager', () => {
       }),
     });
 
-    manager.on('ask_start', async ({ askId }) => {
-      await new Promise((r) => setTimeout(r, 5));
-      events.push(`a:${askId}`);
-    }, 't1');
-    manager.on('ask_start', ({ askId }) => {
-      events.push(`b:${askId}`);
-    }, 't2');
+    manager.on(
+      'ask_start',
+      async ({ askId }) => {
+        await new Promise((r) => setTimeout(r, 5));
+        events.push(`a:${askId}`);
+      },
+      't1'
+    );
+    manager.on(
+      'ask_start',
+      ({ askId }) => {
+        events.push(`b:${askId}`);
+      },
+      't2'
+    );
 
     await manager.emit('ask_start', { askId: 'x1', instruction: 'hello' });
 
@@ -43,12 +51,20 @@ describe('hooks manager', () => {
     });
 
     let called = false;
-    manager.on('turn_start', () => {
-      throw new Error('boom');
-    }, 'broken');
-    manager.on('turn_start', () => {
-      called = true;
-    }, 'next');
+    manager.on(
+      'turn_start',
+      () => {
+        throw new Error('boom');
+      },
+      'broken'
+    );
+    manager.on(
+      'turn_start',
+      () => {
+        called = true;
+      },
+      'next'
+    );
 
     await manager.emit('turn_start', { askId: 'a1', turn: 1 });
     assert.equal(called, true);
@@ -66,14 +82,15 @@ describe('hooks manager', () => {
       }),
     });
 
-    manager.on('turn_start', () => {
-      throw new Error('boom');
-    }, 'broken');
-
-    await assert.rejects(
-      manager.emit('turn_start', { askId: 'a1', turn: 1 }),
-      /handler failed/i,
+    manager.on(
+      'turn_start',
+      () => {
+        throw new Error('boom');
+      },
+      'broken'
     );
+
+    await assert.rejects(manager.emit('turn_start', { askId: 'a1', turn: 1 }), /handler failed/i);
   });
 
   it('redacts gated payload fields when capabilities are not allowed', async () => {
@@ -91,15 +108,18 @@ describe('hooks manager', () => {
       }),
     });
 
-    await manager.registerPlugin({
-      name: 'caps-test',
-      capabilities: ['observe', 'read_prompts', 'read_tool_args', 'read_tool_results'],
-      hooks: {
-        ask_start: (payload) => captured.push(payload),
-        tool_call: (payload) => captured.push(payload),
-        tool_result: (payload) => captured.push(payload),
+    await manager.registerPlugin(
+      {
+        name: 'caps-test',
+        capabilities: ['observe', 'read_prompts', 'read_tool_args', 'read_tool_results'],
+        hooks: {
+          ask_start: (payload) => captured.push(payload),
+          tool_call: (payload) => captured.push(payload),
+          tool_result: (payload) => captured.push(payload),
+        },
       },
-    }, 'caps-test');
+      'caps-test'
+    );
 
     await manager.emit('ask_start', { askId: 'a1', instruction: 'secret prompt' });
     await manager.emit('tool_call', {
@@ -110,7 +130,13 @@ describe('hooks manager', () => {
     await manager.emit('tool_result', {
       askId: 'a1',
       turn: 1,
-      result: { id: 'c1', name: 'exec', success: true, summary: 'ok', result: 'very secret result' },
+      result: {
+        id: 'c1',
+        name: 'exec',
+        success: true,
+        summary: 'ok',
+        result: 'very secret result',
+      },
     });
 
     assert.equal(captured[0]?.instruction, '[redacted: missing read_prompts capability]');

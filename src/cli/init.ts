@@ -2,9 +2,9 @@
  * Project init context generation, git snapshot helpers, change entry tracking.
  */
 
-import path from 'node:path';
-import fs from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 // ── Init context ─────────────────────────────────────────────────────
 
@@ -25,7 +25,9 @@ export async function collectProjectTree(cwd: string): Promise<string[]> {
     }
     if (e.isDirectory()) {
       out.push(`- ${rel}/`);
-      const nested = await fs.readdir(path.join(cwd, rel), { withFileTypes: true }).catch(() => [] as any[]);
+      const nested = await fs
+        .readdir(path.join(cwd, rel), { withFileTypes: true })
+        .catch(() => [] as any[]);
       for (const n of nested.slice(0, 8)) {
         if (n.name.startsWith('.')) continue;
         out.push(`  - ${rel}/${n.name}${n.isDirectory() ? '/' : ''}`);
@@ -37,13 +39,31 @@ export async function collectProjectTree(cwd: string): Promise<string[]> {
 
 export async function detectProjectLanguages(cwd: string): Promise<string[]> {
   const exts = new Map<string, string>([
-    ['.ts', 'TypeScript'], ['.tsx', 'TypeScript'], ['.js', 'JavaScript'], ['.jsx', 'JavaScript'],
-    ['.py', 'Python'], ['.rs', 'Rust'], ['.go', 'Go'], ['.cs', 'C#'], ['.php', 'PHP'],
-    ['.java', 'Java'], ['.kt', 'Kotlin'], ['.c', 'C'], ['.cpp', 'C++'], ['.h', 'C/C++'],
-    ['.swift', 'Swift'], ['.rb', 'Ruby'], ['.sh', 'Shell'], ['.yaml', 'YAML'], ['.yml', 'YAML'],
+    ['.ts', 'TypeScript'],
+    ['.tsx', 'TypeScript'],
+    ['.js', 'JavaScript'],
+    ['.jsx', 'JavaScript'],
+    ['.py', 'Python'],
+    ['.rs', 'Rust'],
+    ['.go', 'Go'],
+    ['.cs', 'C#'],
+    ['.php', 'PHP'],
+    ['.java', 'Java'],
+    ['.kt', 'Kotlin'],
+    ['.c', 'C'],
+    ['.cpp', 'C++'],
+    ['.h', 'C/C++'],
+    ['.swift', 'Swift'],
+    ['.rb', 'Ruby'],
+    ['.sh', 'Shell'],
+    ['.yaml', 'YAML'],
+    ['.yml', 'YAML'],
   ]);
   const found = new Set<string>();
-  for await (const rel of fs.glob('**/*', { cwd, exclude: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**'] })) {
+  for await (const rel of fs.glob('**/*', {
+    cwd,
+    exclude: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**'],
+  })) {
     const ext = path.extname(String(rel)).toLowerCase();
     const lang = exts.get(ext);
     if (lang) found.add(lang);
@@ -54,14 +74,23 @@ export async function detectProjectLanguages(cwd: string): Promise<string[]> {
 
 export async function generateInitContext(cwd: string): Promise<InitProjectSummary> {
   const has = async (name: string) => {
-    try { await fs.access(path.join(cwd, name)); return true; } catch { return false; }
+    try {
+      await fs.access(path.join(cwd, name));
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   const projectName = path.basename(cwd);
   const tree = await collectProjectTree(cwd);
   const langs = await detectProjectLanguages(cwd);
 
-  const readmePath = (await has('README.md')) ? 'README.md' : ((await has('readme.md')) ? 'readme.md' : '');
+  const readmePath = (await has('README.md'))
+    ? 'README.md'
+    : (await has('readme.md'))
+      ? 'readme.md'
+      : '';
   let readmePreview = '';
   if (readmePath) {
     const raw = await fs.readFile(path.join(cwd, readmePath), 'utf8').catch(() => '');
@@ -86,7 +115,7 @@ export async function generateInitContext(cwd: string): Promise<InitProjectSumma
     buildHints.push('make');
     testHints.push('make test');
   }
-  if (await has('pyproject.toml') || await has('requirements.txt')) {
+  if ((await has('pyproject.toml')) || (await has('requirements.txt'))) {
     buildHints.push('python -m build (if configured)');
     testHints.push('pytest');
   }
@@ -103,7 +132,9 @@ export async function generateInitContext(cwd: string): Promise<InitProjectSumma
     ...(tree.length ? tree : ['- (empty)']),
     '',
     '## Build & Test Hints',
-    ...(buildHints.length ? buildHints.map((x) => `- Build: \`${x}\``) : ['- Build: (not detected)']),
+    ...(buildHints.length
+      ? buildHints.map((x) => `- Build: \`${x}\``)
+      : ['- Build: (not detected)']),
     ...(testHints.length ? testHints.map((x) => `- Test: \`${x}\``) : ['- Test: (not detected)']),
     '',
     '## README preview (first 50 lines)',
@@ -174,7 +205,11 @@ export type ChangeEntry = {
   opHint?: string;
 };
 
-export async function buildReplayChangeEntries(replay: any, sinceMs?: number, lastN?: number): Promise<ChangeEntry[]> {
+export async function buildReplayChangeEntries(
+  replay: any,
+  sinceMs?: number,
+  lastN?: number
+): Promise<ChangeEntry[]> {
   if (!replay) return [];
   const cps = await replay.list(10000);
   let rows = cps
@@ -195,7 +230,11 @@ export async function buildReplayChangeEntries(replay: any, sinceMs?: number, la
 }
 
 export function getGitNumstatMap(cwd: string): Map<string, { adds: number; removes: number }> {
-  const run = spawnSync('bash', ['-lc', 'git diff --numstat'], { cwd, encoding: 'utf8', timeout: 2500 });
+  const run = spawnSync('bash', ['-lc', 'git diff --numstat'], {
+    cwd,
+    encoding: 'utf8',
+    timeout: 2500,
+  });
   const out = run.status === 0 ? String(run.stdout || '') : '';
   const map = new Map<string, { adds: number; removes: number }>();
   for (const line of out.split(/\r?\n/)) {
@@ -211,7 +250,11 @@ export function getGitNumstatMap(cwd: string): Map<string, { adds: number; remov
 }
 
 export function getGitPorcelainMap(cwd: string): Map<string, string> {
-  const run = spawnSync('bash', ['-lc', 'git status --porcelain'], { cwd, encoding: 'utf8', timeout: 2500 });
+  const run = spawnSync('bash', ['-lc', 'git status --porcelain'], {
+    cwd,
+    encoding: 'utf8',
+    timeout: 2500,
+  });
   const out = run.status === 0 ? String(run.stdout || '') : '';
   const map = new Map<string, string>();
   for (const line of out.split(/\r?\n/)) {

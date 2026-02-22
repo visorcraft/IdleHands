@@ -1,5 +1,5 @@
-import type { ReplContext } from './repl-context.js';
 import { firstToken } from './command-utils.js';
+import type { ReplContext } from './repl-context.js';
 
 export interface SlashCommand {
   name: string;

@@ -3,7 +3,12 @@
  * Used in yolo mode and for auto-edit mode's file mutations.
  */
 
-import type { ConfirmationProvider, ConfirmRequest, ConfirmPlanRequest, PlanDecision } from '../types.js';
+import type {
+  ConfirmationProvider,
+  ConfirmRequest,
+  ConfirmPlanRequest,
+  PlanDecision,
+} from '../types.js';
 
 export class AutoApproveProvider implements ConfirmationProvider {
   async confirm(_opts: ConfirmRequest): Promise<boolean> {

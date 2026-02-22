@@ -36,7 +36,10 @@
     "dev": "tsc -p tsconfig.json -w",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "IDLEHANDS_QUIET_WARNINGS=1 npm run build --silent && IDLEHANDS_QUIET_WARNINGS=1 node --test --test-concurrency=1 tests/*.test.ts tests/tui/*.test.ts",
-    "lint": "node -e \"console.log('no lint configured yet')\"",
+    "lint": "eslint src/ tests/ --config eslint.config.mjs",
+    "lint:fix": "eslint src/ tests/ --config eslint.config.mjs --fix",
+    "format": "prettier --write src/ tests/",
+    "format:check": "prettier --check src/ tests/",
     "bench:build": "tsc -p tsconfig.json",
     "bench:run": "node dist/bench/runner.js",
     "bench:report": "node dist/bench/report.js",
@@ -55,7 +58,13 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.56.0",
+    "@typescript-eslint/parser": "^8.56.0",
     "esbuild": "^0.25.9",
+    "eslint": "^9.39.3",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-prettier": "^5.5.5",
+    "prettier": "^3.8.1",
     "typescript": "^5.9.3"
   },
   "overrides": {

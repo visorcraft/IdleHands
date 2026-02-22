@@ -1,8 +1,8 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { describe, it } from 'node:test';
 
 import { createSession } from '../dist/agent.js';
 import { HookManager } from '../dist/hooks/manager.js';
@@ -89,32 +89,45 @@ describe('agent hook integration', () => {
     manager.on('ask_start', () => events.push('ask_start'), 'test');
     manager.on('turn_start', () => events.push('turn_start'), 'test');
     manager.on('tool_call', ({ call }) => events.push(`tool_call:${call.name}`), 'test');
-    manager.on('tool_result', ({ result }) => events.push(`tool_result:${result.name}:${result.success ? 'ok' : 'err'}`), 'test');
+    manager.on(
+      'tool_result',
+      ({ result }) => events.push(`tool_result:${result.name}:${result.success ? 'ok' : 'err'}`),
+      'test'
+    );
     manager.on('turn_end', () => events.push('turn_end'), 'test');
     manager.on('ask_end', () => events.push('ask_end'), 'test');
 
     let calls = 0;
     const fakeClient: any = {
       setResponseTimeout() {},
-      async models() { return { data: [{ id: 'fake-model' }] }; },
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
       async warmup() {},
       async chatStream() {
         calls += 1;
         if (calls === 1) {
           return {
             id: 'resp-1',
-            choices: [{
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '',
-                tool_calls: [{
-                  id: 'call-1',
-                  type: 'function',
-                  function: { name: 'exec', arguments: JSON.stringify({ command: 'echo hook-ok', timeout: 5 }) },
-                }],
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'call-1',
+                      type: 'function',
+                      function: {
+                        name: 'exec',
+                        arguments: JSON.stringify({ command: 'echo hook-ok', timeout: 5 }),
+                      },
+                    },
+                  ],
+                },
               },
-            }],
+            ],
             usage: { prompt_tokens: 10, completion_tokens: 3 },
           };
         }

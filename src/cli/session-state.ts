@@ -2,9 +2,10 @@
  * Session state persistence: paths, save/load, REPL history, prompt templates.
  */
 
-import path from 'node:path';
-import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
 import { stateDir, configDir } from '../utils.js';
 
 const HISTORY_MAX_LINES = 10_000;
@@ -47,7 +48,9 @@ export async function saveSessionFile(filePath: string, payload: any): Promise<v
   await fs.writeFile(filePath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
 }
 
-export async function listSavedSessions(): Promise<Array<{ name: string; path: string; ts: number }>> {
+export async function listSavedSessions(): Promise<
+  Array<{ name: string; path: string; ts: number }>
+> {
   const dir = path.join(sessionStateDir(), 'sessions');
   const ents = await fs.readdir(dir, { withFileTypes: true }).catch(() => [] as any[]);
   const out: Array<{ name: string; path: string; ts: number }> = [];
@@ -61,7 +64,9 @@ export async function listSavedSessions(): Promise<Array<{ name: string; path: s
   return out.sort((a, b) => b.ts - a.ts);
 }
 
-export async function listConversationBranches(): Promise<Array<{ name: string; path: string; ts: number }>> {
+export async function listConversationBranches(): Promise<
+  Array<{ name: string; path: string; ts: number }>
+> {
   const dir = conversationBranchesDir();
   const ents = await fs.readdir(dir, { withFileTypes: true }).catch(() => [] as any[]);
   const out: Array<{ name: string; path: string; ts: number }> = [];
@@ -79,7 +84,7 @@ export async function listConversationBranches(): Promise<Array<{ name: string; 
 
 export async function loadPromptTemplates(): Promise<Record<string, string>> {
   const builtins: Record<string, string> = {
-    '/fix': 'Find and fix bugs in the code I\'m about to describe:',
+    '/fix': "Find and fix bugs in the code I'm about to describe:",
     '/review': 'Review the following code for issues, style, and correctness:',
     '/test': 'Write tests for:',
     '/explain': 'Explain this code in detail:',
@@ -114,14 +119,21 @@ export async function loadHistory(): Promise<string[]> {
   const p = historyFilePath();
   const raw = await fs.readFile(p, 'utf8').catch(() => '');
   if (!raw) return [];
-  return raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean).slice(-HISTORY_MAX_LINES);
+  return raw
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(-HISTORY_MAX_LINES);
 }
 
 export async function rotateHistoryIfNeeded(): Promise<void> {
   const p = historyFilePath();
   const raw = await fs.readFile(p, 'utf8').catch(() => '');
   if (!raw) return;
-  const lines = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  const lines = raw
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (lines.length <= HISTORY_MAX_LINES) return;
   const kept = lines.slice(-HISTORY_MAX_LINES);
   await fs.writeFile(p, kept.join('\n') + '\n', 'utf8');

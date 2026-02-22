@@ -10,6 +10,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+
 import type { ChatMessage } from './types.js';
 import { stateDir } from './utils.js';
 
@@ -24,7 +25,7 @@ export type AutosaveData = {
   cwd: string;
   turns: number;
   toolCalls: number;
-  savedAt: string;       // ISO timestamp
+  savedAt: string; // ISO timestamp
   pid: number;
 };
 
@@ -140,9 +141,15 @@ export function formatRecoveryPrompt(data: AutosaveData): string {
 
 export type AutosaveController = {
   /** Call after each turn to check if we should autosave */
-  tick: (messages: ChatMessage[], meta: { model: string; harness: string; cwd: string; turns: number; toolCalls: number }) => void;
+  tick: (
+    messages: ChatMessage[],
+    meta: { model: string; harness: string; cwd: string; turns: number; toolCalls: number }
+  ) => void;
   /** Force an immediate save */
-  flush: (messages: ChatMessage[], meta: { model: string; harness: string; cwd: string; turns: number; toolCalls: number }) => Promise<void>;
+  flush: (
+    messages: ChatMessage[],
+    meta: { model: string; harness: string; cwd: string; turns: number; toolCalls: number }
+  ) => Promise<void>;
   /** Stop the timer */
   stop: () => void;
 };
@@ -152,8 +159,8 @@ export type AutosaveController = {
  * or every `intervalMs` milliseconds, whichever comes first.
  */
 export function createAutosaveController(opts?: {
-  turnInterval?: number;   // default 5
-  intervalMs?: number;      // default 60_000
+  turnInterval?: number; // default 5
+  intervalMs?: number; // default 60_000
 }): AutosaveController {
   const turnInterval = opts?.turnInterval ?? 5;
   const intervalMs = opts?.intervalMs ?? 60_000;
@@ -161,9 +168,15 @@ export function createAutosaveController(opts?: {
   let lastSaveTurn = 0;
   let pending: Promise<void> | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
-  let latestState: { messages: ChatMessage[]; meta: { model: string; harness: string; cwd: string; turns: number; toolCalls: number } } | null = null;
+  let latestState: {
+    messages: ChatMessage[];
+    meta: { model: string; harness: string; cwd: string; turns: number; toolCalls: number };
+  } | null = null;
 
-  const doSave = async (messages: ChatMessage[], meta: { model: string; harness: string; cwd: string; turns: number; toolCalls: number }) => {
+  const doSave = async (
+    messages: ChatMessage[],
+    meta: { model: string; harness: string; cwd: string; turns: number; toolCalls: number }
+  ) => {
     const data: AutosaveData = {
       messages,
       model: meta.model,
@@ -172,7 +185,7 @@ export function createAutosaveController(opts?: {
       turns: meta.turns,
       toolCalls: meta.toolCalls,
       savedAt: new Date().toISOString(),
-      pid: process.pid
+      pid: process.pid,
     };
     await writeAutosave(data);
     lastSaveTurn = meta.turns;
@@ -183,7 +196,11 @@ export function createAutosaveController(opts?: {
     if (!latestState) return;
     const { messages, meta } = latestState;
     if (pending) return; // already saving
-    pending = doSave(messages, meta).catch(() => {}).finally(() => { pending = null; });
+    pending = doSave(messages, meta)
+      .catch(() => {})
+      .finally(() => {
+        pending = null;
+      });
   }, intervalMs);
 
   // Don't keep the process alive just for autosave
@@ -191,18 +208,28 @@ export function createAutosaveController(opts?: {
     timer.unref();
   }
 
-  const tick = (messages: ChatMessage[], meta: { model: string; harness: string; cwd: string; turns: number; toolCalls: number }) => {
+  const tick = (
+    messages: ChatMessage[],
+    meta: { model: string; harness: string; cwd: string; turns: number; toolCalls: number }
+  ) => {
     latestState = { messages: [...messages], meta };
 
     // Save every N turns
     if (meta.turns - lastSaveTurn >= turnInterval) {
       if (!pending) {
-        pending = doSave([...messages], meta).catch(() => {}).finally(() => { pending = null; });
+        pending = doSave([...messages], meta)
+          .catch(() => {})
+          .finally(() => {
+            pending = null;
+          });
       }
     }
   };
 
-  const flush = async (messages: ChatMessage[], meta: { model: string; harness: string; cwd: string; turns: number; toolCalls: number }) => {
+  const flush = async (
+    messages: ChatMessage[],
+    meta: { model: string; harness: string; cwd: string; turns: number; toolCalls: number }
+  ) => {
     await doSave([...messages], meta);
   };
 

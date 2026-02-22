@@ -23,6 +23,7 @@ export class MessageEditScheduler {
   private backoffMs = 0;
   private lastText = '';
   private stopped = false;
+  private inFlight = false;
 
   constructor(opts: MessageEditSchedulerOptions) {
     this.opts = {
@@ -58,12 +59,16 @@ export class MessageEditScheduler {
     // Skip if nothing changed
     if (!this.opts.isDirty()) return;
 
+    // Prevent overlapping edits
+    if (this.inFlight) return;
+
     const text = this.opts.render();
     if (!text || text === this.lastText) {
       this.opts.clearDirty();
       return;
     }
 
+    this.inFlight = true;
     try {
       await this.opts.apply(text);
       this.lastText = text;
@@ -80,6 +85,8 @@ export class MessageEditScheduler {
         this.stop();
       }
       // 'ignore' - do nothing, continue
+    } finally {
+      this.inFlight = false;
     }
   }
 }

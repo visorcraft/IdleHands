@@ -1,8 +1,8 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { describe, it } from 'node:test';
 
 import { MCPManager } from '../dist/mcp.js';
 
@@ -229,7 +229,9 @@ describe('MCPManager', () => {
     const serverScript = await makeMockMcpServerScript();
 
     const manager = new MCPManager({
-      servers: [{ name: 'mock', transport: 'stdio', command: process.execPath, args: [serverScript] }],
+      servers: [
+        { name: 'mock', transport: 'stdio', command: process.execPath, args: [serverScript] },
+      ],
       toolBudgetTokens: 1000,
       callTimeoutMs: 5000,
       builtInToolNames: ['read_file', 'exec'],
@@ -261,7 +263,14 @@ describe('MCPManager', () => {
     const serverScript = await makeMockMcpServerScript();
 
     const manager = new MCPManager({
-      servers: [{ name: 'mock-budget', transport: 'stdio', command: process.execPath, args: [serverScript] }],
+      servers: [
+        {
+          name: 'mock-budget',
+          transport: 'stdio',
+          command: process.execPath,
+          args: [serverScript],
+        },
+      ],
       toolBudgetTokens: 1,
       callTimeoutMs: 5000,
     });
@@ -300,7 +309,10 @@ describe('MCPManager', () => {
   it('handles server crash, malformed responses, timeout, and JSON-RPC errors during call', async () => {
     const crashScript = await makeMockMcpServerScript({ crashOnCallName: 'mcp_echo' });
     const malformedScript = await makeMockMcpServerScript({ malformedOnCallName: 'mcp_echo' });
-    const timeoutScript = await makeMockMcpServerScript({ delayOnCallName: 'mcp_echo', delayMs: 5000 });
+    const timeoutScript = await makeMockMcpServerScript({
+      delayOnCallName: 'mcp_echo',
+      delayMs: 5000,
+    });
     const errorScript = await makeMockMcpServerScript({
       jsonRpcErrorOnCallName: 'mcp_echo',
       jsonRpcErrorCode: -32050,
@@ -308,36 +320,85 @@ describe('MCPManager', () => {
     });
 
     const managers = [
-      new MCPManager({ servers: [{ name: 'crash', transport: 'stdio', command: process.execPath, args: [crashScript] }], callTimeoutMs: 300, toolBudgetTokens: 1000 }),
-      new MCPManager({ servers: [{ name: 'malformed', transport: 'stdio', command: process.execPath, args: [malformedScript] }], callTimeoutMs: 200, toolBudgetTokens: 1000 }),
-      new MCPManager({ servers: [{ name: 'timeout', transport: 'stdio', command: process.execPath, args: [timeoutScript] }], callTimeoutMs: 1500, toolBudgetTokens: 1000 }),
-      new MCPManager({ servers: [{ name: 'rpc-error', transport: 'stdio', command: process.execPath, args: [errorScript] }], callTimeoutMs: 300, toolBudgetTokens: 1000 }),
+      new MCPManager({
+        servers: [
+          { name: 'crash', transport: 'stdio', command: process.execPath, args: [crashScript] },
+        ],
+        callTimeoutMs: 300,
+        toolBudgetTokens: 1000,
+      }),
+      new MCPManager({
+        servers: [
+          {
+            name: 'malformed',
+            transport: 'stdio',
+            command: process.execPath,
+            args: [malformedScript],
+          },
+        ],
+        callTimeoutMs: 200,
+        toolBudgetTokens: 1000,
+      }),
+      new MCPManager({
+        servers: [
+          { name: 'timeout', transport: 'stdio', command: process.execPath, args: [timeoutScript] },
+        ],
+        callTimeoutMs: 1500,
+        toolBudgetTokens: 1000,
+      }),
+      new MCPManager({
+        servers: [
+          { name: 'rpc-error', transport: 'stdio', command: process.execPath, args: [errorScript] },
+        ],
+        callTimeoutMs: 300,
+        toolBudgetTokens: 1000,
+      }),
     ];
 
     try {
       for (const manager of managers) await manager.init();
 
       await assert.rejects(managers[0].callTool('mcp_echo', { text: 'x' }), /transport closed/i);
-      await assert.rejects(managers[1].callTool('mcp_echo', { text: 'x' }), /(timed out|transport closed)/i);
+      await assert.rejects(
+        managers[1].callTool('mcp_echo', { text: 'x' }),
+        /(timed out|transport closed)/i
+      );
       await assert.rejects(managers[2].callTool('mcp_echo', { text: 'x' }), /timed out/i);
-      await assert.rejects(managers[3].callTool('mcp_echo', { text: 'x' }), /upstream unavailable/i);
+      await assert.rejects(
+        managers[3].callTool('mcp_echo', { text: 'x' }),
+        /upstream unavailable/i
+      );
     } finally {
       for (const manager of managers) await manager.close();
-      await Promise.all([crashScript, malformedScript, timeoutScript, errorScript].map((s) => fs.rm(path.dirname(s), { recursive: true, force: true })));
+      await Promise.all(
+        [crashScript, malformedScript, timeoutScript, errorScript].map((s) =>
+          fs.rm(path.dirname(s), { recursive: true, force: true })
+        )
+      );
     }
   });
 
   it('handles tool result error payloads', async () => {
     const serverScript = await makeMockMcpServerScript({ toolResultErrorOnCallName: 'mcp_echo' });
     const manager = new MCPManager({
-      servers: [{ name: 'result-error', transport: 'stdio', command: process.execPath, args: [serverScript] }],
+      servers: [
+        {
+          name: 'result-error',
+          transport: 'stdio',
+          command: process.execPath,
+          args: [serverScript],
+        },
+      ],
       callTimeoutMs: 300,
       toolBudgetTokens: 1000,
     });
 
     try {
       await manager.init();
-      await assert.rejects(manager.callTool('mcp_echo', { text: 'nope' }), /tool failed: mcp_echo/i);
+      await assert.rejects(
+        manager.callTool('mcp_echo', { text: 'nope' }),
+        /tool failed: mcp_echo/i
+      );
     } finally {
       await manager.close();
       await fs.rm(path.dirname(serverScript), { recursive: true, force: true });
@@ -348,8 +409,16 @@ describe('MCPManager', () => {
     const zeroScript = await makeMockMcpServerScript({ tools: [] });
     const dupScript = await makeMockMcpServerScript({
       tools: [
-        { name: 'dup_tool', description: 'first', inputSchema: { type: 'object', properties: { a: { type: 'string' } } } },
-        { name: 'dup_tool', description: 'second', inputSchema: { type: 'object', properties: { b: { type: 'string' } } } },
+        {
+          name: 'dup_tool',
+          description: 'first',
+          inputSchema: { type: 'object', properties: { a: { type: 'string' } } },
+        },
+        {
+          name: 'dup_tool',
+          description: 'second',
+          inputSchema: { type: 'object', properties: { b: { type: 'string' } } },
+        },
       ],
     });
     const hugeScript = await makeMockMcpServerScript({
@@ -359,16 +428,34 @@ describe('MCPManager', () => {
           description: 'huge',
           inputSchema: {
             type: 'object',
-            properties: Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`field_${i}`, { type: 'string', description: 'x'.repeat(40) }])),
+            properties: Object.fromEntries(
+              Array.from({ length: 300 }, (_, i) => [
+                `field_${i}`,
+                { type: 'string', description: 'x'.repeat(40) },
+              ])
+            ),
             required: [],
           },
         },
       ],
     });
 
-    const zeroManager = new MCPManager({ servers: [{ name: 'zero', transport: 'stdio', command: process.execPath, args: [zeroScript] }], toolBudgetTokens: 1000 });
-    const dupManager = new MCPManager({ servers: [{ name: 'dup', transport: 'stdio', command: process.execPath, args: [dupScript] }], toolBudgetTokens: 1000 });
-    const hugeManager = new MCPManager({ servers: [{ name: 'huge', transport: 'stdio', command: process.execPath, args: [hugeScript] }], toolBudgetTokens: 25 });
+    const zeroManager = new MCPManager({
+      servers: [
+        { name: 'zero', transport: 'stdio', command: process.execPath, args: [zeroScript] },
+      ],
+      toolBudgetTokens: 1000,
+    });
+    const dupManager = new MCPManager({
+      servers: [{ name: 'dup', transport: 'stdio', command: process.execPath, args: [dupScript] }],
+      toolBudgetTokens: 1000,
+    });
+    const hugeManager = new MCPManager({
+      servers: [
+        { name: 'huge', transport: 'stdio', command: process.execPath, args: [hugeScript] },
+      ],
+      toolBudgetTokens: 25,
+    });
 
     try {
       await zeroManager.init();
@@ -386,14 +473,20 @@ describe('MCPManager', () => {
       assert.match(hugeManager.getWarnings().join('\n'), /budget exceeded/i);
     } finally {
       await Promise.all([zeroManager.close(), dupManager.close(), hugeManager.close()]);
-      await Promise.all([zeroScript, dupScript, hugeScript].map((s) => fs.rm(path.dirname(s), { recursive: true, force: true })));
+      await Promise.all(
+        [zeroScript, dupScript, hugeScript].map((s) =>
+          fs.rm(path.dirname(s), { recursive: true, force: true })
+        )
+      );
     }
   });
 
   it('supports disable/re-enable lifecycle and excludes disabled tools from schema', async () => {
     const serverScript = await makeMockMcpServerScript();
     const manager = new MCPManager({
-      servers: [{ name: 'lifecycle', transport: 'stdio', command: process.execPath, args: [serverScript] }],
+      servers: [
+        { name: 'lifecycle', transport: 'stdio', command: process.execPath, args: [serverScript] },
+      ],
       toolBudgetTokens: 1000,
       callTimeoutMs: 500,
     });
@@ -401,11 +494,17 @@ describe('MCPManager', () => {
     try {
       await manager.init();
       assert.equal(manager.disableTool('mcp_echo'), true);
-      assert.equal(manager.getEnabledToolSchemas().some((s) => s.function.name === 'mcp_echo'), false);
+      assert.equal(
+        manager.getEnabledToolSchemas().some((s) => s.function.name === 'mcp_echo'),
+        false
+      );
       await assert.rejects(manager.callTool('mcp_echo', { text: 'off' }), /disabled/i);
 
       assert.equal(manager.enableTool('mcp_echo'), true);
-      assert.equal(manager.getEnabledToolSchemas().some((s) => s.function.name === 'mcp_echo'), true);
+      assert.equal(
+        manager.getEnabledToolSchemas().some((s) => s.function.name === 'mcp_echo'),
+        true
+      );
       assert.equal(await manager.callTool('mcp_echo', { text: 'on' }), 'echo:on');
     } finally {
       await manager.close();
@@ -419,13 +518,25 @@ describe('MCPManager', () => {
         {
           name: 'mcp_pid',
           description: 'returns pid',
-          inputSchema: { type: 'object', additionalProperties: false, properties: {}, required: [] },
+          inputSchema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {},
+            required: [],
+          },
         },
       ],
     });
 
     const manager = new MCPManager({
-      servers: [{ name: 'restartable', transport: 'stdio', command: process.execPath, args: [serverScript] }],
+      servers: [
+        {
+          name: 'restartable',
+          transport: 'stdio',
+          command: process.execPath,
+          args: [serverScript],
+        },
+      ],
       toolBudgetTokens: 1000,
       callTimeoutMs: 500,
     });
@@ -450,10 +561,22 @@ describe('MCPManager', () => {
 
   it('supports multiple servers and isolates failures to the crashed server', async () => {
     const healthyScript = await makeMockMcpServerScript({
-      tools: [{ name: 'healthy_tool', description: 'healthy', inputSchema: { type: 'object', properties: { text: { type: 'string' } } } }],
+      tools: [
+        {
+          name: 'healthy_tool',
+          description: 'healthy',
+          inputSchema: { type: 'object', properties: { text: { type: 'string' } } },
+        },
+      ],
     });
     const flakyScript = await makeMockMcpServerScript({
-      tools: [{ name: 'flaky_tool', description: 'flaky', inputSchema: { type: 'object', properties: { text: { type: 'string' } } } }],
+      tools: [
+        {
+          name: 'flaky_tool',
+          description: 'flaky',
+          inputSchema: { type: 'object', properties: { text: { type: 'string' } } },
+        },
+      ],
       crashOnCallName: 'flaky_tool',
     });
 
@@ -476,7 +599,11 @@ describe('MCPManager', () => {
       assert.equal(await manager.callTool('healthy_tool', { text: 'c' }), 'ok:healthy_tool');
     } finally {
       await manager.close();
-      await Promise.all([healthyScript, flakyScript].map((s) => fs.rm(path.dirname(s), { recursive: true, force: true })));
+      await Promise.all(
+        [healthyScript, flakyScript].map((s) =>
+          fs.rm(path.dirname(s), { recursive: true, force: true })
+        )
+      );
     }
   });
 });

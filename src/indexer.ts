@@ -1,9 +1,10 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+
 import type { LensStore } from './lens.js';
-import type { VaultStore } from './vault.js';
 import { escapeRegex, estimateTokens } from './utils.js';
+import type { VaultStore } from './vault.js';
 
 export type ProjectIndexFileMeta = {
   path: string;
@@ -49,12 +50,7 @@ export type ProjectIndexProgress = {
 const WARN_FILE_COUNT = 5_000;
 const HARD_FILE_LIMIT = 20_000;
 
-const DEFAULT_SKIP_DIRS = new Set([
-  '.git',
-  'node_modules',
-  'dist',
-  'build',
-]);
+const DEFAULT_SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'build']);
 
 const LANGUAGE_BY_EXT: Record<string, string> = {
   '.ts': 'typescript',
@@ -97,11 +93,7 @@ const LANGUAGE_BY_EXT: Record<string, string> = {
   '.svelte': 'svelte',
 };
 
-const SOURCE_BASENAMES = new Set([
-  'Dockerfile',
-  'Makefile',
-  'CMakeLists.txt',
-]);
+const SOURCE_BASENAMES = new Set(['Dockerfile', 'Makefile', 'CMakeLists.txt']);
 
 type IgnoreRule = {
   regex: RegExp;
@@ -139,7 +131,7 @@ function globToRegex(glob: string, anchored: boolean, directoryOnly: boolean): R
     src += escapeRegex(ch);
   }
 
-  const prefix = anchored ? '^' : '^(?:|.*/)' ;
+  const prefix = anchored ? '^' : '^(?:|.*/)';
   const suffix = directoryOnly ? '(?:/.*)?$' : '$';
   return new RegExp(`${prefix}${src}${suffix}`);
 }
@@ -189,10 +181,7 @@ function parseIgnoreRules(raw: string): IgnoreRule[] {
 }
 
 async function loadIgnoreRules(projectDir: string): Promise<IgnoreRule[]> {
-  const files = [
-    path.join(projectDir, '.gitignore'),
-    path.join(projectDir, '.idlehandsignore'),
-  ];
+  const files = [path.join(projectDir, '.gitignore'), path.join(projectDir, '.idlehandsignore')];
 
   const rules: IgnoreRule[] = [];
   for (const filePath of files) {
@@ -255,7 +244,10 @@ async function readTextFile(filePath: string): Promise<string | null> {
   }
 }
 
-async function walkSourceFiles(projectDir: string, rules: IgnoreRule[]): Promise<{ files: Array<{ abs: string; rel: string; mtimeMs: number }>; warnings: string[] }> {
+async function walkSourceFiles(
+  projectDir: string,
+  rules: IgnoreRule[]
+): Promise<{ files: Array<{ abs: string; rel: string; mtimeMs: number }>; warnings: string[] }> {
   const warnings: string[] = [];
   const out: Array<{ abs: string; rel: string; mtimeMs: number }> = [];
   let scanned = 0;
@@ -282,7 +274,9 @@ async function walkSourceFiles(projectDir: string, rules: IgnoreRule[]): Promise
 
       scanned++;
       if (scanned > HARD_FILE_LIMIT) {
-        throw new Error(`Project has more than ${HARD_FILE_LIMIT} files after ignore filters; refusing to index.`);
+        throw new Error(
+          `Project has more than ${HARD_FILE_LIMIT} files after ignore filters; refusing to index.`
+        );
       }
 
       if (hasDefaultIgnoredSegment(rel)) continue;
@@ -345,7 +339,7 @@ export function parseIndexMeta(raw: string): ProjectIndexMeta | null {
 export function isFreshIndex(meta: ProjectIndexMeta, maxAgeMs = 24 * 60 * 60 * 1000): boolean {
   const ts = Date.parse(meta.indexedAt);
   if (!Number.isFinite(ts)) return false;
-  return (Date.now() - ts) <= maxAgeMs;
+  return Date.now() - ts <= maxAgeMs;
 }
 
 export async function runProjectIndex(opts: {
@@ -377,7 +371,7 @@ export async function runProjectIndex(opts: {
 
   const emitProgress = (current?: string, scannedOverride?: number) => {
     opts.onProgress?.({
-      scanned: scannedOverride ?? (filesIndexed + filesSkipped),
+      scanned: scannedOverride ?? filesIndexed + filesSkipped,
       indexed: filesIndexed,
       skipped: filesSkipped,
       current,

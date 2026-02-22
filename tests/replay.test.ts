@@ -1,11 +1,11 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { describe, it } from 'node:test';
 
-import { ReplayStore } from '../dist/replay.js';
 import { LensStore } from '../dist/lens.js';
+import { ReplayStore } from '../dist/replay.js';
 
 async function mkTempDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'idlehands-replay-test-'));
@@ -21,7 +21,7 @@ describe('ReplayStore', () => {
       filePath: '/tmp/a.txt',
       before: Buffer.from('before'),
       after: Buffer.from('after'),
-      note: 'initial write'
+      note: 'initial write',
     });
 
     const got = await replay.get(cp.id);
@@ -41,7 +41,7 @@ describe('ReplayStore', () => {
       op: 'edit_file',
       filePath: '/tmp/b.txt',
       before: Buffer.from('OLD'),
-      after: Buffer.from('NEW')
+      after: Buffer.from('NEW'),
     });
 
     let current = Buffer.from('DIVERGED');
@@ -70,7 +70,7 @@ describe('ReplayStore', () => {
         filePath: `/tmp/${i}.txt`,
         before: Buffer.from(`b${i}`),
         after: Buffer.from(`a${i}`),
-        note: `cp-${i}`
+        note: `cp-${i}`,
       });
     }
 
@@ -101,7 +101,7 @@ describe('ReplayStore', () => {
       filePath: '/tmp/c.ts',
       before: Buffer.from(before),
       after: Buffer.from(after),
-      note
+      note,
     });
 
     const got = await replay.get(cp.id);

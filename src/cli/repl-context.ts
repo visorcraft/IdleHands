@@ -1,10 +1,12 @@
-import readline from 'node:readline/promises';
-import type { FSWatcher } from 'node:fs';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { FSWatcher } from 'node:fs';
+import type readline from 'node:readline/promises';
+
+import type { AntonRunResult, AntonProgress } from '../anton/types.js';
 import type { makeStyler } from '../term.js';
 import type { UserContent, TurnEndEvent } from '../types.js';
+
 import type { StatusBar, ServerHealthSnapshot, PerfTurnSample } from './status.js';
-import type { AntonRunResult, AntonProgress } from '../anton/types.js';
 
 export interface ReplContext {
   session: any;

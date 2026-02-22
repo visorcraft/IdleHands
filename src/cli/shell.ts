@@ -2,10 +2,10 @@
  * Direct shell command execution and external editor prompt.
  */
 
-import path from 'node:path';
-import os from 'node:os';
-import fs from 'node:fs/promises';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 function pickEditor(configEditor?: string): string {
   const e = (configEditor || '').trim();
@@ -13,7 +13,10 @@ function pickEditor(configEditor?: string): string {
   return process.env.EDITOR || process.env.VISUAL || 'nano';
 }
 
-export async function openEditorPrompt(initialText: string, configEditor?: string): Promise<{ ok: boolean; text?: string; reason?: string }> {
+export async function openEditorPrompt(
+  initialText: string,
+  configEditor?: string
+): Promise<{ ok: boolean; text?: string; reason?: string }> {
   const editor = pickEditor(configEditor);
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'idlehands-edit-'));
   const file = path.join(dir, 'prompt.md');
@@ -62,10 +65,15 @@ export async function runDirectShellCommand(opts: {
   let err = '';
   let timedOut = false;
 
-  const timer = setTimeout(() => {
-    timedOut = true;
-    try { child.kill('SIGKILL'); } catch {}
-  }, Math.max(1, opts.timeoutSec) * 1000);
+  const timer = setTimeout(
+    () => {
+      timedOut = true;
+      try {
+        child.kill('SIGKILL');
+      } catch {}
+    },
+    Math.max(1, opts.timeoutSec) * 1000
+  );
 
   child.stdout.on('data', (chunk) => {
     const text = String(chunk);

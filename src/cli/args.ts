@@ -2,8 +2,9 @@
  * CLI argument parsing, boolean/numeric coercions, and help text.
  */
 
-import path from 'node:path';
 import fs from 'node:fs/promises';
+import path from 'node:path';
+
 import type { McpServerConfig } from '../types.js';
 
 /** Convert raw errors into user-friendly messages (no stack traces). */
@@ -26,12 +27,50 @@ export function friendlyError(e: any): string {
 
 // Flags that are always boolean (never consume the next positional arg as their value)
 const BOOLEAN_FLAGS = new Set([
-  'help', 'h', 'verbose', 'quiet', 'dry-run', 'dry_run', 'no-confirm', 'no_confirm', 'yolo',
-  'non-interactive', 'non_interactive',
-  'one-shot', 'one_shot', 'all', 'no-context', 'no_context',
-  'no-trifecta', 'no-vault', 'no-lens', 'no-replay', 'no-sub-agents',
-  'i-know-what-im-doing', 'i_know_what_im_doing',
-  'version', 'v', 'upgrade', 'rollback', 'lockdown', 'sys', 'offline', 'no-update-check', 'init', 'plan', 'step', 'continue', 'fresh', 'fail-on-error', 'diff-only', 'vim', 'show-server-metrics', 'no-server-metrics', 'auto-detect-model-change', 'tui', 'no-tui'
+  'help',
+  'h',
+  'verbose',
+  'quiet',
+  'dry-run',
+  'dry_run',
+  'no-confirm',
+  'no_confirm',
+  'yolo',
+  'non-interactive',
+  'non_interactive',
+  'one-shot',
+  'one_shot',
+  'all',
+  'no-context',
+  'no_context',
+  'no-trifecta',
+  'no-vault',
+  'no-lens',
+  'no-replay',
+  'no-sub-agents',
+  'i-know-what-im-doing',
+  'i_know_what_im_doing',
+  'version',
+  'v',
+  'upgrade',
+  'rollback',
+  'lockdown',
+  'sys',
+  'offline',
+  'no-update-check',
+  'init',
+  'plan',
+  'step',
+  'continue',
+  'fresh',
+  'fail-on-error',
+  'diff-only',
+  'vim',
+  'show-server-metrics',
+  'no-server-metrics',
+  'auto-detect-model-change',
+  'tui',
+  'no-tui',
 ]);
 
 const OPTIONAL_VALUE_FLAGS = new Set(['resume']);
@@ -136,8 +175,13 @@ export async function loadMcpServerConfigFile(configPath: string): Promise<McpSe
       name,
       transport: transport as 'stdio' | 'http',
       command: (item as any).command == null ? undefined : String((item as any).command),
-      args: Array.isArray((item as any).args) ? (item as any).args.map((a: any) => String(a)) : undefined,
-      env: (item as any).env && typeof (item as any).env === 'object' ? (item as any).env as Record<string, string> : undefined,
+      args: Array.isArray((item as any).args)
+        ? (item as any).args.map((a: any) => String(a))
+        : undefined,
+      env:
+        (item as any).env && typeof (item as any).env === 'object'
+          ? ((item as any).env as Record<string, string>)
+          : undefined,
       url: (item as any).url == null ? undefined : String((item as any).url),
       enabled: typeof (item as any).enabled === 'boolean' ? (item as any).enabled : undefined,
       enabled_tools: Array.isArray((item as any).enabled_tools)
@@ -157,9 +201,24 @@ export type OneShotOutputEvent =
   | { type: 'system'; model: string; harness: string; context_window: number }
   | { type: 'assistant_delta'; content: string }
   | { type: 'assistant'; content: string; thinking?: string }
-  | { type: 'tool_call'; name: string; args: Record<string, unknown>; result?: string; success?: boolean; summary?: string }
+  | {
+      type: 'tool_call';
+      name: string;
+      args: Record<string, unknown>;
+      result?: string;
+      success?: boolean;
+      summary?: string;
+    }
   | { type: 'diff'; content: string }
-  | { type: 'result'; ok: boolean; turns?: number; tool_calls?: number; duration_ms: number; error?: string; partial?: boolean };
+  | {
+      type: 'result';
+      ok: boolean;
+      turns?: number;
+      tool_calls?: number;
+      duration_ms: number;
+      error?: string;
+      partial?: boolean;
+    };
 
 export function normalizeOutputFormat(value: unknown): 'text' | 'json' | 'stream-json' {
   const v = String(value ?? 'text').toLowerCase();

@@ -2,19 +2,15 @@
  * Tests for Anton verifier functionality.
  */
 
-import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test, describe } from 'node:test';
 
 // Import from dist (compiled JS)
+import type { DetectedCommands, AntonAgentResult, AntonRunConfig } from '../dist/anton/types.js';
 import { detectVerificationCommands, runVerification } from '../dist/anton/verifier.js';
-import type {
-  DetectedCommands,
-  AntonAgentResult,
-  AntonRunConfig,
-} from '../dist/anton/types.js';
 
 describe('Anton Verifier', () => {
   describe('runVerification', () => {
@@ -29,7 +25,7 @@ describe('Anton Verifier', () => {
       };
 
       const result = await runVerification(opts);
-      
+
       assert.strictEqual(result.l0_agentDone, true);
       assert.strictEqual(result.l1_build, undefined);
       assert.strictEqual(result.l1_test, undefined);
@@ -54,7 +50,7 @@ describe('Anton Verifier', () => {
       };
 
       const result = await runVerification(opts);
-      
+
       assert.strictEqual(result.l0_agentDone, false);
       assert.strictEqual(result.l1_build, undefined);
       assert.strictEqual(result.l1_test, undefined);
@@ -75,7 +71,7 @@ describe('Anton Verifier', () => {
       };
 
       const result = await runVerification(opts);
-      
+
       assert.strictEqual(result.l0_agentDone, true);
       assert.strictEqual(result.l1_build, true);
       assert.strictEqual(result.l1_test, true);
@@ -100,7 +96,7 @@ describe('Anton Verifier', () => {
       };
 
       const result = await runVerification(opts);
-      
+
       assert.strictEqual(result.l0_agentDone, true);
       assert.strictEqual(result.l1_build, true);
       assert.strictEqual(result.l1_test, false);
@@ -111,7 +107,7 @@ describe('Anton Verifier', () => {
       assert.ok(result.summary.includes('test:'));
     });
 
-    test('L1 no commands defined → doesn\'t block', async () => {
+    test("L1 no commands defined → doesn't block", async () => {
       const opts = {
         agentResult: { status: 'done' as const, reason: undefined, subtasks: [] },
         task: { text: 'test task' },
@@ -122,7 +118,7 @@ describe('Anton Verifier', () => {
       };
 
       const result = await runVerification(opts);
-      
+
       assert.strictEqual(result.l0_agentDone, true);
       assert.strictEqual(result.l1_build, undefined);
       assert.strictEqual(result.l1_test, undefined);
@@ -147,7 +143,7 @@ describe('Anton Verifier', () => {
       };
 
       const result = await runVerification(opts);
-      
+
       assert.strictEqual(result.l0_agentDone, true);
       assert.strictEqual(result.l2_ai, true);
       assert.strictEqual(result.l2_reason, 'Code looks good');
@@ -170,7 +166,7 @@ describe('Anton Verifier', () => {
       };
 
       const result = await runVerification(opts);
-      
+
       assert.strictEqual(result.l0_agentDone, true);
       assert.strictEqual(result.l2_ai, false);
       assert.strictEqual(result.l2_reason, 'Code has issues');
@@ -193,7 +189,7 @@ describe('Anton Verifier', () => {
       };
 
       const result = await runVerification(opts);
-      
+
       assert.strictEqual(result.l0_agentDone, true);
       assert.strictEqual(result.l2_ai, false);
       assert.strictEqual(result.l2_reason, 'Invalid verifier response: not valid JSON');
@@ -215,7 +211,7 @@ describe('Anton Verifier', () => {
       };
 
       const result = await runVerification(opts);
-      
+
       assert.strictEqual(result.l0_agentDone, true);
       assert.strictEqual(result.l2_ai, false);
       assert.strictEqual(result.l2_reason, 'Invalid verifier response: missing pass field');
@@ -237,7 +233,7 @@ describe('Anton Verifier', () => {
       };
 
       const result = await runVerification(opts);
-      
+
       assert.strictEqual(result.l0_agentDone, true);
       assert.strictEqual(result.l2_ai, undefined);
       assert.strictEqual(result.l2_reason, undefined);
@@ -260,7 +256,7 @@ describe('Anton Verifier', () => {
       };
 
       const result = await runVerification(opts);
-      
+
       assert.strictEqual(result.l0_agentDone, true);
       assert.strictEqual(result.l1_build, false);
       assert.strictEqual(result.l2_ai, undefined);
@@ -284,7 +280,7 @@ describe('Anton Verifier', () => {
       };
 
       const result = await runVerification(opts);
-      
+
       assert.strictEqual(result.l0_agentDone, true);
       assert.strictEqual(result.l1_build, true);
       assert.strictEqual(result.l1_test, true);
@@ -299,7 +295,7 @@ describe('Anton Verifier', () => {
   describe('detectVerificationCommands', () => {
     test('Detection: package.json with scripts', async () => {
       const tmpDir = await mkdtemp(join(tmpdir(), 'verifier-test-'));
-      
+
       try {
         const packageJson = {
           name: 'test-package',
@@ -309,11 +305,11 @@ describe('Anton Verifier', () => {
             lint: 'eslint .',
           },
         };
-        
+
         await writeFile(join(tmpDir, 'package.json'), JSON.stringify(packageJson, null, 2));
-        
+
         const commands = await detectVerificationCommands(tmpDir, {});
-        
+
         assert.strictEqual(commands.build, 'npm run build');
         assert.strictEqual(commands.test, 'npm test');
         assert.strictEqual(commands.lint, 'npm run lint');
@@ -324,7 +320,7 @@ describe('Anton Verifier', () => {
 
     test('Detection: overrides take precedence', async () => {
       const tmpDir = await mkdtemp(join(tmpdir(), 'verifier-test-'));
-      
+
       try {
         const packageJson = {
           name: 'test-package',
@@ -334,15 +330,15 @@ describe('Anton Verifier', () => {
             lint: 'eslint .',
           },
         };
-        
+
         await writeFile(join(tmpDir, 'package.json'), JSON.stringify(packageJson, null, 2));
-        
+
         const commands = await detectVerificationCommands(tmpDir, {
           build: 'custom-build',
           test: 'custom-test',
           lint: 'custom-lint',
         });
-        
+
         assert.strictEqual(commands.build, 'custom-build');
         assert.strictEqual(commands.test, 'custom-test');
         assert.strictEqual(commands.lint, 'custom-lint');

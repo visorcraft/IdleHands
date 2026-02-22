@@ -1,10 +1,23 @@
-import fs from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const SKIP_DIRS = new Set([
-  '.git', 'node_modules', '.cache', '.local', '.npm', '.cargo', '.rustup',
-  '.venv', 'venv', '__pycache__', 'dist', 'build', 'target', '.idea', '.vscode',
+  '.git',
+  'node_modules',
+  '.cache',
+  '.local',
+  '.npm',
+  '.cargo',
+  '.rustup',
+  '.venv',
+  'venv',
+  '__pycache__',
+  'dist',
+  'build',
+  'target',
+  '.idea',
+  '.vscode',
 ]);
 
 export function expandHome(raw: string): string {
@@ -52,7 +65,7 @@ async function isDirectory(p: string): Promise<boolean> {
 export async function detectRepoCandidates(
   seedDir: string,
   allowedDirs: string[],
-  opts: { maxDepth?: number; maxDirs?: number; maxResults?: number } = {},
+  opts: { maxDepth?: number; maxDirs?: number; maxResults?: number } = {}
 ): Promise<string[]> {
   const maxDepth = Math.max(1, opts.maxDepth ?? 3);
   const maxDirs = Math.max(50, opts.maxDirs ?? 2000);
@@ -62,7 +75,9 @@ export async function detectRepoCandidates(
   const preferredRoot = path.dirname(seedAbs);
   const scanRoot = (await isDirectory(preferredRoot))
     ? preferredRoot
-    : ((await isDirectory(seedAbs)) ? seedAbs : process.cwd());
+    : (await isDirectory(seedAbs))
+      ? seedAbs
+      : process.cwd();
 
   const queue: Array<{ dir: string; depth: number }> = [{ dir: scanRoot, depth: 0 }];
   const visited = new Set<string>();

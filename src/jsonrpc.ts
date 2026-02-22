@@ -42,7 +42,10 @@ export function encodeJsonRpcFrame(message: Record<string, unknown>): Buffer {
  * Parse complete JSON-RPC messages from a buffer.
  * Returns extracted messages and the remaining buffer.
  */
-export function extractMessages(inputBuf: Buffer<ArrayBuffer>): { messages: unknown[]; remaining: Buffer<ArrayBuffer> } {
+export function extractMessages(inputBuf: Buffer<ArrayBuffer>): {
+  messages: unknown[];
+  remaining: Buffer<ArrayBuffer>;
+} {
   const messages: unknown[] = [];
   let buf = inputBuf;
 

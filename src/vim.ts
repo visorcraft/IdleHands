@@ -19,7 +19,7 @@ type VimMode = 'normal' | 'insert';
 export interface VimState {
   mode: VimMode;
   yankBuffer: string;
-  pendingKey: string;   // for multi-char commands like dd, yy
+  pendingKey: string; // for multi-char commands like dd, yy
 }
 
 export function createVimState(): VimState {
@@ -35,7 +35,9 @@ export function handleVimKeypress(
   state: VimState,
   rl: readline.Interface,
   ch: string | undefined,
-  key: { name?: string; ctrl?: boolean; meta?: boolean; shift?: boolean; sequence?: string } | undefined,
+  key:
+    | { name?: string; ctrl?: boolean; meta?: boolean; shift?: boolean; sequence?: string }
+    | undefined
 ): boolean {
   // Escape always switches to normal mode
   if (key?.name === 'escape') {
@@ -180,5 +182,7 @@ function setLine(rl: readline.Interface, text: string): void {
 function setCursor(rl: readline.Interface, pos: number): void {
   (rl as any).cursor = Math.max(0, Math.min(pos, getLine(rl).length));
   // Force readline to refresh the display
-  try { (rl as any)._refreshLine?.(); } catch {}
+  try {
+    (rl as any)._refreshLine?.();
+  } catch {}
 }

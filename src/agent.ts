@@ -1,20 +1,20 @@
-import type { IdlehandsConfig, ChatMessage, UserContent, ToolSchema, ToolCall, TrifectaMode, ToolCallEvent, ToolResultEvent, ToolStreamEvent, TurnEndEvent, ConfirmationProvider, PlanStep, ApprovalMode } from './types.js';
+import type {
+  IdlehandsConfig,
+  ChatMessage,
+  UserContent,
+  ToolSchema,
+  ToolCall,
+  TrifectaMode,
+  ToolCallEvent,
+  ToolResultEvent,
+  ToolStreamEvent,
+  TurnEndEvent,
+  ConfirmationProvider,
+  PlanStep,
+  ApprovalMode,
+} from './types.js';
 import { OpenAIClient } from './client.js';
-import { enforceContextBudget, stripThinking, estimateTokensFromMessages, estimateToolSchemaTokens } from './history.js';
-import * as tools from './tools.js';
-import { selectHarness } from './harnesses.js';
-import { BASE_MAX_TOKENS, deriveContextWindow, deriveGenerationParams, supportsVisionModel } from './model-customization.js';
-import { HookManager, loadHookPlugins, type HookSystemConfig } from './hooks/index.js';
-import { checkExecSafety, checkPathSafety } from './safety.js';
-import { loadProjectContext } from './context.js';
-import { loadGitContext, isGitDirty, stashWorkingTree } from './git.js';
-import { projectIndexKeys, parseIndexMeta, isFreshIndex, indexSummaryLine } from './indexer.js';
-import { ReplayStore } from './replay.js';
 import { VaultStore } from './vault.js';
-import { LensStore } from './lens.js';
-import { SYS_CONTEXT_SCHEMA, collectSnapshot } from './sys/context.js';
-import { MCPManager, type McpServerStatus, type McpToolStatus } from './mcp.js';
-import { LspManager, detectInstalledLspServers } from './lsp.js';
 import {
   generateMinimalDiff,
   toolResultSummary,
@@ -26,9 +26,17 @@ import {
   sanitizePathsInMessage,
   digestToolResult,
 } from './agent/formatting.js';
-import { parseToolCallsFromContent, getMissingRequiredParams, getArgValidationIssues, stripMarkdownFences } from './agent/tool-calls.js';
-import { ToolError, ValidationError } from './tools/tool-error.js';
+import {
+  parseToolCallsFromContent,
+  getMissingRequiredParams,
+  getArgValidationIssues,
+  stripMarkdownFences,
+} from './agent/tool-calls.js';
+
 export { parseToolCallsFromContent };
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
 import {
   type ReviewArtifact,
   reviewArtifactKeys,
@@ -41,8 +49,31 @@ import {
   gitHead,
   normalizeModelsResponse,
 } from './agent/review-artifact.js';
-import fs from 'node:fs/promises';
-import path from 'node:path';
+import { loadProjectContext } from './context.js';
+import { loadGitContext, isGitDirty, stashWorkingTree } from './git.js';
+import { selectHarness } from './harnesses.js';
+import {
+  enforceContextBudget,
+  stripThinking,
+  estimateTokensFromMessages,
+  estimateToolSchemaTokens,
+} from './history.js';
+import { HookManager, loadHookPlugins, type HookSystemConfig } from './hooks/index.js';
+import { projectIndexKeys, parseIndexMeta, isFreshIndex, indexSummaryLine } from './indexer.js';
+import { LensStore } from './lens.js';
+import { LspManager, detectInstalledLspServers } from './lsp.js';
+import { MCPManager, type McpServerStatus, type McpToolStatus } from './mcp.js';
+import {
+  BASE_MAX_TOKENS,
+  deriveContextWindow,
+  deriveGenerationParams,
+  supportsVisionModel,
+} from './model-customization.js';
+import { ReplayStore } from './replay.js';
+import { checkExecSafety, checkPathSafety } from './safety.js';
+import { SYS_CONTEXT_SCHEMA, collectSnapshot } from './sys/context.js';
+import { ToolError, ValidationError } from './tools/tool-error.js';
+import * as tools from './tools.js';
 import { stateDir, timestampedId } from './utils.js';
 
 function makeAbortController() {
@@ -50,11 +81,15 @@ function makeAbortController() {
   return new AbortController();
 }
 
-const CACHED_EXEC_OBSERVATION_HINT = '[idlehands hint] Reused cached output for repeated read-only exec call (unchanged observation).';
-const CACHED_READ_OBSERVATION_HINT = '[idlehands hint] Reused cached output for repeated identical read call.';
+const CACHED_EXEC_OBSERVATION_HINT =
+  '[idlehands hint] Reused cached output for repeated read-only exec call (unchanged observation).';
+const CACHED_READ_OBSERVATION_HINT =
+  '[idlehands hint] Reused cached output for repeated identical read call.';
 
 function looksLikeReadOnlyExecCommand(command: string): boolean {
-  const cmd = String(command || '').trim().toLowerCase();
+  const cmd = String(command || '')
+    .trim()
+    .toLowerCase();
   if (!cmd) return false;
 
   // Shell redirects are likely writes.
@@ -67,10 +102,18 @@ function looksLikeReadOnlyExecCommand(command: string): boolean {
 
   // Git: allow common read-only subcommands, block mutating verbs.
   if (/\bgit\b/.test(cmd)) {
-    if (/\bgit\b[^\n|;&]*\b(?:add|am|apply|bisect|checkout|switch|clean|clone|commit|fetch|merge|pull|push|rebase|reset|revert|stash)\b/.test(cmd)) {
+    if (
+      /\bgit\b[^\n|;&]*\b(?:add|am|apply|bisect|checkout|switch|clean|clone|commit|fetch|merge|pull|push|rebase|reset|revert|stash)\b/.test(
+        cmd
+      )
+    ) {
       return false;
     }
-    if (/\bgit\b[^\n|;&]*\b(?:log|show|status|diff|rev-parse|branch(?:\s+--list)?|tag(?:\s+--list)?|ls-files|grep)\b/.test(cmd)) {
+    if (
+      /\bgit\b[^\n|;&]*\b(?:log|show|status|diff|rev-parse|branch(?:\s+--list)?|tag(?:\s+--list)?|ls-files|grep)\b/.test(
+        cmd
+      )
+    ) {
       return true;
     }
   }
@@ -82,7 +125,8 @@ function looksLikeReadOnlyExecCommand(command: string): boolean {
   if (/^\s*(?:file|which|type|uname|env|printenv|id|whoami|pwd)\b/.test(cmd)) return true;
 
   // Git read-only subcommands that aren't covered above
-  if (/\bgit\b[^\n|;&]*\b(?:blame|remote|config\s+--(?:get|list|global|local|system))\b/.test(cmd)) return true;
+  if (/\bgit\b[^\n|;&]*\b(?:blame|remote|config\s+--(?:get|list|global|local|system))\b/.test(cmd))
+    return true;
 
   return false;
 }
@@ -92,7 +136,8 @@ function execRcShouldSignalFailure(command: string): boolean {
   if (!cmd) return false;
 
   // Common checks where non-zero usually means real failure.
-  if (/\b(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:test|build|lint|typecheck|check)\b/.test(cmd)) return true;
+  if (/\b(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:test|build|lint|typecheck|check)\b/.test(cmd))
+    return true;
   if (/\bnode\s+--test\b/.test(cmd)) return true;
   if (/\b(?:pytest|go\s+test|cargo\s+test|ctest|mvn\s+test|gradle\s+test)\b/.test(cmd)) return true;
   if (/\b(?:cargo\s+build|go\s+build|tsc\b)\b/.test(cmd)) return true;
@@ -134,10 +179,14 @@ function withCachedReadObservationHint(content: string, toolName?: string): stri
   if (content.includes('[CACHE HIT]')) return content;
 
   // Return minimal hint - no file preview to maximize context savings
-  const resourceType = toolName === 'read_file' ? 'file' 
-    : toolName === 'read_files' ? 'files' 
-    : toolName === 'list_dir' ? 'directory' 
-    : 'resource';
+  const resourceType =
+    toolName === 'read_file'
+      ? 'file'
+      : toolName === 'read_files'
+        ? 'files'
+        : toolName === 'list_dir'
+          ? 'directory'
+          : 'resource';
 
   return `[CACHE HIT] ${resourceType.charAt(0).toUpperCase() + resourceType.slice(1)} unchanged since previous read. Use the content you already have.`;
 }
@@ -153,7 +202,11 @@ async function getMtimeForPath(p: string): Promise<number> {
 }
 
 // Helper to extract resolved paths from read tool args for mtime checking.
-function extractPathsFromReadArgs(toolName: string, args: Record<string, unknown>, baseCwd: string): string[] {
+function extractPathsFromReadArgs(
+  toolName: string,
+  args: Record<string, unknown>,
+  baseCwd: string
+): string[] {
   const resolve = (p: string) => path.resolve(baseCwd, p);
 
   if (toolName === 'read_file' || toolName === 'list_dir') {
@@ -178,8 +231,10 @@ function extractPathsFromReadArgs(toolName: string, args: Record<string, unknown
   return [];
 }
 
-
-function ensureInformativeAssistantText(text: string, ctx: { toolCalls: number; turns: number }): string {
+function ensureInformativeAssistantText(
+  text: string,
+  ctx: { toolCalls: number; turns: number }
+): string {
   if (String(text ?? '').trim()) return text;
 
   if (ctx.toolCalls > 0) {
@@ -196,7 +251,9 @@ function isContextWindowExceededError(err: unknown): boolean {
   if (status === 413) return true;
   if (!msg) return false;
 
-  return /(exceeds?\s+the\s+available\s+context\s+size|exceed_context|context\s+size|context\s+window|maximum\s+context\s+length|too\s+many\s+tokens|request\s*\(\d+\s*tokens\))/i.test(msg);
+  return /(exceeds?\s+the\s+available\s+context\s+size|exceed_context|context\s+size|context\s+window|maximum\s+context\s+length|too\s+many\s+tokens|request\s*\(\d+\s*tokens\))/i.test(
+    msg
+  );
 }
 
 /** Errors that should break the outer agent loop, not be caught by per-tool handlers */
@@ -251,9 +308,21 @@ const DEFAULT_SUB_AGENT_SYSTEM_PROMPT = `You are a focused coding sub-agent. Exe
 
 const DEFAULT_SUB_AGENT_RESULT_TOKEN_CAP = 4000;
 const APPROVAL_MODE_SET = new Set<ApprovalMode>(['plan', 'reject', 'default', 'auto-edit', 'yolo']);
-const LSP_TOOL_NAMES = ['lsp_diagnostics', 'lsp_symbols', 'lsp_hover', 'lsp_definition', 'lsp_references'] as const;
+const LSP_TOOL_NAMES = [
+  'lsp_diagnostics',
+  'lsp_symbols',
+  'lsp_hover',
+  'lsp_definition',
+  'lsp_references',
+] as const;
 const LSP_TOOL_NAME_SET = new Set<string>(LSP_TOOL_NAMES);
-const FILE_MUTATION_TOOL_SET = new Set(['edit_file', 'edit_range', 'apply_patch', 'write_file', 'insert_file']);
+const FILE_MUTATION_TOOL_SET = new Set([
+  'edit_file',
+  'edit_range',
+  'apply_patch',
+  'write_file',
+  'insert_file',
+]);
 
 function normalizeApprovalMode(value: unknown): ApprovalMode | undefined {
   if (typeof value !== 'string') return undefined;
@@ -262,7 +331,13 @@ function normalizeApprovalMode(value: unknown): ApprovalMode | undefined {
 }
 
 /** Approval mode permissiveness ranking (lower = more restrictive). */
-const APPROVAL_MODE_RANK: Record<ApprovalMode, number> = { plan: 0, reject: 1, default: 2, 'auto-edit': 3, yolo: 4 };
+const APPROVAL_MODE_RANK: Record<ApprovalMode, number> = {
+  plan: 0,
+  reject: 1,
+  default: 2,
+  'auto-edit': 3,
+  yolo: 4,
+};
 
 /**
  * Cap a sub-agent's approval mode at the parent's level.
@@ -272,7 +347,10 @@ function capApprovalMode(requested: ApprovalMode, parentMode: ApprovalMode): App
   return APPROVAL_MODE_RANK[requested] <= APPROVAL_MODE_RANK[parentMode] ? requested : parentMode;
 }
 
-async function buildSubAgentContextBlock(cwd: string, rawFiles: unknown): Promise<{ block: string; included: string[]; skipped: string[] }> {
+async function buildSubAgentContextBlock(
+  cwd: string,
+  rawFiles: unknown
+): Promise<{ block: string; included: string[]; skipped: string[] }> {
   const values = Array.isArray(rawFiles) ? rawFiles : [];
   const files = values
     .map((v) => (typeof v === 'string' ? v.trim() : ''))
@@ -322,9 +400,10 @@ async function buildSubAgentContextBlock(cwd: string, rawFiles: unknown): Promis
     }
 
     const raw = buf.toString('utf8');
-    const body = raw.length > MAX_PER_FILE_CHARS
-      ? `${raw.slice(0, MAX_PER_FILE_CHARS)}\n[truncated: ${raw.length} chars total]`
-      : raw;
+    const body =
+      raw.length > MAX_PER_FILE_CHARS
+        ? `${raw.slice(0, MAX_PER_FILE_CHARS)}\n[truncated: ${raw.length} chars total]`
+        : raw;
 
     const section = `[file:${rel}]\n${body}\n[/file:${rel}]`;
     if (total + section.length > MAX_TOTAL_CHARS) {
@@ -366,11 +445,15 @@ function buildToolsSchema(opts?: {
     type: 'object',
     additionalProperties: false,
     properties,
-    required
+    required,
   });
   const str = () => ({ type: 'string' });
   const bool = () => ({ type: 'boolean' });
-  const int = (min?: number, max?: number) => ({ type: 'integer', ...(min !== undefined && { minimum: min }), ...(max !== undefined && { maximum: max }) });
+  const int = (min?: number, max?: number) => ({
+    type: 'integer',
+    ...(min !== undefined && { minimum: min }),
+    ...(max !== undefined && { maximum: max }),
+  });
 
   const schemas: ToolSchema[] = [
     // ────────────────────────────────────────────────────────────────────────────
@@ -380,7 +463,8 @@ function buildToolsSchema(opts?: {
       type: 'function',
       function: {
         name: 'read_file',
-        description: 'Read a bounded slice of a file. Never repeat an identical call consecutively; reuse the prior result.',
+        description:
+          'Read a bounded slice of a file. Never repeat an identical call consecutively; reuse the prior result.',
         parameters: obj(
           {
             path: str(),
@@ -399,7 +483,8 @@ function buildToolsSchema(opts?: {
       type: 'function',
       function: {
         name: 'read_files',
-        description: 'Batch read bounded file slices. Never repeat an identical call consecutively; reuse the prior result.',
+        description:
+          'Batch read bounded file slices. Never repeat an identical call consecutively; reuse the prior result.',
         parameters: obj(
           {
             requests: {
@@ -430,8 +515,12 @@ function buildToolsSchema(opts?: {
       type: 'function',
       function: {
         name: 'write_file',
-        description: 'Write file (atomic, backup). Existing non-empty files require overwrite=true (or force=true).',
-        parameters: obj({ path: str(), content: str(), overwrite: bool(), force: bool() }, ['path', 'content']),
+        description:
+          'Write file (atomic, backup). Existing non-empty files require overwrite=true (or force=true).',
+        parameters: obj({ path: str(), content: str(), overwrite: bool(), force: bool() }, [
+          'path',
+          'content',
+        ]),
       },
     },
     {
@@ -470,10 +559,11 @@ function buildToolsSchema(opts?: {
       function: {
         name: 'edit_file',
         description: 'Legacy exact replace (requires old_text). Prefer apply_patch/edit_range.',
-        parameters: obj(
-          { path: str(), old_text: str(), new_text: str(), replace_all: bool() },
-          ['path', 'old_text', 'new_text']
-        ),
+        parameters: obj({ path: str(), old_text: str(), new_text: str(), replace_all: bool() }, [
+          'path',
+          'old_text',
+          'new_text',
+        ]),
       },
     },
     {
@@ -492,11 +582,9 @@ function buildToolsSchema(opts?: {
       type: 'function',
       function: {
         name: 'list_dir',
-        description: 'List directory entries. Never repeat an identical call consecutively for the same path/options; reuse the prior result.',
-        parameters: obj(
-          { path: str(), recursive: bool(), max_entries: int(1, 500) },
-          ['path']
-        ),
+        description:
+          'List directory entries. Never repeat an identical call consecutively for the same path/options; reuse the prior result.',
+        parameters: obj({ path: str(), recursive: bool(), max_entries: int(1, 500) }, ['path']),
       },
     },
     {
@@ -504,10 +592,10 @@ function buildToolsSchema(opts?: {
       function: {
         name: 'search_files',
         description: 'Search regex in files.',
-        parameters: obj(
-          { pattern: str(), path: str(), include: str(), max_results: int(1, 100) },
-          ['pattern', 'path']
-        ),
+        parameters: obj({ pattern: str(), path: str(), include: str(), max_results: int(1, 100) }, [
+          'pattern',
+          'path',
+        ]),
       },
     },
 
@@ -540,7 +628,10 @@ function buildToolsSchema(opts?: {
             max_tokens: int(),
             timeout_sec: int(),
             system_prompt: str(),
-            approval_mode: { type: 'string', enum: ['plan', 'reject', 'default', 'auto-edit', 'yolo'] },
+            approval_mode: {
+              type: 'string',
+              enum: ['plan', 'reject', 'default', 'auto-edit', 'yolo'],
+            },
           },
           ['task']
         ),
@@ -550,8 +641,22 @@ function buildToolsSchema(opts?: {
 
   if (opts?.activeVaultTools) {
     schemas.push(
-      { type: 'function', function: { name: 'vault_search', description: 'Search vault.', parameters: obj({ query: str(), limit: int() }, ['query']) } },
-      { type: 'function', function: { name: 'vault_note', description: 'Write vault note.', parameters: obj({ key: str(), value: str() }, ['key', 'value']) } }
+      {
+        type: 'function',
+        function: {
+          name: 'vault_search',
+          description: 'Search vault.',
+          parameters: obj({ query: str(), limit: int() }, ['query']),
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'vault_note',
+          description: 'Write vault note.',
+          parameters: obj({ key: str(), value: str() }, ['key', 'value']),
+        },
+      }
     );
   }
 
@@ -567,41 +672,53 @@ function buildToolsSchema(opts?: {
         function: {
           name: 'lsp_diagnostics',
           description: 'Get LSP diagnostics (errors/warnings) for file or project.',
-          parameters: obj({ path: str(), severity: int() }, [])
-        }
+          parameters: obj({ path: str(), severity: int() }, []),
+        },
       },
       {
         type: 'function',
         function: {
           name: 'lsp_symbols',
           description: 'List symbols (functions, classes, vars) in a file.',
-          parameters: obj({ path: str() }, ['path'])
-        }
+          parameters: obj({ path: str() }, ['path']),
+        },
       },
       {
         type: 'function',
         function: {
           name: 'lsp_hover',
           description: 'Get type/docs for symbol at position.',
-          parameters: obj({ path: str(), line: int(), character: int() }, ['path', 'line', 'character'])
-        }
+          parameters: obj({ path: str(), line: int(), character: int() }, [
+            'path',
+            'line',
+            'character',
+          ]),
+        },
       },
       {
         type: 'function',
         function: {
           name: 'lsp_definition',
           description: 'Go to definition of symbol at position.',
-          parameters: obj({ path: str(), line: int(), character: int() }, ['path', 'line', 'character'])
-        }
+          parameters: obj({ path: str(), line: int(), character: int() }, [
+            'path',
+            'line',
+            'character',
+          ]),
+        },
       },
       {
         type: 'function',
         function: {
           name: 'lsp_references',
           description: 'Find all references to symbol at position.',
-          parameters: obj({ path: str(), line: int(), character: int(), max_results: int() }, ['path', 'line', 'character'])
-        }
-      },
+          parameters: obj({ path: str(), line: int(), character: int(), max_results: int() }, [
+            'path',
+            'line',
+            'character',
+          ]),
+        },
+      }
     );
   }
 
@@ -613,7 +730,14 @@ function buildToolsSchema(opts?: {
 }
 
 function isReadOnlyTool(name: string) {
-  return name === 'read_file' || name === 'read_files' || name === 'list_dir' || name === 'search_files' || name === 'vault_search' || name === 'sys_context';
+  return (
+    name === 'read_file' ||
+    name === 'read_files' ||
+    name === 'list_dir' ||
+    name === 'search_files' ||
+    name === 'vault_search' ||
+    name === 'sys_context'
+  );
 }
 
 /** Human-readable summary of what a blocked tool call would do. */
@@ -653,12 +777,18 @@ function userDisallowsDelegation(content: UserContent): boolean {
   const text = userContentToText(content).toLowerCase();
   if (!text) return false;
 
-  const mentionsDelegation = /\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b/.test(text);
+  const mentionsDelegation = /\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b/.test(
+    text
+  );
   if (!mentionsDelegation) return false;
 
   const negationNearDelegation =
-    /\b(?:do not|don't|dont|no|without|avoid|skip|never)\b[^\n.]{0,90}\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b/.test(text) ||
-    /\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b[^\n.]{0,50}\b(?:do not|don't|dont|not allowed|forbidden|no)\b/.test(text);
+    /\b(?:do not|don't|dont|no|without|avoid|skip|never)\b[^\n.]{0,90}\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b/.test(
+      text
+    ) ||
+    /\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b[^\n.]{0,50}\b(?:do not|don't|dont|not allowed|forbidden|no)\b/.test(
+      text
+    );
 
   return negationNearDelegation;
 }
@@ -749,7 +879,10 @@ export type AgentSession = {
   supportsVision: boolean;
   messages: ChatMessage[];
   usage: { prompt: number; completion: number };
-  ask: (instruction: UserContent, hooks?: ((t: string) => void) | AgentHooks) => Promise<AgentResult>;
+  ask: (
+    instruction: UserContent,
+    hooks?: ((t: string) => void) | AgentHooks
+  ) => Promise<AgentResult>;
   setModel: (name: string) => void;
   setEndpoint: (endpoint: string, modelName?: string) => Promise<void>;
   listModels: () => Promise<string[]>;
@@ -788,7 +921,13 @@ export type AgentSession = {
   /** Clear accumulated plan steps */
   clearPlan: () => void;
   /** Manual context compaction. */
-  compactHistory: (opts?: { topic?: string; hard?: boolean; force?: boolean; dry?: boolean; reason?: string }) => Promise<{
+  compactHistory: (opts?: {
+    topic?: string;
+    hard?: boolean;
+    force?: boolean;
+    dry?: boolean;
+    reason?: string;
+  }) => Promise<{
     beforeMessages: number;
     afterMessages: number;
     freedTokens: number;
@@ -801,7 +940,7 @@ export type AgentSession = {
 export async function createSession(opts: {
   config: IdlehandsConfig;
   apiKey?: string;
-  confirm?: (prompt: string) => Promise<boolean>;          // legacy — use confirmProvider instead
+  confirm?: (prompt: string) => Promise<boolean>; // legacy — use confirmProvider instead
   confirmProvider?: ConfirmationProvider;
   runtime?: AgentRuntime;
   allowSpawnTask?: boolean;
@@ -814,24 +953,37 @@ export async function createSession(opts: {
   if (typeof cfg.response_timeout === 'number' && cfg.response_timeout > 0) {
     client.setResponseTimeout(cfg.response_timeout);
   }
-  if (typeof (client as any).setConnectionTimeout === 'function' && typeof cfg.connection_timeout === 'number' && cfg.connection_timeout > 0) {
+  if (
+    typeof (client as any).setConnectionTimeout === 'function' &&
+    typeof cfg.connection_timeout === 'number' &&
+    cfg.connection_timeout > 0
+  ) {
     (client as any).setConnectionTimeout(cfg.connection_timeout);
   }
-  if (typeof (client as any).setInitialConnectionCheck === 'function' && typeof cfg.initial_connection_check === 'boolean') {
+  if (
+    typeof (client as any).setInitialConnectionCheck === 'function' &&
+    typeof cfg.initial_connection_check === 'boolean'
+  ) {
     (client as any).setInitialConnectionCheck(cfg.initial_connection_check);
   }
-  if (typeof (client as any).setInitialConnectionProbeTimeout === 'function' && typeof cfg.initial_connection_timeout === 'number' && cfg.initial_connection_timeout > 0) {
+  if (
+    typeof (client as any).setInitialConnectionProbeTimeout === 'function' &&
+    typeof cfg.initial_connection_timeout === 'number' &&
+    cfg.initial_connection_timeout > 0
+  ) {
     (client as any).setInitialConnectionProbeTimeout(cfg.initial_connection_timeout);
   }
 
   // Health check + model list (cheap, avoids wasting GPU on chat warmups if unreachable)
   let modelsList = normalizeModelsResponse(await client.models().catch(() => null));
 
-  let model = cfg.model && cfg.model.trim().length
-    ? cfg.model
-    : await autoPickModel(client, modelsList);
+  let model =
+    cfg.model && cfg.model.trim().length ? cfg.model : await autoPickModel(client, modelsList);
 
-  let harness = selectHarness(model, cfg.harness && cfg.harness.trim() ? cfg.harness.trim() : undefined);
+  let harness = selectHarness(
+    model,
+    cfg.harness && cfg.harness.trim() ? cfg.harness.trim() : undefined
+  );
 
   // Try to derive context window from /v1/models (if provided by server).
   const explicitContextWindow = cfg.context_window != null;
@@ -845,24 +997,30 @@ export async function createSession(opts: {
 
   const sessionId = `session-${timestampedId()}`;
   const hookCfg: HookSystemConfig = cfg.hooks ?? {};
-  const hookManager = opts.runtime?.hookManager ?? new HookManager({
-    enabled: hookCfg.enabled !== false,
-    strict: hookCfg.strict === true,
-    warnMs: hookCfg.warn_ms,
-    allowedCapabilities: Array.isArray(hookCfg.allow_capabilities) ? hookCfg.allow_capabilities as any : undefined,
-    context: () => ({
-      sessionId,
-      cwd: cfg.dir ?? process.cwd(),
-      model,
-      harness: harness.id,
-      endpoint: cfg.endpoint,
-    }),
-  });
+  const hookManager =
+    opts.runtime?.hookManager ??
+    new HookManager({
+      enabled: hookCfg.enabled !== false,
+      strict: hookCfg.strict === true,
+      warnMs: hookCfg.warn_ms,
+      allowedCapabilities: Array.isArray(hookCfg.allow_capabilities)
+        ? (hookCfg.allow_capabilities as any)
+        : undefined,
+      context: () => ({
+        sessionId,
+        cwd: cfg.dir ?? process.cwd(),
+        model,
+        harness: harness.id,
+        endpoint: cfg.endpoint,
+      }),
+    });
 
   const emitDetached = (promise: Promise<void>, eventName: string) => {
     void promise.catch((error: any) => {
       if (!process.env.IDLEHANDS_QUIET_WARNINGS) {
-        console.warn(`[hooks] async ${eventName} dispatch failed: ${error?.message ?? String(error)}`);
+        console.warn(
+          `[hooks] async ${eventName} dispatch failed: ${error?.message ?? String(error)}`
+        );
       }
     });
   };
@@ -886,7 +1044,9 @@ export async function createSession(opts: {
   });
 
   if (!cfg.i_know_what_im_doing && contextWindow > 131072) {
-    console.warn('[warn] context_window is above 131072; this can increase memory usage and hurt throughput. Use --i-know-what-im-doing to proceed.');
+    console.warn(
+      '[warn] context_window is above 131072; this can increase memory usage and hurt throughput. Use --i-know-what-im-doing to proceed.'
+    );
   }
 
   // Apply harness defaults for values the user didn't explicitly override.
@@ -912,17 +1072,34 @@ export async function createSession(opts: {
   const spawnTaskEnabled = opts.allowSpawnTask !== false && cfg.sub_agents?.enabled !== false;
 
   const mcpServers = Array.isArray(cfg.mcp?.servers) ? cfg.mcp!.servers : [];
-  const mcpEnabledTools = Array.isArray(cfg.mcp?.enabled_tools) ? cfg.mcp?.enabled_tools : undefined;
+  const mcpEnabledTools = Array.isArray(cfg.mcp?.enabled_tools)
+    ? cfg.mcp?.enabled_tools
+    : undefined;
   const mcpToolBudget = Number.isFinite(cfg.mcp_tool_budget)
     ? Number(cfg.mcp_tool_budget)
-    : (Number.isFinite(cfg.mcp?.tool_budget) ? Number(cfg.mcp?.tool_budget) : 1000);
+    : Number.isFinite(cfg.mcp?.tool_budget)
+      ? Number(cfg.mcp?.tool_budget)
+      : 1000;
   const mcpCallTimeoutSec = Number.isFinite(cfg.mcp_call_timeout_sec)
     ? Number(cfg.mcp_call_timeout_sec)
-    : (Number.isFinite(cfg.mcp?.call_timeout_sec) ? Number(cfg.mcp?.call_timeout_sec) : 30);
+    : Number.isFinite(cfg.mcp?.call_timeout_sec)
+      ? Number(cfg.mcp?.call_timeout_sec)
+      : 30;
 
   const builtInToolNames = [
-    'read_file', 'read_files', 'write_file', 'apply_patch', 'edit_range', 'edit_file', 'insert_file',
-    'list_dir', 'search_files', 'exec', 'vault_search', 'vault_note', 'sys_context',
+    'read_file',
+    'read_files',
+    'write_file',
+    'apply_patch',
+    'edit_range',
+    'edit_file',
+    'insert_file',
+    'list_dir',
+    'search_files',
+    'exec',
+    'vault_search',
+    'vault_note',
+    'sys_context',
     ...(spawnTaskEnabled ? ['spawn_task'] : []),
   ];
 
@@ -977,17 +1154,20 @@ export async function createSession(opts: {
   const mcpLazySchemaMode = Boolean(mcpManager && mcpHasEnabledTools);
   let mcpToolsLoaded = !mcpLazySchemaMode;
 
-  const getToolsSchema = () => buildToolsSchema({
-    activeVaultTools,
-    sysMode: cfg.mode === 'sys',
-    lspTools: lspManager?.hasServers() === true,
-    mcpTools: mcpToolsLoaded ? (mcpManager?.getEnabledToolSchemas() ?? []) : [],
-    allowSpawnTask: spawnTaskEnabled,
-  });
+  const getToolsSchema = () =>
+    buildToolsSchema({
+      activeVaultTools,
+      sysMode: cfg.mode === 'sys',
+      lspTools: lspManager?.hasServers() === true,
+      mcpTools: mcpToolsLoaded ? (mcpManager?.getEnabledToolSchemas() ?? []) : [],
+      allowSpawnTask: spawnTaskEnabled,
+    });
 
   const vault = vaultEnabled
-    ? (opts.runtime?.vault ?? new VaultStore({
-        immutableReviewArtifactsPerProject: (cfg as any)?.trifecta?.vault?.immutable_review_artifacts_per_project,
+    ? (opts.runtime?.vault ??
+      new VaultStore({
+        immutableReviewArtifactsPerProject: (cfg as any)?.trifecta?.vault
+          ?.immutable_review_artifacts_per_project,
       }))
     : undefined;
   if (vault) {
@@ -1063,12 +1243,15 @@ export async function createSession(opts: {
     const lspServers = lspManager.listServers();
     const running = lspServers.filter((s) => s.running).length;
     sessionMeta += `\n\n[LSP] ${running} language server(s) active: ${lspServers.map((s) => `${s.language} (${s.command})`).join(', ')}.`;
-    sessionMeta += '\n[LSP] Use lsp_diagnostics, lsp_symbols, lsp_hover, lsp_definition, lsp_references tools for semantic code intelligence.';
+    sessionMeta +=
+      '\n[LSP] Use lsp_diagnostics, lsp_symbols, lsp_hover, lsp_definition, lsp_references tools for semantic code intelligence.';
     if (lensEnabled) {
-      sessionMeta += '\n[LSP+Lens] lsp_symbols combines semantic symbol data with structural Lens context when available.';
+      sessionMeta +=
+        '\n[LSP+Lens] lsp_symbols combines semantic symbol data with structural Lens context when available.';
     }
     if (lspCfg?.proactive_diagnostics !== false) {
-      sessionMeta += '\n[LSP] Proactive diagnostics enabled: errors will be reported automatically after file edits.';
+      sessionMeta +=
+        '\n[LSP] Proactive diagnostics enabled: errors will be reported automatically after file edits.';
     }
   }
 
@@ -1104,7 +1287,9 @@ export async function createSession(opts: {
       client.contentModeToolCalls = true;
       client.recordKnownPatternMatch();
       if (cfg.verbose) {
-        console.warn(`[info] Model "${modelName}" matched known content-mode pattern — using content-based tool calls`);
+        console.warn(
+          `[info] Model "${modelName}" matched known content-mode pattern — using content-based tool calls`
+        );
       }
     }
   }
@@ -1112,20 +1297,25 @@ export async function createSession(opts: {
   if (harness.quirks.needsExplicitToolCallFormatReminder) {
     if (client.contentModeToolCalls) {
       // In content mode, tell the model to use JSON tool calls in its output
-      sessionMeta += '\n\nYou have access to the following tools. To call a tool, output a JSON block in your response like this:\n```json\n{"name": "tool_name", "arguments": {"param": "value"}}\n```\nAvailable tools:\n';
+      sessionMeta +=
+        '\n\nYou have access to the following tools. To call a tool, output a JSON block in your response like this:\n```json\n{"name": "tool_name", "arguments": {"param": "value"}}\n```\nAvailable tools:\n';
       const toolSchemas = getToolsSchema();
       for (const t of toolSchemas) {
         const fn = (t as any).function;
         if (fn) {
           const params = fn.parameters?.properties
-            ? Object.entries(fn.parameters.properties).map(([k, v]: [string, any]) => `${k}: ${v.type ?? 'any'}`).join(', ')
+            ? Object.entries(fn.parameters.properties)
+                .map(([k, v]: [string, any]) => `${k}: ${v.type ?? 'any'}`)
+                .join(', ')
             : '';
           sessionMeta += `- ${fn.name}(${params}): ${fn.description ?? ''}\n`;
         }
       }
-      sessionMeta += '\nIMPORTANT: Output tool calls as JSON blocks in your message. Do NOT use the tool_calls API mechanism.\nIf you use XML/function tags (e.g. <function=name>), include a full JSON object of arguments between braces.';
+      sessionMeta +=
+        '\nIMPORTANT: Output tool calls as JSON blocks in your message. Do NOT use the tool_calls API mechanism.\nIf you use XML/function tags (e.g. <function=name>), include a full JSON object of arguments between braces.';
     } else {
-      sessionMeta += '\n\nIMPORTANT: Use the tool_calls mechanism to invoke tools. Do NOT write JSON tool invocations in your message text.';
+      sessionMeta +=
+        '\n\nIMPORTANT: Use the tool_calls mechanism to invoke tools. Do NOT write JSON tool invocations in your message text.';
     }
 
     // One-time tool-call template smoke test (first ask() call only, skip in content mode)
@@ -1135,7 +1325,9 @@ export async function createSession(opts: {
         const smokeErr = await client.smokeTestToolCalls(cfg.model ?? 'default');
         if (smokeErr) {
           console.error(`\x1b[33m[warn] Tool-call smoke test failed: ${smokeErr}\x1b[0m`);
-          console.error(`\x1b[33m  This model/server may not support tool-call replay correctly.\x1b[0m`);
+          console.error(
+            `\x1b[33m  This model/server may not support tool-call replay correctly.\x1b[0m`
+          );
           console.error(`\x1b[33m  Consider using a different model or updating llama.cpp.\x1b[0m`);
         }
       } catch {}
@@ -1155,13 +1347,10 @@ export async function createSession(opts: {
     }
   }
 
-
   const defaultSystemPrompt = SYSTEM_PROMPT;
   let activeSystemPrompt = (cfg.system_prompt_override ?? '').trim() || defaultSystemPrompt;
 
-  let messages: ChatMessage[] = [
-    { role: 'system', content: activeSystemPrompt }
-  ];
+  let messages: ChatMessage[] = [{ role: 'system', content: activeSystemPrompt }];
   let sessionMetaPending: string | null = sessionMeta;
 
   const setSystemPrompt = (prompt: string) => {
@@ -1180,9 +1369,7 @@ export async function createSession(opts: {
   };
 
   const reset = () => {
-    messages = [
-      { role: 'system', content: activeSystemPrompt }
-    ];
+    messages = [{ role: 'system', content: activeSystemPrompt }];
     sessionMetaPending = sessionMeta;
     lastEditedPath = undefined;
     initialConnectionProbeDone = false;
@@ -1202,7 +1389,9 @@ export async function createSession(opts: {
     if (mcpManager) {
       const usedMcpTool = next.some((msg: any) => {
         if (msg?.role !== 'assistant' || !Array.isArray(msg.tool_calls)) return false;
-        return msg.tool_calls.some((tc: any) => mcpManager.hasTool(String(tc?.function?.name ?? '')));
+        return msg.tool_calls.some((tc: any) =>
+          mcpManager.hasTool(String(tc?.function?.name ?? ''))
+        );
       });
       mcpToolsLoaded = usedMcpTool || !mcpLazySchemaMode;
     }
@@ -1257,7 +1446,11 @@ export async function createSession(opts: {
     args: any,
     options?: {
       signal?: AbortSignal;
-      emitStatus?: (taskId: number, status: 'queued' | 'running' | 'completed' | 'failed', detail?: string) => void;
+      emitStatus?: (
+        taskId: number,
+        status: 'queued' | 'running' | 'completed' | 'failed',
+        detail?: string
+      ) => void;
     }
   ): Promise<string> => {
     if (!spawnTaskEnabled) {
@@ -1271,10 +1464,14 @@ export async function createSession(opts: {
 
     // Prevent using delegation to bypass package-install confirmation restrictions.
     const taskSafety = checkExecSafety(task);
-    if (!cfg.no_confirm && taskSafety.tier === 'cautious' && taskSafety.reason === 'package install/remove') {
+    if (
+      !cfg.no_confirm &&
+      taskSafety.tier === 'cautious' &&
+      taskSafety.reason === 'package install/remove'
+    ) {
       throw new Error(
         'spawn_task: blocked — package install/remove is restricted in the current approval mode. ' +
-        'Do not delegate this to bypass confirmation requirements; ask the user to run with --no-confirm/--yolo instead.'
+          'Do not delegate this to bypass confirmation requirements; ask the user to run with --no-confirm/--yolo instead.'
       );
     }
 
@@ -1284,46 +1481,54 @@ export async function createSession(opts: {
 
     const maxIterations = Number.isFinite(args?.max_iterations)
       ? Math.max(1, Math.floor(Number(args.max_iterations)))
-      : (Number.isFinite(defaults.max_iterations)
-          ? Math.max(1, Math.floor(Number(defaults.max_iterations)))
-          : 50);
+      : Number.isFinite(defaults.max_iterations)
+        ? Math.max(1, Math.floor(Number(defaults.max_iterations)))
+        : 50;
 
     const timeoutSec = Number.isFinite(args?.timeout_sec)
       ? Math.max(1, Math.floor(Number(args.timeout_sec)))
-      : (Number.isFinite(defaults.timeout_sec)
-          ? Math.max(1, Math.floor(Number(defaults.timeout_sec)))
-          : Math.max(60, cfg.timeout));
+      : Number.isFinite(defaults.timeout_sec)
+        ? Math.max(1, Math.floor(Number(defaults.timeout_sec)))
+        : Math.max(60, cfg.timeout);
 
     const subMaxTokens = Number.isFinite(args?.max_tokens)
       ? Math.max(128, Math.floor(Number(args.max_tokens)))
-      : (Number.isFinite(defaults.max_tokens)
-          ? Math.max(128, Math.floor(Number(defaults.max_tokens)))
-          : maxTokens);
+      : Number.isFinite(defaults.max_tokens)
+        ? Math.max(128, Math.floor(Number(defaults.max_tokens)))
+        : maxTokens;
 
     const resultTokenCap = Number.isFinite(defaults.result_token_cap)
       ? Math.max(256, Math.floor(Number(defaults.result_token_cap)))
       : DEFAULT_SUB_AGENT_RESULT_TOKEN_CAP;
 
     const parentApproval = cfg.approval_mode ?? 'default';
-    const rawApproval = normalizeApprovalMode(args?.approval_mode)
-      ?? normalizeApprovalMode(defaults.approval_mode)
-      ?? parentApproval;
+    const rawApproval =
+      normalizeApprovalMode(args?.approval_mode) ??
+      normalizeApprovalMode(defaults.approval_mode) ??
+      parentApproval;
     // Sub-agents cannot escalate beyond the parent's approval mode.
     const approvalMode = capApprovalMode(rawApproval, parentApproval);
 
-    const requestedModel = typeof args?.model === 'string' && args.model.trim()
-      ? args.model.trim()
-      : (typeof defaults.model === 'string' && defaults.model.trim() ? defaults.model.trim() : model);
+    const requestedModel =
+      typeof args?.model === 'string' && args.model.trim()
+        ? args.model.trim()
+        : typeof defaults.model === 'string' && defaults.model.trim()
+          ? defaults.model.trim()
+          : model;
 
-    const requestedEndpoint = typeof args?.endpoint === 'string' && args.endpoint.trim()
-      ? args.endpoint.trim()
-      : (typeof defaults.endpoint === 'string' && defaults.endpoint.trim() ? defaults.endpoint.trim() : cfg.endpoint);
+    const requestedEndpoint =
+      typeof args?.endpoint === 'string' && args.endpoint.trim()
+        ? args.endpoint.trim()
+        : typeof defaults.endpoint === 'string' && defaults.endpoint.trim()
+          ? defaults.endpoint.trim()
+          : cfg.endpoint;
 
-    const requestedSystemPrompt = typeof args?.system_prompt === 'string' && args.system_prompt.trim()
-      ? args.system_prompt.trim()
-      : (typeof defaults.system_prompt === 'string' && defaults.system_prompt.trim()
+    const requestedSystemPrompt =
+      typeof args?.system_prompt === 'string' && args.system_prompt.trim()
+        ? args.system_prompt.trim()
+        : typeof defaults.system_prompt === 'string' && defaults.system_prompt.trim()
           ? defaults.system_prompt.trim()
-          : DEFAULT_SUB_AGENT_SYSTEM_PROMPT);
+          : DEFAULT_SUB_AGENT_SYSTEM_PROMPT;
 
     const cwd = cfg.dir ?? process.cwd();
     const ctxFiles = await buildSubAgentContextBlock(cwd, args?.context_files);
@@ -1375,7 +1580,8 @@ export async function createSession(opts: {
         vault: defaults.inherit_vault === false ? undefined : vault,
       };
 
-      const sameEndpoint = requestedEndpoint.replace(/\/+$/, '') === cfg.endpoint.replace(/\/+$/, '');
+      const sameEndpoint =
+        requestedEndpoint.replace(/\/+$/, '') === cfg.endpoint.replace(/\/+$/, '');
       if (sameEndpoint && opts.runtime?.client) {
         subRuntime.client = opts.runtime.client;
       }
@@ -1442,7 +1648,9 @@ export async function createSession(opts: {
         `turns: ${subTurns}`,
         `tool_calls: ${subToolCalls}`,
         `files_changed: ${filesChanged.length ? filesChanged.join(', ') : 'none'}`,
-        capped.truncated ? `[sub-agent] summarized result capped to ~${resultTokenCap} tokens` : `[sub-agent] summarized result within cap`,
+        capped.truncated
+          ? `[sub-agent] summarized result capped to ~${resultTokenCap} tokens`
+          : `[sub-agent] summarized result within cap`,
         `result:\n${capped.text}`,
       ].join('\n');
     });
@@ -1452,12 +1660,19 @@ export async function createSession(opts: {
   const buildToolCtx = (overrides?: {
     signal?: AbortSignal;
     onMutation?: (absPath: string) => void;
-    confirmBridge?: (prompt: string, bridgeCtx?: { tool?: string; args?: Record<string, unknown>; diff?: string }) => Promise<boolean>;
+    confirmBridge?: (
+      prompt: string,
+      bridgeCtx?: { tool?: string; args?: Record<string, unknown>; diff?: string }
+    ) => Promise<boolean>;
   }) => {
     const defaultConfirmBridge = opts.confirmProvider
-      ? async (prompt: string) => opts.confirmProvider!.confirm({
-          tool: '', args: {}, summary: prompt, mode: cfg.approval_mode,
-        })
+      ? async (prompt: string) =>
+          opts.confirmProvider!.confirm({
+            tool: '',
+            args: {},
+            summary: prompt,
+            mode: cfg.approval_mode,
+          })
       : opts.confirm;
     return {
       cwd: cfg.dir ?? process.cwd(),
@@ -1474,16 +1689,21 @@ export async function createSession(opts: {
       vault,
       lens,
       signal: overrides?.signal ?? inFlight?.signal,
-      onMutation: overrides?.onMutation ?? ((absPath: string) => { lastEditedPath = absPath; }),
+      onMutation:
+        overrides?.onMutation ??
+        ((absPath: string) => {
+          lastEditedPath = absPath;
+        }),
     };
   };
 
   const executePlanStep = async (index?: number): Promise<string[]> => {
     if (!planSteps.length) return ['No plan steps to execute.'];
 
-    const toExec = index != null
-      ? planSteps.filter(s => s.index === index && s.blocked && !s.executed)
-      : planSteps.filter(s => s.blocked && !s.executed);
+    const toExec =
+      index != null
+        ? planSteps.filter((s) => s.index === index && s.blocked && !s.executed)
+        : planSteps.filter((s) => s.blocked && !s.executed);
 
     if (!toExec.length) return ['No pending blocked steps to execute.'];
 
@@ -1505,7 +1725,7 @@ export async function createSession(opts: {
           if (step.tool === 'lsp_diagnostics') {
             content = await lspManager.getDiagnostics(
               typeof step.args?.path === 'string' ? step.args.path : undefined,
-              typeof step.args?.severity === 'number' ? step.args.severity : undefined,
+              typeof step.args?.severity === 'number' ? step.args.severity : undefined
             );
           } else if (step.tool === 'lsp_symbols') {
             content = await lspManager.getSymbols(String(step.args?.path ?? ''));
@@ -1513,26 +1733,27 @@ export async function createSession(opts: {
             content = await lspManager.getHover(
               String(step.args?.path ?? ''),
               Number(step.args?.line ?? 0),
-              Number(step.args?.character ?? 0),
+              Number(step.args?.character ?? 0)
             );
           } else if (step.tool === 'lsp_definition') {
             content = await lspManager.getDefinition(
               String(step.args?.path ?? ''),
               Number(step.args?.line ?? 0),
-              Number(step.args?.character ?? 0),
+              Number(step.args?.character ?? 0)
             );
           } else if (step.tool === 'lsp_references') {
             content = await lspManager.getReferences(
               String(step.args?.path ?? ''),
               Number(step.args?.line ?? 0),
               Number(step.args?.character ?? 0),
-              typeof step.args?.max_results === 'number' ? step.args.max_results : 50,
+              typeof step.args?.max_results === 'number' ? step.args.max_results : 50
             );
           }
         } else if (mcpManager?.hasTool(step.tool)) {
-          const callArgs = step.args && typeof step.args === 'object' && !Array.isArray(step.args)
-            ? step.args as Record<string, unknown>
-            : {};
+          const callArgs =
+            step.args && typeof step.args === 'object' && !Array.isArray(step.args)
+              ? (step.args as Record<string, unknown>)
+              : {};
           content = await mcpManager.callTool(step.tool, callArgs);
         } else {
           throw new Error(`unknown tool: ${step.tool}`);
@@ -1586,9 +1807,10 @@ export async function createSession(opts: {
   };
 
   const buildCompactionSystemNote = (kind: 'auto' | 'manual', dropped: number): string => {
-    const prefix = kind === 'auto'
-      ? `[auto-compacted: ${dropped} old messages dropped to stay within context budget.]`
-      : `[compacted: ${dropped} messages dropped.]`;
+    const prefix =
+      kind === 'auto'
+        ? `[auto-compacted: ${dropped} old messages dropped to stay within context budget.]`
+        : `[compacted: ${dropped} messages dropped.]`;
     const guidance = compactionVaultGuidance();
     return guidance ? `${prefix} ${guidance}` : prefix;
   };
@@ -1598,7 +1820,8 @@ export async function createSession(opts: {
   const injectCompactionReminder = (reason: string) => {
     const objective = (getLatestObjectiveText() || lastAskInstructionText || '').trim();
     if (!objective) return;
-    const clippedObjective = objective.length > 1600 ? `${objective.slice(0, 1600)}\n[truncated]` : objective;
+    const clippedObjective =
+      objective.length > 1600 ? `${objective.slice(0, 1600)}\n[truncated]` : objective;
     if (clippedObjective === lastCompactionReminderObjective) return;
     lastCompactionReminderObjective = clippedObjective;
 
@@ -1625,20 +1848,28 @@ export async function createSession(opts: {
     const hits = await vault.search(query, 4);
     if (!hits.length) return;
     const lines = hits.map(
-      (r) => `${r.updatedAt} ${r.kind} ${r.key ?? r.tool ?? r.id} ${String(r.value ?? r.snippet ?? '').replace(/\s+/g, ' ').slice(0, 180)}`
+      (r) =>
+        `${r.updatedAt} ${r.kind} ${r.key ?? r.tool ?? r.id} ${String(r.value ?? r.snippet ?? '')
+          .replace(/\s+/g, ' ')
+          .slice(0, 180)}`
     );
     if (!lines.length) return;
     lastVaultInjectionQuery = query;
-    const vaultContextHeader = vaultMode === 'passive'
-      ? '[Trifecta Vault (passive)]'
-      : '[Vault context after compaction]';
+    const vaultContextHeader =
+      vaultMode === 'passive' ? '[Trifecta Vault (passive)]' : '[Vault context after compaction]';
     messages.push({
       role: 'user',
-      content: `${vaultContextHeader} Relevant entries for "${query}":\n${lines.join('\n')}`
+      content: `${vaultContextHeader} Relevant entries for "${query}":\n${lines.join('\n')}`,
     });
   };
 
-  const compactHistory = async (opts?: { topic?: string; hard?: boolean; force?: boolean; dry?: boolean; reason?: string }) => {
+  const compactHistory = async (opts?: {
+    topic?: string;
+    hard?: boolean;
+    force?: boolean;
+    dry?: boolean;
+    reason?: string;
+  }) => {
     const beforeMessages = messages.length;
     const beforeTokens = estimateTokensFromMessages(messages);
 
@@ -1664,8 +1895,17 @@ export async function createSession(opts: {
 
     if (opts?.topic) {
       const topic = opts.topic.toLowerCase();
-      dropped = dropped.filter((m) => !userContentToText((m as any).content ?? '').toLowerCase().includes(topic));
-      const keepFromTopic = messages.filter((m) => userContentToText((m as any).content ?? '').toLowerCase().includes(topic));
+      dropped = dropped.filter(
+        (m) =>
+          !userContentToText((m as any).content ?? '')
+            .toLowerCase()
+            .includes(topic)
+      );
+      const keepFromTopic = messages.filter((m) =>
+        userContentToText((m as any).content ?? '')
+          .toLowerCase()
+          .includes(topic)
+      );
       compacted = [...compacted, ...keepFromTopic.filter((m) => !compactedByRefs.has(m))];
     }
 
@@ -1683,7 +1923,12 @@ export async function createSession(opts: {
             const m = messages[i];
             if (m.role === 'user') {
               const text = userContentToText((m.content ?? '') as UserContent).trim();
-              if (text && !text.startsWith('[Trifecta Vault') && !text.startsWith('[Vault context') && text.length > 20) {
+              if (
+                text &&
+                !text.startsWith('[Trifecta Vault') &&
+                !text.startsWith('[Vault context') &&
+                text.length > 20
+              ) {
                 userPromptToPreserve = text;
                 break;
               }
@@ -1694,14 +1939,20 @@ export async function createSession(opts: {
           }
 
           await vault.archiveToolMessages(dropped as ChatMessage[], new Map());
-          await vault.note('compaction_summary', `Dropped ${dropped.length} messages (${freedTokens} tokens).`);
+          await vault.note(
+            'compaction_summary',
+            `Dropped ${dropped.length} messages (${freedTokens} tokens).`
+          );
         } catch {
           // best-effort
         }
       }
       messages = compacted;
       if (dropped.length) {
-        messages.push({ role: 'system', content: buildCompactionSystemNote('manual', dropped.length) });
+        messages.push({
+          role: 'system',
+          content: buildCompactionSystemNote('manual', dropped.length),
+        });
         await injectVaultContext().catch(() => {});
         if (opts?.reason || opts?.force) {
           injectCompactionReminder(opts?.reason ?? 'history compaction');
@@ -1797,7 +2048,7 @@ export async function createSession(opts: {
       raw?.kv_used_tokens,
       raw?.cache?.used_tokens,
       raw?.context_used,
-      raw?.ctx_used,
+      raw?.ctx_used
     );
 
     const contextTotalTokens = asNumber(
@@ -1805,7 +2056,7 @@ export async function createSession(opts: {
       raw?.kv_total_tokens,
       raw?.cache?.total_tokens,
       raw?.context_size,
-      raw?.ctx_size,
+      raw?.ctx_size
     );
 
     const kvPct =
@@ -1817,14 +2068,14 @@ export async function createSession(opts: {
       raw?.pending_requests,
       raw?.queue?.pending,
       raw?.n_pending_requests,
-      raw?.requests_pending,
+      raw?.requests_pending
     );
 
     const ppTokensPerSec = asNumber(
       raw?.speed?.prompt_tokens_per_second,
       raw?.prompt_tokens_per_second,
       raw?.pp_tps,
-      raw?.timings?.prompt_per_second,
+      raw?.timings?.prompt_per_second
     );
 
     const tgTokensPerSec = asNumber(
@@ -1832,7 +2083,7 @@ export async function createSession(opts: {
       raw?.tokens_per_second,
       raw?.tg_tps,
       raw?.timings?.tokens_per_second,
-      raw?.generation_tokens_per_second,
+      raw?.generation_tokens_per_second
     );
 
     const slotCount = Array.isArray(raw?.slots)
@@ -1888,7 +2139,10 @@ export async function createSession(opts: {
   const setModel = (name: string) => {
     const previousModel = model;
     model = name;
-    harness = selectHarness(model, cfg.harness && cfg.harness.trim() ? cfg.harness.trim() : undefined);
+    harness = selectHarness(
+      model,
+      cfg.harness && cfg.harness.trim() ? cfg.harness.trim() : undefined
+    );
     const nextMeta = modelsList?.data?.find((m: any) => m.id === model);
 
     supportsVision = supportsVisionModel(model, nextMeta, harness);
@@ -1907,11 +2161,14 @@ export async function createSession(opts: {
       baseMaxTokens: BASE_MAX_TOKENS,
     }));
 
-    emitDetached(hookManager.emit('model_changed', {
-      previousModel,
-      nextModel: model,
-      harness: harness.id,
-    }), 'model_changed');
+    emitDetached(
+      hookManager.emit('model_changed', {
+        previousModel,
+        nextModel: model,
+        harness: harness.id,
+      }),
+      'model_changed'
+    );
   };
 
   const setEndpoint = async (endpoint: string, modelName?: string): Promise<void> => {
@@ -1935,7 +2192,8 @@ export async function createSession(opts: {
 
     const chosen = modelName?.trim()
       ? modelName.trim()
-      : (modelsList.data.find((m) => m.id === model)?.id ?? await autoPickModel(client, modelsList));
+      : (modelsList.data.find((m) => m.id === model)?.id ??
+        (await autoPickModel(client, modelsList)));
 
     setModel(chosen);
   };
@@ -1957,9 +2215,7 @@ export async function createSession(opts: {
     if (!lastCaptureRecord) {
       throw new Error('No captured request/response pair is available yet.');
     }
-    const target = filePath?.trim()
-      ? path.resolve(filePath)
-      : (capturePath || defaultCapturePath());
+    const target = filePath?.trim() ? path.resolve(filePath) : capturePath || defaultCapturePath();
     await appendCaptureRecord(lastCaptureRecord, target);
     return target;
   };
@@ -2021,7 +2277,8 @@ export async function createSession(opts: {
       return sorted[idx];
     };
 
-    const avg = (arr: number[]) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : undefined);
+    const avg = (arr: number[]) =>
+      arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : undefined;
 
     return {
       turns: turnDurationsMs.length,
@@ -2058,7 +2315,9 @@ export async function createSession(opts: {
           const elapsedSec = Math.floor((Date.now() - spinnerStart) / 1000);
           const frame = frames[spinnerIdx % frames.length];
           spinnerIdx++;
-          process.stderr.write(`\r${frame} Server unavailable - waiting for reconnect (${elapsedSec}s)...`);
+          process.stderr.write(
+            `\r${frame} Server unavailable - waiting for reconnect (${elapsedSec}s)...`
+          );
         }, 120);
       } else {
         console.warn('[model] Server unavailable - waiting for reconnect...');
@@ -2089,12 +2348,17 @@ export async function createSession(opts: {
     setModel(nextModel);
     messages.push({
       role: 'system',
-      content: '[system] Model changed mid-session. Previous context may not transfer perfectly.'
+      content: '[system] Model changed mid-session. Previous context may not transfer perfectly.',
     });
-    console.warn(`[model] Server model changed: ${previousModel} → ${nextModel} - switching harness to ${harness.id}`);
+    console.warn(
+      `[model] Server model changed: ${previousModel} → ${nextModel} - switching harness to ${harness.id}`
+    );
   };
 
-  const ask = async (instruction: UserContent, hooks?: ((t: string) => void) | AgentHooks): Promise<AgentResult> => {
+  const ask = async (
+    instruction: UserContent,
+    hooks?: ((t: string) => void) | AgentHooks
+  ): Promise<AgentResult> => {
     // Harness can override max_iterations for models that make bad decisions (§4i)
     const maxIters = harness.quirks.maxIterationsOverride
       ? Math.min(cfg.max_iterations, harness.quirks.maxIterationsOverride)
@@ -2117,8 +2381,7 @@ export async function createSession(opts: {
     }
     messages.push({ role: 'user', content: userContent });
 
-    const hookObj: AgentHooks =
-      typeof hooks === 'function' ? { onToken: hooks } : hooks ?? {};
+    const hookObj: AgentHooks = typeof hooks === 'function' ? { onToken: hooks } : (hooks ?? {});
 
     let turns = 0;
     let toolCalls = 0;
@@ -2166,9 +2429,14 @@ export async function createSession(opts: {
     const projectDir = cfg.dir ?? process.cwd();
     const reviewKeys = reviewArtifactKeys(projectDir);
     const retrievalRequested = looksLikeReviewRetrievalRequest(rawInstructionText);
-    const shouldPersistReviewArtifact = looksLikeCodeReviewRequest(rawInstructionText) && !retrievalRequested;
+    const shouldPersistReviewArtifact =
+      looksLikeCodeReviewRequest(rawInstructionText) && !retrievalRequested;
 
-    if (!retrievalRequested && cfg.initial_connection_check !== false && !initialConnectionProbeDone) {
+    if (
+      !retrievalRequested &&
+      cfg.initial_connection_check !== false &&
+      !initialConnectionProbeDone
+    ) {
       if (typeof (client as any).probeConnection === 'function') {
         await (client as any).probeConnection();
         initialConnectionProbeDone = true;
@@ -2180,13 +2448,14 @@ export async function createSession(opts: {
         ? await vault.getLatestByKey(reviewKeys.latestKey, 'system').catch(() => null)
         : null;
       const parsedArtifact = latest?.value ? parseReviewArtifact(latest.value) : null;
-      const artifact = parsedArtifact && parsedArtifact.projectId === reviewKeys.projectId
-        ? parsedArtifact
-        : null;
+      const artifact =
+        parsedArtifact && parsedArtifact.projectId === reviewKeys.projectId ? parsedArtifact : null;
 
       if (artifact?.content?.trim()) {
         const stale = reviewArtifactStaleReason(artifact, projectDir);
-        const stalePolicy = parseReviewArtifactStalePolicy((cfg as any)?.trifecta?.vault?.stale_policy);
+        const stalePolicy = parseReviewArtifactStalePolicy(
+          (cfg as any)?.trifecta?.vault?.stale_policy
+        );
 
         if (stale && stalePolicy === 'block' && !retrievalAllowsStaleArtifact(rawInstructionText)) {
           const blocked =
@@ -2204,9 +2473,7 @@ export async function createSession(opts: {
           return await finalizeAsk(blocked);
         }
 
-        const text = stale
-          ? `${artifact.content}\n\n[artifact note] ${stale}`
-          : artifact.content;
+        const text = stale ? `${artifact.content}\n\n[artifact note] ${stale}` : artifact.content;
 
         messages.push({ role: 'assistant', content: text });
         hookObj.onToken?.(text);
@@ -2219,7 +2486,8 @@ export async function createSession(opts: {
         return await finalizeAsk(text);
       }
 
-      const miss = 'No stored full code review found yet. Ask me to run a code review first, then I can replay it verbatim.';
+      const miss =
+        'No stored full code review found yet. Ask me to run a code review first, then I can replay it verbatim.';
       messages.push({ role: 'assistant', content: miss });
       hookObj.onToken?.(miss);
       await emitTurnEnd({
@@ -2302,7 +2570,10 @@ export async function createSession(opts: {
     // Cache successful read-only exec observations by exact signature.
     const execObservationCacheBySig = new Map<string, string>();
     // Cache successful read_file/read_files/list_dir results by signature + mtime for invalidation.
-    const readFileCacheBySig = new Map<string, { content: string; paths: string[]; mtimes: number[] }>();
+    const readFileCacheBySig = new Map<
+      string,
+      { content: string; paths: string[]; mtimes: number[] }
+    >();
     const READ_FILE_CACHE_TOOLS = new Set(['read_file', 'read_files', 'list_dir']);
     // Prevent repeating the same "stop rerunning" reminder every turn.
     const readOnlyExecHintedSigs = new Set<string>();
@@ -2329,25 +2600,42 @@ export async function createSession(opts: {
       return msg;
     };
 
-    const compactToolMessageForHistory = async (toolCallId: string, rawContent: string): Promise<ChatMessage> => {
+    const compactToolMessageForHistory = async (
+      toolCallId: string,
+      rawContent: string
+    ): Promise<ChatMessage> => {
       const toolName = toolNameByCallId.get(toolCallId) ?? 'tool';
       const toolArgs = toolArgsByCallId.get(toolCallId) ?? {};
-      const rawMsg: ChatMessage = { role: 'tool', tool_call_id: toolCallId, content: rawContent } as any;
+      const rawMsg: ChatMessage = {
+        role: 'tool',
+        tool_call_id: toolCallId,
+        content: rawContent,
+      } as any;
 
       // Persist full-fidelity output immediately so live context can stay small.
       if (vault && typeof (vault as any).archiveToolResult === 'function') {
         try {
           await (vault as any).archiveToolResult(rawMsg, toolName);
         } catch (e) {
-          console.warn(`[warn] vault archive failed: ${e instanceof Error ? e.message : String(e)}`);
+          console.warn(
+            `[warn] vault archive failed: ${e instanceof Error ? e.message : String(e)}`
+          );
         }
       }
 
       let compact = rawContent;
       if (lens) {
         try {
-          const lensCompact = await lens.summarizeToolOutput(rawContent, toolName, typeof (toolArgs as any).path === 'string' ? String((toolArgs as any).path) : undefined);
-          if (typeof lensCompact === 'string' && lensCompact.length && lensCompact.length < compact.length) {
+          const lensCompact = await lens.summarizeToolOutput(
+            rawContent,
+            toolName,
+            typeof (toolArgs as any).path === 'string' ? String((toolArgs as any).path) : undefined
+          );
+          if (
+            typeof lensCompact === 'string' &&
+            lensCompact.length &&
+            lensCompact.length < compact.length
+          ) {
             compact = lensCompact;
           }
         } catch {
@@ -2379,7 +2667,10 @@ export async function createSession(opts: {
       const reason = error instanceof Error ? error.message : String(error);
       // Strip absolute paths from failure messages to prevent cross-project leaks in vault.
       // Replace /home/.../project/file.ts with just file.ts (relative to cwd) or the basename.
-      const sanitized = sanitizePathsInMessage(`agent abort: ${contextLine ?? ''} ${reason}`, cfg.dir ?? process.cwd());
+      const sanitized = sanitizePathsInMessage(
+        `agent abort: ${contextLine ?? ''} ${reason}`,
+        cfg.dir ?? process.cwd()
+      );
       const compact = lens ? await lens.summarizeFailureMessage(sanitized) : sanitized;
       try {
         await vault.note('agent failure', compact);
@@ -2388,7 +2679,11 @@ export async function createSession(opts: {
       }
     };
 
-    const emitSubAgentStatus = (taskId: number, status: 'queued' | 'running' | 'completed' | 'failed', detail?: string) => {
+    const emitSubAgentStatus = (
+      taskId: number,
+      status: 'queued' | 'running' | 'completed' | 'failed',
+      detail?: string
+    ) => {
       if (!hookObj.onToken) return;
       const tail = detail ? ` — ${detail}` : '';
       hookObj.onToken(`\n[sub-agent #${taskId}] ${status}${tail}\n`);
@@ -2414,7 +2709,9 @@ export async function createSession(opts: {
 
     const runSpawnTask = async (args: any): Promise<string> => {
       if (delegationForbiddenByUser) {
-        throw new Error('spawn_task: blocked — user explicitly asked for no delegation/sub-agents in this request. Continue directly in the current session.');
+        throw new Error(
+          'spawn_task: blocked — user explicitly asked for no delegation/sub-agents in this request. Continue directly in the current session.'
+        );
       }
       return await runSpawnTaskCore(args, {
         signal: hookObj.signal,
@@ -2433,7 +2730,9 @@ export async function createSession(opts: {
 
         const wallElapsed = (Date.now() - wallStart) / 1000;
         if (wallElapsed > cfg.timeout) {
-          throw new Error(`session timeout exceeded (${cfg.timeout}s) after ${wallElapsed.toFixed(1)}s`);
+          throw new Error(
+            `session timeout exceeded (${cfg.timeout}s) after ${wallElapsed.toFixed(1)}s`
+          );
         }
 
         await maybeAutoDetectModelChange();
@@ -2461,7 +2760,12 @@ export async function createSession(opts: {
               if (m.role === 'user') {
                 const text = userContentToText((m.content ?? '') as UserContent).trim();
                 // Skip vault injection messages and short prompts
-                if (text && !text.startsWith('[Trifecta Vault') && !text.startsWith('[Vault context') && text.length > 20) {
+                if (
+                  text &&
+                  !text.startsWith('[Trifecta Vault') &&
+                  !text.startsWith('[Vault context') &&
+                  text.length > 20
+                ) {
                   userPromptToPreserve = text;
                   break;
                 }
@@ -2476,14 +2780,19 @@ export async function createSession(opts: {
               : dropped;
             await vault.archiveToolMessages(toArchive as ChatMessage[], toolNameByCallId);
           } catch (e) {
-            console.warn(`[warn] vault archive failed: ${e instanceof Error ? e.message : String(e)}`);
+            console.warn(
+              `[warn] vault archive failed: ${e instanceof Error ? e.message : String(e)}`
+            );
           }
         }
 
         messages = compacted;
 
         if (dropped.length) {
-          messages.push({ role: 'system', content: buildCompactionSystemNote('auto', dropped.length) } as ChatMessage);
+          messages.push({
+            role: 'system',
+            content: buildCompactionSystemNote('auto', dropped.length),
+          } as ChatMessage);
           await injectVaultContext().catch(() => {});
           injectCompactionReminder('auto context-budget compaction');
         }
@@ -2498,7 +2807,8 @@ export async function createSession(opts: {
 
         // Per-request timeout: the lesser of response_timeout (default 600s) or the remaining session wall time.
         // This prevents a single slow request from consuming the entire session budget.
-        const perReqCap = cfg.response_timeout && cfg.response_timeout > 0 ? cfg.response_timeout : 600;
+        const perReqCap =
+          cfg.response_timeout && cfg.response_timeout > 0 ? cfg.response_timeout : 600;
         const wallRemaining = Math.max(0, cfg.timeout - (Date.now() - wallStart) / 1000);
         const reqTimeout = Math.min(perReqCap, Math.max(10, wallRemaining));
         const timer = setTimeout(() => ac.abort(), reqTimeout * 1000);
@@ -2534,7 +2844,10 @@ export async function createSession(opts: {
             // Successful response resets overflow recovery budget.
             overflowCompactionAttempts = 0;
           } catch (e) {
-            if (isContextWindowExceededError(e) && overflowCompactionAttempts < MAX_OVERFLOW_COMPACTION_ATTEMPTS) {
+            if (
+              isContextWindowExceededError(e) &&
+              overflowCompactionAttempts < MAX_OVERFLOW_COMPACTION_ATTEMPTS
+            ) {
               overflowCompactionAttempts++;
               const useHardCompaction = overflowCompactionAttempts > 1;
               const compacted = await compactHistory({
@@ -2569,14 +2882,14 @@ export async function createSession(opts: {
           cumulativeUsage.completion += completionTokensTurn;
         }
 
-        const ppTps = ttftMs && ttftMs > 0 && promptTokensTurn > 0
-          ? promptTokensTurn / (ttftMs / 1000)
-          : undefined;
+        const ppTps =
+          ttftMs && ttftMs > 0 && promptTokensTurn > 0
+            ? promptTokensTurn / (ttftMs / 1000)
+            : undefined;
 
         const genWindowMs = Math.max(1, ttcMs - (ttftMs ?? 0));
-        const tgTps = completionTokensTurn > 0
-          ? completionTokensTurn / (genWindowMs / 1000)
-          : undefined;
+        const tgTps =
+          completionTokensTurn > 0 ? completionTokensTurn / (genWindowMs / 1000) : undefined;
 
         if (ttcMs > 0) turnDurationsMs.push(ttcMs);
         if (ttftMs != null && ttftMs > 0) ttftSamplesMs.push(ttftMs);
@@ -2585,7 +2898,9 @@ export async function createSession(opts: {
 
         const slowThreshold = cfg.slow_tg_tps_threshold ?? 10;
         if (tgTps != null && Number.isFinite(tgTps) && tgTps > 0 && tgTps < slowThreshold) {
-          console.warn(`[perf] Generation slowed to ${tgTps.toFixed(1)} t/s - context may be too large`);
+          console.warn(
+            `[perf] Generation slowed to ${tgTps.toFixed(1)} t/s - context may be too large`
+          );
         }
 
         let healthSnapshot: ServerHealthSnapshot | undefined;
@@ -2622,7 +2937,9 @@ export async function createSession(opts: {
         // Conditionally strip thinking blocks based on harness config (§4i).
         // Non-reasoning models (thinking.strip === false) never emit <think> blocks,
         // so stripping is a no-op — but we skip the regex work entirely.
-        const st = harness.thinking.strip ? stripThinking(content) : { visible: content, thinking: '' };
+        const st = harness.thinking.strip
+          ? stripThinking(content)
+          : { visible: content, thinking: '' };
         // Strip XML tool-call tag fragments that leak into visible narration
         // when llama-server partially parses Qwen/Hermes XML tool calls.
         const visible = st.visible
@@ -2643,12 +2960,17 @@ export async function createSession(opts: {
         // For models with unreliable tool_calls arrays, validate entries and
         // fall through to content parsing if they look malformed (§4i).
         if (toolCallsArr?.length && !harness.toolCalls.reliableToolCallsArray) {
-          const hasValid = toolCallsArr.some(tc =>
-            tc.function?.name && typeof tc.function.name === 'string' && tc.function.name.length > 0
+          const hasValid = toolCallsArr.some(
+            (tc) =>
+              tc.function?.name &&
+              typeof tc.function.name === 'string' &&
+              tc.function.name.length > 0
           );
           if (!hasValid) {
             if (cfg.verbose) {
-              console.warn(`[harness] tool_calls array present but no valid entries (reliableToolCallsArray=false), trying content fallback`);
+              console.warn(
+                `[harness] tool_calls array present but no valid entries (reliableToolCallsArray=false), trying content fallback`
+              );
             }
             toolCallsArr = undefined;
           }
@@ -2659,7 +2981,9 @@ export async function createSession(opts: {
           if (fallback?.length) {
             toolCallsArr = fallback;
             if (cfg.verbose) {
-              console.warn(`[harness] extracted ${fallback.length} tool call(s) from content (contentFallbackLikely=${harness.toolCalls.contentFallbackLikely})`);
+              console.warn(
+                `[harness] extracted ${fallback.length} tool call(s) from content (contentFallbackLikely=${harness.toolCalls.contentFallbackLikely})`
+              );
             }
           }
         }
@@ -2683,17 +3007,20 @@ export async function createSession(opts: {
         if ((!toolCallsArr || !toolCallsArr.length) && narration.length === 0) {
           noProgressTurns += 1;
           if (cfg.verbose) {
-            console.warn(`[loop] no-progress turn ${noProgressTurns}/${NO_PROGRESS_TURN_CAP} (empty response)`);
+            console.warn(
+              `[loop] no-progress turn ${noProgressTurns}/${NO_PROGRESS_TURN_CAP} (empty response)`
+            );
           }
           if (noProgressTurns >= NO_PROGRESS_TURN_CAP) {
             throw new Error(
               `no progress for ${NO_PROGRESS_TURN_CAP} consecutive turns (empty responses with no tool calls). ` +
-              `Likely malformed/empty model output loop; stopping early.`
+                `Likely malformed/empty model output loop; stopping early.`
             );
           }
           messages.push({
             role: 'user',
-            content: '[system] Your previous response was empty (no text, no tool calls). Continue by either calling a tool with valid JSON arguments or giving a final answer.',
+            content:
+              '[system] Your previous response was empty (no text, no tool calls). Continue by either calling a tool with valid JSON arguments or giving a final answer.',
           });
           await emitTurnEnd({
             turn: turns,
@@ -2723,14 +3050,16 @@ export async function createSession(opts: {
             for (const tc of toolCallsArr) {
               const n = tc.function?.name ?? '';
               let argCount = 0;
-              try { argCount = Object.keys(JSON.parse(tc.function?.arguments ?? '{}')).length; } catch {}
+              try {
+                argCount = Object.keys(JSON.parse(tc.function?.arguments ?? '{}')).length;
+              } catch {}
               if (!byName.has(n)) byName.set(n, []);
               byName.get(n)!.push({ tc, argCount });
             }
             const deduped: ToolCall[] = [];
             for (const [, group] of byName) {
               if (group.length > 1) {
-                const maxArgs = Math.max(...group.map(g => g.argCount));
+                const maxArgs = Math.max(...group.map((g) => g.argCount));
                 // Drop entries with strictly fewer args than the richest (ghost duplicates).
                 // Keep ALL entries that have the max arg count (genuine parallel calls).
                 for (const g of group) {
@@ -2743,7 +3072,10 @@ export async function createSession(opts: {
               }
             }
             if (deduped.length < toolCallsArr.length) {
-              if (cfg.verbose) console.warn(`[dedup] dropped ${toolCallsArr.length - deduped.length} ghost tool call(s)`);
+              if (cfg.verbose)
+                console.warn(
+                  `[dedup] dropped ${toolCallsArr.length - deduped.length} ghost tool call(s)`
+                );
             }
             toolCallsArr = deduped;
           }
@@ -2754,10 +3086,15 @@ export async function createSession(opts: {
 
           toolCalls += toolCallsArr.length;
           const assistantToolCallText = visible || '';
-          const compactAssistantToolCallText = assistantToolCallText.length > 900
-            ? `${assistantToolCallText.slice(0, 900)}\n[history-compacted: assistant narration truncated before tool execution]`
-            : assistantToolCallText;
-          messages.push({ role: 'assistant', content: compactAssistantToolCallText, tool_calls: toolCallsArr });
+          const compactAssistantToolCallText =
+            assistantToolCallText.length > 900
+              ? `${assistantToolCallText.slice(0, 900)}\n[history-compacted: assistant narration truncated before tool execution]`
+              : assistantToolCallText;
+          messages.push({
+            role: 'assistant',
+            content: compactAssistantToolCallText,
+            tool_calls: toolCallsArr,
+          });
 
           // sigCounts is scoped to the entire ask() run (see above)
 
@@ -2765,10 +3102,17 @@ export async function createSession(opts: {
           // If a ConfirmationProvider is given, wrap it; otherwise fall back to raw callback.
           // The bridge accepts an optional context object for rich confirm data.
           const confirmBridge = opts.confirmProvider
-            ? async (prompt: string, bridgeCtx?: { tool?: string; args?: Record<string, unknown>; diff?: string }) => opts.confirmProvider!.confirm({
-                tool: bridgeCtx?.tool ?? '', args: bridgeCtx?.args ?? {}, summary: prompt,
-                diff: bridgeCtx?.diff, mode: cfg.approval_mode,
-              })
+            ? async (
+                prompt: string,
+                bridgeCtx?: { tool?: string; args?: Record<string, unknown>; diff?: string }
+              ) =>
+                opts.confirmProvider!.confirm({
+                  tool: bridgeCtx?.tool ?? '',
+                  args: bridgeCtx?.args ?? {},
+                  summary: prompt,
+                  diff: bridgeCtx?.diff,
+                  mode: cfg.approval_mode,
+                })
             : opts.confirm;
 
           const ctx = buildToolCtx({
@@ -2781,10 +3125,16 @@ export async function createSession(opts: {
           });
 
           const isReadOnlyToolDynamic = (toolName: string) => {
-            return isReadOnlyTool(toolName) || LSP_TOOL_NAME_SET.has(toolName) || Boolean(mcpManager?.isToolReadOnly(toolName));
+            return (
+              isReadOnlyTool(toolName) ||
+              LSP_TOOL_NAME_SET.has(toolName) ||
+              Boolean(mcpManager?.isToolReadOnly(toolName))
+            );
           };
 
-          const fileMutationsInTurn = toolCallsArr.filter((tc) => FILE_MUTATION_TOOL_SET.has(tc.function?.name)).length;
+          const fileMutationsInTurn = toolCallsArr.filter((tc) =>
+            FILE_MUTATION_TOOL_SET.has(tc.function?.name)
+          ).length;
           if (fileMutationsInTurn >= 3 && isGitDirty(ctx.cwd)) {
             const shouldStash = confirmBridge
               ? await confirmBridge(
@@ -2800,7 +3150,8 @@ export async function createSession(opts: {
             }
           }
 
-          const resolveCallId = (tc: ToolCall) => tc.id || `call_${Date.now()}_${toolNameByCallId.size}`;
+          const resolveCallId = (tc: ToolCall) =>
+            tc.id || `call_${Date.now()}_${toolNameByCallId.size}`;
 
           // Pre-dispatch loop detection: check tool calls against previous turns.
           // We deduplicate within a single response (a model may emit multiple identical
@@ -2855,8 +3206,7 @@ export async function createSession(opts: {
                 if (count >= loopThreshold) {
                   const command = execCommandFromSig(sig);
                   const canReuseReadOnlyObservation =
-                    looksLikeReadOnlyExecCommand(command) &&
-                    execObservationCacheBySig.has(sig);
+                    looksLikeReadOnlyExecCommand(command) && execObservationCacheBySig.has(sig);
 
                   if (canReuseReadOnlyObservation) {
                     repeatedReadOnlyExecSigs.add(sig);
@@ -2934,7 +3284,9 @@ export async function createSession(opts: {
                   // Verify all tracked mtimes still match before serving from cache
                   const cachedEntry = readFileCacheBySig.get(sig);
                   if (cachedEntry && cachedEntry.paths.length > 0) {
-                    const currentMtimes = await Promise.all(cachedEntry.paths.map((p) => getMtimeForPath(p)));
+                    const currentMtimes = await Promise.all(
+                      cachedEntry.paths.map((p) => getMtimeForPath(p))
+                    );
                     const valid =
                       currentMtimes.length === cachedEntry.mtimes.length &&
                       currentMtimes.every((m, i) => m !== 0 && m === cachedEntry.mtimes[i]);
@@ -2952,7 +3304,7 @@ export async function createSession(opts: {
               if (consec >= hardBreakAt) {
                 throw new Error(
                   `tool ${toolName}: identical read repeated ${consec}x consecutively; breaking loop. ` +
-                  `The resource content has not changed between reads.`
+                    `The resource content has not changed between reads.`
                 );
               }
               continue;
@@ -2991,23 +3343,37 @@ export async function createSession(opts: {
               malformedCount++;
               if (malformedCount > harness.toolCalls.retryOnMalformed) {
                 // Break the outer loop — this model won't self-correct
-                throw new AgentLoopBreak(`tool ${name}: malformed JSON exceeded retry limit (${harness.toolCalls.retryOnMalformed}): ${rawArgs.slice(0, 200)}`);
+                throw new AgentLoopBreak(
+                  `tool ${name}: malformed JSON exceeded retry limit (${harness.toolCalls.retryOnMalformed}): ${rawArgs.slice(0, 200)}`
+                );
               }
-              throw new ToolError('invalid_args', `tool ${name}: arguments not valid JSON`, false, 'Return a valid JSON object for function.arguments.', { raw: rawArgs.slice(0, 200) });
+              throw new ToolError(
+                'invalid_args',
+                `tool ${name}: arguments not valid JSON`,
+                false,
+                'Return a valid JSON object for function.arguments.',
+                { raw: rawArgs.slice(0, 200) }
+              );
             }
 
             if (args == null || typeof args !== 'object' || Array.isArray(args)) {
-              throw new ValidationError([{ field: 'arguments', message: 'must be a JSON object', value: args }]);
+              throw new ValidationError([
+                { field: 'arguments', message: 'must be a JSON object', value: args },
+              ]);
             }
 
             const builtInFn = (tools as any)[name] as Function | undefined;
             const isLspTool = LSP_TOOL_NAME_SET.has(name);
             const isSpawnTask = name === 'spawn_task';
             const hasMcpTool = mcpManager?.hasTool(name) === true;
-            if (!builtInFn && !isLspTool && !hasMcpTool && !isSpawnTask) throw new Error(`unknown tool: ${name}`);
+            if (!builtInFn && !isLspTool && !hasMcpTool && !isSpawnTask)
+              throw new Error(`unknown tool: ${name}`);
 
             // Keep parsed args by call-id so we can digest/archive tool outputs with context.
-            toolArgsByCallId.set(callId, args && typeof args === 'object' && !Array.isArray(args) ? args : {});
+            toolArgsByCallId.set(
+              callId,
+              args && typeof args === 'object' && !Array.isArray(args) ? args : {}
+            );
 
             // Pre-dispatch argument validation.
             // - Required params
@@ -3017,13 +3383,19 @@ export async function createSession(opts: {
               const missing = getMissingRequiredParams(name, args);
               if (missing.length) {
                 throw new ValidationError(
-                  missing.map((m) => ({ field: m, message: 'required parameter is missing', value: undefined }))
+                  missing.map((m) => ({
+                    field: m,
+                    message: 'required parameter is missing',
+                    value: undefined,
+                  }))
                 );
               }
 
               const argIssues = getArgValidationIssues(name, args);
               if (argIssues.length) {
-                throw new ValidationError(argIssues.map((i) => ({ field: i.field, message: i.message, value: i.value })));
+                throw new ValidationError(
+                  argIssues.map((i) => ({ field: i.field, message: i.message, value: i.value }))
+                );
               }
             }
 
@@ -3039,7 +3411,9 @@ export async function createSession(opts: {
               }
             }
             if (FILE_MUTATION_TOOL_SET.has(name) && typeof args.path === 'string') {
-              const absPath = args.path.startsWith('/') ? args.path : `${cfg.dir ?? process.cwd()}/${args.path}`;
+              const absPath = args.path.startsWith('/')
+                ? args.path
+                : `${cfg.dir ?? process.cwd()}/${args.path}`;
               const pv = checkPathSafety(absPath);
               if (pv.tier === 'forbidden') {
                 const reason = pv.reason || 'protected path';
@@ -3056,13 +3430,24 @@ export async function createSession(opts: {
               // Fix 1: Hard cumulative budget — refuse reads past hard cap
               if (cumulativeReadOnlyCalls > READ_BUDGET_HARD) {
                 await emitToolCall({ id: callId, name, args });
-                await emitToolResult({ id: callId, name, success: false, summary: 'read budget exhausted', result: '' });
-                return { id: callId, content: `STOP: Read budget exhausted (${cumulativeReadOnlyCalls}/${READ_BUDGET_HARD} calls). Do NOT read more files. Use search_files or exec: grep -rn "pattern" path/ to find what you need.` };
+                await emitToolResult({
+                  id: callId,
+                  name,
+                  success: false,
+                  summary: 'read budget exhausted',
+                  result: '',
+                });
+                return {
+                  id: callId,
+                  content: `STOP: Read budget exhausted (${cumulativeReadOnlyCalls}/${READ_BUDGET_HARD} calls). Do NOT read more files. Use search_files or exec: grep -rn "pattern" path/ to find what you need.`,
+                };
               }
 
               // Fix 2: Directory scan detection — counts unique files per dir (re-reads are OK)
               if (filePath) {
-                const absFilePath = filePath.startsWith('/') ? filePath : path.resolve(cfg.dir ?? process.cwd(), filePath);
+                const absFilePath = filePath.startsWith('/')
+                  ? filePath
+                  : path.resolve(cfg.dir ?? process.cwd(), filePath);
                 const parentDir = path.dirname(absFilePath);
                 if (!readDirFiles.has(parentDir)) readDirFiles.set(parentDir, new Set());
                 readDirFiles.get(parentDir)!.add(absFilePath);
@@ -3072,8 +3457,17 @@ export async function createSession(opts: {
                 }
                 if (blockedDirs.has(parentDir) && uniqueCount > 8) {
                   await emitToolCall({ id: callId, name, args });
-                  await emitToolResult({ id: callId, name, success: false, summary: 'dir scan blocked', result: '' });
-                  return { id: callId, content: `STOP: Directory scan detected — you've read ${uniqueCount} unique files from ${parentDir}/. Use search_files(pattern, '${parentDir}') or exec: grep -rn "pattern" ${parentDir}/ instead of reading files individually.` };
+                  await emitToolResult({
+                    id: callId,
+                    name,
+                    success: false,
+                    summary: 'dir scan blocked',
+                    result: '',
+                  });
+                  return {
+                    id: callId,
+                    content: `STOP: Directory scan detected — you've read ${uniqueCount} unique files from ${parentDir}/. Use search_files(pattern, '${parentDir}') or exec: grep -rn "pattern" ${parentDir}/ instead of reading files individually.`,
+                  };
                 }
               }
 
@@ -3084,8 +3478,17 @@ export async function createSession(opts: {
                 searchTermFiles.get(key)!.add(filePath);
                 if (searchTermFiles.get(key)!.size >= 3) {
                   await emitToolCall({ id: callId, name, args });
-                  await emitToolResult({ id: callId, name, success: false, summary: 'use search_files', result: '' });
-                  return { id: callId, content: `STOP: You've searched ${searchTermFiles.get(key)!.size} files for "${searchTerm}" one at a time. This is what search_files does in one call. Use: search_files(pattern="${searchTerm}", path=".") or exec: grep -rn "${searchTerm}" .` };
+                  await emitToolResult({
+                    id: callId,
+                    name,
+                    success: false,
+                    summary: 'use search_files',
+                    result: '',
+                  });
+                  return {
+                    id: callId,
+                    content: `STOP: You've searched ${searchTermFiles.get(key)!.size} files for "${searchTerm}" one at a time. This is what search_files does in one call. Use: search_files(pattern="${searchTerm}", path=".") or exec: grep -rn "${searchTerm}" .`,
+                  };
                 }
               }
             }
@@ -3107,11 +3510,21 @@ export async function createSession(opts: {
               const blockedMsg = `[blocked: approval_mode=plan] Would ${summary}`;
 
               // Notify via confirmProvider.showBlocked if available
-              opts.confirmProvider?.showBlocked?.({ tool: name, args, reason: `plan mode: ${summary}` });
+              opts.confirmProvider?.showBlocked?.({
+                tool: name,
+                args,
+                reason: `plan mode: ${summary}`,
+              });
 
               // Hook: onToolCall + onToolResult for plan-blocked actions
               await emitToolCall({ id: callId, name, args });
-              await emitToolResult({ id: callId, name, success: true, summary: `⏸ ${summary} (blocked)`, result: blockedMsg });
+              await emitToolResult({
+                id: callId,
+                name,
+                success: true,
+                summary: `⏸ ${summary} (blocked)`,
+                result: blockedMsg,
+              });
 
               return { id: callId, content: blockedMsg };
             }
@@ -3121,7 +3534,9 @@ export async function createSession(opts: {
 
             if (cfg.step_mode) {
               const stepPrompt = `Step mode: execute ${name}(${JSON.stringify(args).slice(0, 200)}) ? [Y/n]`;
-              const ok = confirmBridge ? await confirmBridge(stepPrompt, { tool: name, args }) : true;
+              const ok = confirmBridge
+                ? await confirmBridge(stepPrompt, { tool: name, args })
+                : true;
               if (!ok) {
                 return { id: callId, content: '[skipped by user: step mode]' };
               }
@@ -3161,9 +3576,18 @@ export async function createSession(opts: {
                 const value = await builtInFn(callCtx as any, args);
                 content = typeof value === 'string' ? value : JSON.stringify(value);
 
-                if (READ_FILE_CACHE_TOOLS.has(name) && typeof content === 'string' && !content.startsWith('ERROR:')) {
-                  const baseCwd = typeof (args as any)?.cwd === 'string' ? String((args as any).cwd) : ctx.cwd;
-                  const paths = extractPathsFromReadArgs(name, args as Record<string, unknown>, baseCwd);
+                if (
+                  READ_FILE_CACHE_TOOLS.has(name) &&
+                  typeof content === 'string' &&
+                  !content.startsWith('ERROR:')
+                ) {
+                  const baseCwd =
+                    typeof (args as any)?.cwd === 'string' ? String((args as any).cwd) : ctx.cwd;
+                  const paths = extractPathsFromReadArgs(
+                    name,
+                    args as Record<string, unknown>,
+                    baseCwd
+                  );
                   if (paths.length > 0) {
                     const mtimes = await Promise.all(paths.map((p) => getMtimeForPath(p)));
                     const allValid = mtimes.length === paths.length && mtimes.every((m) => m !== 0);
@@ -3192,7 +3616,10 @@ export async function createSession(opts: {
                     const parsed = JSON.parse(content);
                     const out = String(parsed?.out ?? '');
                     const rc = Number(parsed?.rc ?? NaN);
-                    const looksLikeTest = /(^|\s)(node\s+--test|npm\s+test|pnpm\s+test|yarn\s+test|pytest|go\s+test|cargo\s+test|ctest)(\s|$)/i.test(cmd);
+                    const looksLikeTest =
+                      /(^|\s)(node\s+--test|npm\s+test|pnpm\s+test|yarn\s+test|pytest|go\s+test|cargo\s+test|ctest)(\s|$)/i.test(
+                        cmd
+                      );
                     if (looksLikeTest && Number.isFinite(rc) && rc === 0) {
                       lastSuccessfulTestRun = {
                         command: cmd,
@@ -3208,7 +3635,7 @@ export async function createSession(opts: {
                 if (name === 'lsp_diagnostics') {
                   content = await lspManager.getDiagnostics(
                     typeof args.path === 'string' ? args.path : undefined,
-                    typeof args.severity === 'number' ? args.severity : undefined,
+                    typeof args.severity === 'number' ? args.severity : undefined
                   );
                 } else if (name === 'lsp_symbols') {
                   content = await buildLspLensSymbolOutput(String(args.path ?? ''));
@@ -3216,20 +3643,20 @@ export async function createSession(opts: {
                   content = await lspManager.getHover(
                     String(args.path ?? ''),
                     Number(args.line ?? 0),
-                    Number(args.character ?? 0),
+                    Number(args.character ?? 0)
                   );
                 } else if (name === 'lsp_definition') {
                   content = await lspManager.getDefinition(
                     String(args.path ?? ''),
                     Number(args.line ?? 0),
-                    Number(args.character ?? 0),
+                    Number(args.character ?? 0)
                   );
                 } else if (name === 'lsp_references') {
                   content = await lspManager.getReferences(
                     String(args.path ?? ''),
                     Number(args.line ?? 0),
                     Number(args.character ?? 0),
-                    typeof args.max_results === 'number' ? args.max_results : 50,
+                    typeof args.max_results === 'number' ? args.max_results : 50
                   );
                 }
               } else {
@@ -3240,15 +3667,18 @@ export async function createSession(opts: {
                 const mcpReadOnly = isReadOnlyToolDynamic(name);
                 if (!cfg.step_mode && !ctx.noConfirm && !mcpReadOnly) {
                   const prompt = `Execute MCP tool '${name}'? [Y/n]`;
-                  const ok = confirmBridge ? await confirmBridge(prompt, { tool: name, args }) : true;
+                  const ok = confirmBridge
+                    ? await confirmBridge(prompt, { tool: name, args })
+                    : true;
                   if (!ok) {
                     return { id: callId, content: '[skipped by user: approval]' };
                   }
                 }
 
-                const callArgs = args && typeof args === 'object' && !Array.isArray(args)
-                  ? args as Record<string, unknown>
-                  : {};
+                const callArgs =
+                  args && typeof args === 'object' && !Array.isArray(args)
+                    ? (args as Record<string, unknown>)
+                    : {};
                 content = await mcpManager.callTool(name, callArgs);
               }
             }
@@ -3267,7 +3697,13 @@ export async function createSession(opts: {
             let summary = reusedCachedReadOnlyExec
               ? 'cached read-only exec observation (unchanged)'
               : toolResultSummary(name, args, content, true);
-            const resultEvent: ToolResultEvent = { id: callId, name, success: true, summary, result: content };
+            const resultEvent: ToolResultEvent = {
+              id: callId,
+              name,
+              success: true,
+              summary,
+              result: content,
+            };
 
             // Phase 7: populate rich display fields
             if (name === 'exec') {
@@ -3315,14 +3751,20 @@ export async function createSession(opts: {
                 const mutatedPath = typeof args.path === 'string' ? args.path : '';
                 if (mutatedPath) {
                   try {
-                    const absPath = mutatedPath.startsWith('/') ? mutatedPath : path.join(cfg.dir ?? process.cwd(), mutatedPath);
+                    const absPath = mutatedPath.startsWith('/')
+                      ? mutatedPath
+                      : path.join(cfg.dir ?? process.cwd(), mutatedPath);
                     const fileText = await fs.readFile(absPath, 'utf8');
                     await lspManager.ensureOpen(absPath, fileText);
                     await lspManager.notifyDidSave(absPath, fileText);
                     // Small delay so the server can process diagnostics
                     await new Promise((r) => setTimeout(r, 200));
                     const diags = await lspManager.getDiagnostics(absPath);
-                    if (diags && !diags.startsWith('No diagnostics') && !diags.startsWith('[lsp] no language')) {
+                    if (
+                      diags &&
+                      !diags.startsWith('No diagnostics') &&
+                      !diags.startsWith('[lsp] no language')
+                    ) {
                       content += `\n\n[lsp] Diagnostics after edit:\n${diags}`;
                     }
                   } catch {
@@ -3342,27 +3784,34 @@ export async function createSession(opts: {
           const catchToolError = async (e: any, tc: ToolCall) => {
             if (e instanceof AgentLoopBreak) throw e;
 
-            const te = e instanceof ToolError || e instanceof ValidationError
-              ? e
-              : ToolError.fromError(e, 'internal');
+            const te =
+              e instanceof ToolError || e instanceof ValidationError
+                ? e
+                : ToolError.fromError(e, 'internal');
             if (te.code === 'invalid_args' || te.code === 'validation') {
               invalidArgsThisTurn = true;
             }
             const msg = te.message ?? String(e ?? 'unknown error');
-            const toolErrorContent = te instanceof ValidationError ? te.toToolResult() : te.toToolResult();
+            const toolErrorContent =
+              te instanceof ValidationError ? te.toToolResult() : te.toToolResult();
 
             // Fast-fail repeated blocked command loops with accurate reason labeling.
             // Applies to direct exec attempts and spawn_task delegation attempts.
             if (tc.function.name === 'exec' || tc.function.name === 'spawn_task') {
-              const blockedMatch = msg.match(/^exec:\s*blocked\s*\(([^)]+)\)\s*without --no-confirm\/--yolo:\s*(.*)$/i)
-                || msg.match(/^(spawn_task):\s*blocked\s*—\s*(.*)$/i);
+              const blockedMatch =
+                msg.match(
+                  /^exec:\s*blocked\s*\(([^)]+)\)\s*without --no-confirm\/--yolo:\s*(.*)$/i
+                ) || msg.match(/^(spawn_task):\s*blocked\s*—\s*(.*)$/i);
               if (blockedMatch) {
                 const reason = (blockedMatch[1] || blockedMatch[2] || 'blocked command').trim();
                 let parsedArgs: any = {};
-                try { parsedArgs = JSON.parse(tc.function.arguments ?? '{}'); } catch {}
-                const cmd = tc.function.name === 'exec'
-                  ? String(parsedArgs?.command ?? '')
-                  : String(parsedArgs?.task ?? '');
+                try {
+                  parsedArgs = JSON.parse(tc.function.arguments ?? '{}');
+                } catch {}
+                const cmd =
+                  tc.function.name === 'exec'
+                    ? String(parsedArgs?.command ?? '')
+                    : String(parsedArgs?.task ?? '');
                 const normalizedReason = reason.toLowerCase();
                 const aggregateByReason = normalizedReason.includes('package install/remove');
                 const sig = aggregateByReason
@@ -3373,7 +3822,7 @@ export async function createSession(opts: {
                 if (count >= 2) {
                   throw new AgentLoopBreak(
                     `${tc.function.name}: repeated blocked command attempts (${reason}) in current approval mode. ` +
-                    'Do not retry the same blocked command. Choose a safe alternative, skip cleanup, or ask the user to restart with --no-confirm/--yolo.'
+                      'Do not retry the same blocked command. Choose a safe alternative, skip cleanup, or ask the user to restart with --no-confirm/--yolo.'
                   );
                 }
               }
@@ -3394,29 +3843,38 @@ export async function createSession(opts: {
           };
 
           // ── Anti-scan guardrails (§ read budget, dir scan, same-search) ──
-          const readOnlyInTurn = toolCallsArr.filter((tc) => isReadOnlyToolDynamic(tc.function.name));
+          const readOnlyInTurn = toolCallsArr.filter((tc) =>
+            isReadOnlyToolDynamic(tc.function.name)
+          );
 
           // Fix 5: Per-turn cap — drop excess read-only calls in a single response
           if (readOnlyInTurn.length > READ_ONLY_PER_TURN_CAP) {
-            const kept = new Set(readOnlyInTurn.slice(0, READ_ONLY_PER_TURN_CAP).map((tc) => tc.id ?? tc.function.name));
+            const kept = new Set(
+              readOnlyInTurn.slice(0, READ_ONLY_PER_TURN_CAP).map((tc) => tc.id ?? tc.function.name)
+            );
             const droppedCount = readOnlyInTurn.length - READ_ONLY_PER_TURN_CAP;
-            toolCallsArr = toolCallsArr.filter((tc) =>
-              !isReadOnlyToolDynamic(tc.function.name) || kept.has(tc.id ?? tc.function.name)
+            toolCallsArr = toolCallsArr.filter(
+              (tc) =>
+                !isReadOnlyToolDynamic(tc.function.name) || kept.has(tc.id ?? tc.function.name)
             );
             for (const tc of readOnlyInTurn.slice(READ_ONLY_PER_TURN_CAP)) {
               const callId = resolveCallId(tc);
               results.push({
                 id: callId,
-                content: `STOP: Per-turn read limit (${READ_ONLY_PER_TURN_CAP}). Use search_files or exec with grep instead of reading files one by one.`
+                content: `STOP: Per-turn read limit (${READ_ONLY_PER_TURN_CAP}). Use search_files or exec with grep instead of reading files one by one.`,
               });
             }
             if (cfg.verbose) {
-              console.warn(`[guardrail] capped ${droppedCount} read-only tool calls (per-turn limit ${READ_ONLY_PER_TURN_CAP})`);
+              console.warn(
+                `[guardrail] capped ${droppedCount} read-only tool calls (per-turn limit ${READ_ONLY_PER_TURN_CAP})`
+              );
             }
           }
 
           // Fix 1: Hard cumulative read budget — escalating enforcement
-          const readOnlyThisTurn = toolCallsArr.filter((tc) => isReadOnlyToolDynamic(tc.function.name));
+          const readOnlyThisTurn = toolCallsArr.filter((tc) =>
+            isReadOnlyToolDynamic(tc.function.name)
+          );
           cumulativeReadOnlyCalls += readOnlyThisTurn.length;
 
           if (harness.toolCalls.parallelCalls) {
@@ -3425,10 +3883,7 @@ export async function createSession(opts: {
             const others = toolCallsArr.filter((tc) => !isReadOnlyToolDynamic(tc.function.name));
 
             const ro = await Promise.all(
-              readonly.map((tc) =>
-                runOne(tc)
-                  .catch((e: any) => catchToolError(e, tc))
-              )
+              readonly.map((tc) => runOne(tc).catch((e: any) => catchToolError(e, tc)))
             );
             results.push(...ro);
 
@@ -3472,7 +3927,7 @@ export async function createSession(opts: {
           if (readOnlyExecTurnHints.length) {
             const previews = readOnlyExecTurnHints
               .slice(0, 2)
-              .map((cmd) => cmd.length > 140 ? `${cmd.slice(0, 140)}…` : cmd)
+              .map((cmd) => (cmd.length > 140 ? `${cmd.slice(0, 140)}…` : cmd))
               .join(' | ');
             messages.push({
               role: 'user' as const,
@@ -3497,7 +3952,10 @@ export async function createSession(opts: {
 
           // ── Escalating cumulative read budget (§ anti-scan guardrails) ──
           // Warn zone: append warnings to each read result when approaching the hard cap
-          if (cumulativeReadOnlyCalls > READ_BUDGET_WARN && cumulativeReadOnlyCalls <= READ_BUDGET_HARD) {
+          if (
+            cumulativeReadOnlyCalls > READ_BUDGET_WARN &&
+            cumulativeReadOnlyCalls <= READ_BUDGET_HARD
+          ) {
             const remaining = READ_BUDGET_HARD - cumulativeReadOnlyCalls;
             messages.push({
               role: 'user' as const,
@@ -3542,7 +4000,8 @@ export async function createSession(opts: {
           messages.push({ role: 'assistant', content: visible || content || '' });
           messages.push({
             role: 'user',
-            content: '[system] MCP tools are now enabled for this task. Continue and call tools as needed.'
+            content:
+              '[system] MCP tools are now enabled for this task. Continue and call tools as needed.',
           });
           continue;
         }
@@ -3561,12 +4020,14 @@ export async function createSession(opts: {
               repromptUsed = true;
               noToolTurns = 0;
               const reminder = userContentToText(instruction).trim();
-              const clippedReminder = reminder.length > 4000 ? `${reminder.slice(0, 4000)}\n[truncated]` : reminder;
+              const clippedReminder =
+                reminder.length > 4000 ? `${reminder.slice(0, 4000)}\n[truncated]` : reminder;
               messages.push({
                 role: 'user',
-                content: `[system] You seem to be stuck narrating without using tools. Resume execution now.\n` +
+                content:
+                  `[system] You seem to be stuck narrating without using tools. Resume execution now.\n` +
                   `Original task:\n${clippedReminder}\n\n` +
-                  `Call the needed tools directly. If everything is truly complete, provide the final answer.`
+                  `Call the needed tools directly. If everything is truly complete, provide the final answer.`,
               });
 
               await emitTurnEnd({
@@ -3591,7 +4052,8 @@ export async function createSession(opts: {
 
           messages.push({
             role: 'user',
-            content: '[system] Continue executing the task. Use tools now (do not just narrate plans). If complete, give the final answer.'
+            content:
+              '[system] Continue executing the task. Use tools now (do not just narrate plans). If complete, give the final answer.',
           });
 
           await emitTurnEnd({
@@ -3650,7 +4112,9 @@ export async function createSession(opts: {
             return '';
           }
         })();
-        const err = new Error(`BUG: threw undefined in agent.ask() (turn=${turns}). lastMsg=${lastMsg?.role ?? 'unknown'}:${lastMsgPreview}`);
+        const err = new Error(
+          `BUG: threw undefined in agent.ask() (turn=${turns}). lastMsg=${lastMsg?.role ?? 'unknown'}:${lastMsgPreview}`
+        );
         await persistFailure(err, `ask turn ${turns}`);
         await hookManager.emit('ask_error', {
           askId,
@@ -3686,16 +4150,25 @@ export async function createSession(opts: {
       });
       throw e;
     }
-
   };
 
   // expose via getters so setModel() / reset() don't break references
   return {
-    get model() { return model; },
-    get harness() { return harness.id; },
-    get endpoint() { return cfg.endpoint; },
-    get contextWindow() { return contextWindow; },
-    get supportsVision() { return supportsVision; },
+    get model() {
+      return model;
+    },
+    get harness() {
+      return harness.id;
+    },
+    get endpoint() {
+      return cfg.endpoint;
+    },
+    get contextWindow() {
+      return contextWindow;
+    },
+    get supportsVision() {
+      return supportsVision;
+    },
     get messages() {
       return messages;
     },
@@ -3747,7 +4220,7 @@ export async function createSession(opts: {
     },
     executePlanStep,
     clearPlan,
-    compactHistory
+    compactHistory,
   };
 }
 
@@ -3765,12 +4238,15 @@ export async function runAgent(opts: {
     apiKey: opts.apiKey,
     confirm: opts.confirm,
     confirmProvider: opts.confirmProvider,
-    runtime: opts.runtime
+    runtime: opts.runtime,
   });
   return session.ask(opts.instruction, opts.onToken);
 }
 
-async function autoPickModel(client: OpenAIClient, cached?: { data: Array<{ id: string }> }): Promise<string> {
+async function autoPickModel(
+  client: OpenAIClient,
+  cached?: { data: Array<{ id: string }> }
+): Promise<string> {
   const ac = makeAbortController();
   const timer = setTimeout(() => ac.abort(), 3000);
   try {
@@ -3778,7 +4254,8 @@ async function autoPickModel(client: OpenAIClient, cached?: { data: Array<{ id: 
     const q = models.data.find((m) => /qwen/i.test(m.id));
     if (q) return q.id;
     const first = models.data[0]?.id;
-    if (!first) throw new Error('No models found on server. Check your endpoint and that a model is loaded.');
+    if (!first)
+      throw new Error('No models found on server. Check your endpoint and that a model is loaded.');
     return first;
   } finally {
     clearTimeout(timer);

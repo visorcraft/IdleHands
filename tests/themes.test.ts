@@ -1,8 +1,10 @@
-import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { describe, it, before, after } from 'node:test';
+
+import { makeStyler } from '../dist/term.js';
 import {
   resolvePalette,
   builtinTheme,
@@ -12,7 +14,6 @@ import {
   loadCustomTheme,
   customThemesDir,
 } from '../dist/themes.js';
-import { makeStyler } from '../dist/term.js';
 
 describe('themes', () => {
   it('BUILTIN_THEME_NAMES includes all five themes', () => {
@@ -23,7 +24,16 @@ describe('themes', () => {
     for (const name of BUILTIN_THEME_NAMES) {
       const fns = builtinTheme(name);
       assert.ok(fns, `builtinTheme("${name}") should return ThemeFns`);
-      for (const slot of ['dim', 'bold', 'red', 'yellow', 'green', 'cyan', 'magenta', 'blue'] as const) {
+      for (const slot of [
+        'dim',
+        'bold',
+        'red',
+        'yellow',
+        'green',
+        'cyan',
+        'magenta',
+        'blue',
+      ] as const) {
         assert.equal(typeof fns[slot], 'function', `${name}.${slot} should be a function`);
       }
     }

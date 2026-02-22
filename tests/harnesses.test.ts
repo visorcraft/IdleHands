@@ -1,8 +1,9 @@
-import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
+import { describe, it, before, after } from 'node:test';
+
 import { selectHarness, _resetHarnessCache } from '../dist/harnesses.js';
 
 describe('selectHarness', () => {
@@ -128,17 +129,23 @@ describe('user-defined harnesses', () => {
     try {
       await fs.mkdir(harnessDir, { recursive: true });
       createdDir = true;
-    } catch { /* dir exists */ }
+    } catch {
+      /* dir exists */
+    }
 
-    await fs.writeFile(testFile, JSON.stringify({
-      id: 'test-custom',
-      match: ['custom-model-xyz'],
-      description: 'Test custom harness',
-      params: { temperature: 0.1, max_tokens: 65536 },
-      thinking: { format: 'none', strip: false },
-      toolCalls: { reliableToolCallsArray: true, parallelCalls: false, retryOnMalformed: 5 },
-      quirks: { loopsOnToolError: true, maxIterationsOverride: 5 }
-    }), 'utf8');
+    await fs.writeFile(
+      testFile,
+      JSON.stringify({
+        id: 'test-custom',
+        match: ['custom-model-xyz'],
+        description: 'Test custom harness',
+        params: { temperature: 0.1, max_tokens: 65536 },
+        thinking: { format: 'none', strip: false },
+        toolCalls: { reliableToolCallsArray: true, parallelCalls: false, retryOnMalformed: 5 },
+        quirks: { loopsOnToolError: true, maxIterationsOverride: 5 },
+      }),
+      'utf8'
+    );
 
     // Force reload
     _resetHarnessCache();

@@ -1,5 +1,6 @@
 import type { AgentHooks } from '../agent.js';
 import type { ToolCallEvent, ToolResultEvent, TurnEndEvent } from '../types.js';
+
 import { formatToolCallSummary } from './tool-summary.js';
 
 export type TurnProgressPhase = 'thinking' | 'responding' | 'tool' | 'done';
@@ -78,7 +79,9 @@ function bucket(ms: number, bucketMs: number): number {
   return Math.max(0, Math.floor(ms / bucketMs) * bucketMs);
 }
 
-export function formatStatusLine(snap: Pick<TurnProgressSnapshot, 'phase' | 'elapsedBucketMs' | 'activeTool'>): string {
+export function formatStatusLine(
+  snap: Pick<TurnProgressSnapshot, 'phase' | 'elapsedBucketMs' | 'activeTool'>
+): string {
   const total = formatElapsed(snap.elapsedBucketMs);
 
   if (snap.phase === 'tool' && snap.activeTool) {
@@ -130,7 +133,9 @@ export class TurnProgressController {
     this.heartbeatMs = Math.max(250, Math.floor(opts?.heartbeatMs ?? 1000));
     this.bucketMs = Math.max(1000, Math.floor(opts?.bucketMs ?? 5000));
     this.maxToolLines = Math.max(0, Math.floor(opts?.maxToolLines ?? 6));
-    this.toolSummary = opts?.toolCallSummary ?? ((call) => formatToolCallSummary({ name: call.name, args: call.args as any }));
+    this.toolSummary =
+      opts?.toolCallSummary ??
+      ((call) => formatToolCallSummary({ name: call.name, args: call.args as any }));
 
     this.hooks = {
       onToken: (t) => this.onToken(t),

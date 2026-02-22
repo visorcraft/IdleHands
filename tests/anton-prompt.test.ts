@@ -1,7 +1,13 @@
-import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { describe, it, mock } from 'node:test';
+
 import { buildAntonPrompt, parseAntonResult } from '../dist/anton/prompt.js';
-import type { AntonTask, AntonTaskFile, AntonRunConfig, AntonPromptOpts } from '../dist/anton/types.js';
+import type {
+  AntonTask,
+  AntonTaskFile,
+  AntonRunConfig,
+  AntonPromptOpts,
+} from '../dist/anton/types.js';
 
 // Mock vault store for testing
 class MockVaultStore {
@@ -27,7 +33,7 @@ function createTestTask(overrides: Partial<AntonTask> = {}): AntonTask {
     checked: false,
     parentKey: undefined,
     children: [],
-    ...overrides
+    ...overrides,
   };
 }
 
@@ -41,7 +47,7 @@ function createTestTaskFile(overrides: Partial<AntonTaskFile> = {}): AntonTaskFi
     completed: [],
     totalCount: 100,
     contentHash: 'abc123',
-    ...overrides
+    ...overrides,
   };
 }
 
@@ -72,7 +78,7 @@ function createTestConfig(overrides: Partial<AntonRunConfig> = {}): AntonRunConf
     approvalMode: 'auto',
     verbose: false,
     dryRun: false,
-    ...overrides
+    ...overrides,
   };
 }
 
@@ -81,7 +87,7 @@ describe('buildAntonPrompt', () => {
     const task = createTestTask();
     const taskFile = createTestTaskFile();
     const config = createTestConfig();
-    
+
     const opts: AntonPromptOpts = {
       task,
       taskFile,
@@ -91,7 +97,7 @@ describe('buildAntonPrompt', () => {
       retryContext: undefined,
       vault: undefined,
       lens: undefined,
-      maxContextTokens: 1000
+      maxContextTokens: 1000,
     };
 
     const prompt = await buildAntonPrompt(opts);
@@ -109,7 +115,7 @@ describe('buildAntonPrompt', () => {
     const task = createTestTask();
     const taskFile = createTestTaskFile();
     const config = createTestConfig();
-    
+
     const opts: AntonPromptOpts = {
       task,
       taskFile,
@@ -119,7 +125,7 @@ describe('buildAntonPrompt', () => {
       retryContext: 'Previous attempt failed due to syntax error',
       vault: undefined,
       lens: undefined,
-      maxContextTokens: 1000
+      maxContextTokens: 1000,
     };
 
     const prompt = await buildAntonPrompt(opts);
@@ -132,7 +138,7 @@ describe('buildAntonPrompt', () => {
   it('should include decompose instructions when enabled, omit when disabled', async () => {
     const task = createTestTask();
     const taskFile = createTestTaskFile();
-    
+
     // Test with decompose enabled
     const configEnabled = createTestConfig({ decompose: true, maxDecomposeDepth: 3 });
     const optsEnabled: AntonPromptOpts = {
@@ -144,7 +150,7 @@ describe('buildAntonPrompt', () => {
       retryContext: undefined,
       vault: undefined,
       lens: undefined,
-      maxContextTokens: 1000
+      maxContextTokens: 1000,
     };
 
     const promptEnabled = await buildAntonPrompt(optsEnabled);
@@ -155,7 +161,7 @@ describe('buildAntonPrompt', () => {
     const configDisabled = createTestConfig({ decompose: false });
     const optsDisabled: AntonPromptOpts = {
       ...optsEnabled,
-      config: configDisabled
+      config: configDisabled,
     };
 
     const promptDisabled = await buildAntonPrompt(optsDisabled);
@@ -169,7 +175,7 @@ describe('buildAntonPrompt', () => {
     const task = createTestTask({ children: [child1, child2] });
     const taskFile = createTestTaskFile();
     const config = createTestConfig();
-    
+
     const opts: AntonPromptOpts = {
       task,
       taskFile,
@@ -179,7 +185,7 @@ describe('buildAntonPrompt', () => {
       retryContext: undefined,
       vault: undefined,
       lens: undefined,
-      maxContextTokens: 1000
+      maxContextTokens: 1000,
     };
 
     const prompt = await buildAntonPrompt(opts);
@@ -191,20 +197,20 @@ describe('buildAntonPrompt', () => {
 
   it('should respect token budget for vault results', async () => {
     const mockVault = new MockVaultStore();
-    
+
     // Create large mock results
     const largeResults = [
       { id: 'file1', content: 'x'.repeat(2000), key: 'large-file-1.ts' },
       { id: 'file2', content: 'y'.repeat(2000), key: 'large-file-2.ts' },
-      { id: 'file3', content: 'z'.repeat(2000), key: 'large-file-3.ts' }
+      { id: 'file3', content: 'z'.repeat(2000), key: 'large-file-3.ts' },
     ];
-    
+
     mockVault.setSearchResults(largeResults);
 
     const task = createTestTask({ text: 'implement file parsing' });
     const taskFile = createTestTaskFile();
     const config = createTestConfig();
-    
+
     const opts: AntonPromptOpts = {
       task,
       taskFile,
@@ -214,11 +220,11 @@ describe('buildAntonPrompt', () => {
       retryContext: undefined,
       vault: mockVault as any,
       lens: undefined,
-      maxContextTokens: 100 // Very small budget
+      maxContextTokens: 100, // Very small budget
     };
 
     const prompt = await buildAntonPrompt(opts);
-    
+
     // Should not include all the large content due to token budget
     const tokenUsage = Math.ceil(prompt.length / 4); // Rough estimate
     assert.ok(tokenUsage < 5000, 'Prompt should respect token budget');
@@ -276,7 +282,7 @@ subtasks:
     assert.deepEqual(result.subtasks, [
       'Implement parser module',
       'Add validation logic',
-      'Write unit tests'
+      'Write unit tests',
     ]);
   });
 

@@ -1,5 +1,13 @@
 import type { Message } from 'discord.js';
-import type { ApprovalMode, AgentPersona, AgentRouting, BotDiscordConfig, ModelEscalation } from '../types.js';
+
+import type {
+  ApprovalMode,
+  AgentPersona,
+  AgentRouting,
+  BotDiscordConfig,
+  ModelEscalation,
+} from '../types.js';
+
 import { sanitizeBotOutputText } from './format.js';
 
 export function parseAllowedUsers(cfg: BotDiscordConfig): Set<string> {
@@ -9,7 +17,7 @@ export function parseAllowedUsers(cfg: BotDiscordConfig): Set<string> {
       fromEnv
         .split(',')
         .map((s) => s.trim())
-        .filter(Boolean),
+        .filter(Boolean)
     );
   }
 
@@ -17,8 +25,13 @@ export function parseAllowedUsers(cfg: BotDiscordConfig): Set<string> {
   return new Set(values.map((v) => String(v).trim()).filter(Boolean));
 }
 
-export function normalizeApprovalMode(mode: string | undefined, fallback: ApprovalMode): ApprovalMode {
-  const m = String(mode ?? '').trim().toLowerCase();
+export function normalizeApprovalMode(
+  mode: string | undefined,
+  fallback: ApprovalMode
+): ApprovalMode {
+  const m = String(mode ?? '')
+    .trim()
+    .toLowerCase();
   if (m === 'plan' || m === 'default' || m === 'auto-edit' || m === 'yolo') return m;
   return fallback;
 }
@@ -61,9 +74,31 @@ export function detectEscalation(text: string): { escalate: boolean; reason?: st
 
 /** Keyword presets for common escalation triggers */
 const KEYWORD_PRESETS: Record<string, string[]> = {
-  coding: ['build', 'implement', 'create', 'develop', 'architect', 'refactor', 'debug', 'fix', 'code', 'program', 'write'],
+  coding: [
+    'build',
+    'implement',
+    'create',
+    'develop',
+    'architect',
+    'refactor',
+    'debug',
+    'fix',
+    'code',
+    'program',
+    'write',
+  ],
   planning: ['plan', 'design', 'roadmap', 'strategy', 'analyze', 'research', 'evaluate', 'compare'],
-  complex: ['full', 'complete', 'comprehensive', 'multi-step', 'integrate', 'migration', 'overhaul', 'entire', 'whole'],
+  complex: [
+    'full',
+    'complete',
+    'comprehensive',
+    'multi-step',
+    'integrate',
+    'migration',
+    'overhaul',
+    'entire',
+    'whole',
+  ],
 };
 
 /**
@@ -154,7 +189,7 @@ export function checkKeywordEscalation(
     return {
       escalate: true,
       tier: 0,
-      reason: `keyword match: ${matched.slice(0, 3).join(', ')}${matched.length > 3 ? '...' : ''}`
+      reason: `keyword match: ${matched.slice(0, 3).join(', ')}${matched.length > 3 ? '...' : ''}`,
     };
   }
 

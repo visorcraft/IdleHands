@@ -9,9 +9,17 @@
  */
 
 import type { Bot } from 'grammy';
-import type { ConfirmationProvider, ConfirmRequest, ConfirmPlanRequest, PlanDecision, BlockedNotice } from '../types.js';
-import { escapeHtml } from './format.js';
+
+import type {
+  ConfirmationProvider,
+  ConfirmRequest,
+  ConfirmPlanRequest,
+  PlanDecision,
+  BlockedNotice,
+} from '../types.js';
 import { randomId } from '../utils.js';
+
+import { escapeHtml } from './format.js';
 
 type PendingSingle = {
   kind: 'single';
@@ -42,7 +50,7 @@ type PendingBatch = {
   timer: ReturnType<typeof setTimeout>;
   messageId: number;
   settled: boolean;
-  decisions: Map<number, boolean>;  // per-item toggle state
+  decisions: Map<number, boolean>; // per-item toggle state
 };
 
 export class TelegramConfirmProvider implements ConfirmationProvider {
@@ -58,7 +66,7 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
   constructor(
     private bot: Bot,
     private chatId: number,
-    private timeoutSec: number = 300,
+    private timeoutSec: number = 300
   ) {
     this.sid = randomId(3);
   }
@@ -68,7 +76,10 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
     return new Promise<boolean>((resolve) => {
       this.batchQueue.push({ opts, resolve });
       if (!this.batchFlushTimer) {
-        this.batchFlushTimer = setTimeout(() => this.flushBatch(), TelegramConfirmProvider.BATCH_WINDOW_MS);
+        this.batchFlushTimer = setTimeout(
+          () => this.flushBatch(),
+          TelegramConfirmProvider.BATCH_WINDOW_MS
+        );
       }
     });
   }
@@ -86,7 +97,10 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
     await this.confirmBatched(items);
   }
 
-  private async confirmSingle(opts: ConfirmRequest, resolve: (approved: boolean) => void): Promise<void> {
+  private async confirmSingle(
+    opts: ConfirmRequest,
+    resolve: (approved: boolean) => void
+  ): Promise<void> {
     const aid = this.nextId();
     const title = `🔧 Agent requests approval`;
     const body = [
@@ -135,8 +149,11 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
   private async confirmBatched(items: BatchItem[]): Promise<void> {
     const aid = this.nextId();
     const icons: Record<string, string> = {
-      edit_file: '✎', write_file: '✎', insert_file: '✎',
-      exec: '▶', default: '◆',
+      edit_file: '✎',
+      write_file: '✎',
+      insert_file: '✎',
+      exec: '▶',
+      default: '◆',
     };
     const lines = [
       `<b>🔧 Agent wants to make ${items.length} changes:</b>`,
@@ -171,7 +188,10 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
       if (!p || p.settled) return;
       p.settled = true;
       this.pending.delete(aid);
-      await this.safeEdit(msg.message_id, `${lines.join('\n')}\n\n⏱ <i>Timed out — rejected all</i>`);
+      await this.safeEdit(
+        msg.message_id,
+        `${lines.join('\n')}\n\n⏱ <i>Timed out — rejected all</i>`
+      );
       for (const it of items) it.resolve(false);
     }, this.timeoutSec * 1000);
 
@@ -187,7 +207,11 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
 
   async confirmPlan(opts: ConfirmPlanRequest): Promise<PlanDecision[]> {
     const aid = this.nextId();
-    const lines = [`<b>📋 Plan approval requested</b>`, '', ...opts.steps.map((s, i) => `${i + 1}. ${escapeHtml(s.summary)}`)];
+    const lines = [
+      `<b>📋 Plan approval requested</b>`,
+      '',
+      ...opts.steps.map((s, i) => `${i + 1}. ${escapeHtml(s.summary)}`),
+    ];
 
     const msg = await this.bot.api.sendMessage(this.chatId, lines.join('\n'), {
       parse_mode: 'HTML',
@@ -198,7 +222,10 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
             { text: '❌ Reject All', callback_data: this.cb('p', aid, 'ra') },
           ],
           opts.steps.length > 0
-            ? opts.steps.slice(0, 5).map((_, i) => ({ text: `▶️ #${i + 1}`, callback_data: this.cb('p', aid, `s${i + 1}`) }))
+            ? opts.steps.slice(0, 5).map((_, i) => ({
+                text: `▶️ #${i + 1}`,
+                callback_data: this.cb('p', aid, `s${i + 1}`),
+              }))
             : [{ text: '—', callback_data: this.cb('p', aid, 'ra') }],
         ],
       },
@@ -210,7 +237,10 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
         if (!p || p.settled) return;
         p.settled = true;
         this.pending.delete(aid);
-        await this.safeEdit(msg.message_id, `${lines.join('\n')}\n\n⏱ <i>Timed out — rejected all</i>`);
+        await this.safeEdit(
+          msg.message_id,
+          `${lines.join('\n')}\n\n⏱ <i>Timed out — rejected all</i>`
+        );
         resolve(opts.steps.map((_, i) => ({ index: i, approved: false })));
       }, this.timeoutSec * 1000);
 
@@ -226,9 +256,15 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
   }
 
   async showBlocked(opts: BlockedNotice): Promise<void> {
-    await this.bot.api.sendMessage(this.chatId, `🚫 Blocked: <code>${escapeHtml(opts.tool)}</code> — ${escapeHtml(opts.reason)}`, {
-      parse_mode: 'HTML',
-    }).catch(() => {});
+    await this.bot.api
+      .sendMessage(
+        this.chatId,
+        `🚫 Blocked: <code>${escapeHtml(opts.tool)}</code> — ${escapeHtml(opts.reason)}`,
+        {
+          parse_mode: 'HTML',
+        }
+      )
+      .catch(() => {});
   }
 
   /** Handle callback query data. Returns true if handled by this provider. */
@@ -246,7 +282,13 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
     if (pending.kind === 'single' && kind === 'c') {
       if (action === 'd') {
         if (pending.opts.diff) {
-          await this.bot.api.sendMessage(this.chatId, `<pre>${escapeHtml(pending.opts.diff).slice(0, 4000)}</pre>`, { parse_mode: 'HTML' }).catch(() => {});
+          await this.bot.api
+            .sendMessage(
+              this.chatId,
+              `<pre>${escapeHtml(pending.opts.diff).slice(0, 4000)}</pre>`,
+              { parse_mode: 'HTML' }
+            )
+            .catch(() => {});
         }
         return true; // keep pending open
       }
@@ -254,7 +296,10 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
       clearTimeout(pending.timer);
       this.pending.delete(aid);
       const approved = action === 'a';
-      await this.safeEdit(pending.messageId, `🔧 <b>Action ${approved ? 'approved' : 'rejected'}</b>\n${escapeHtml(pending.opts.summary)}`);
+      await this.safeEdit(
+        pending.messageId,
+        `🔧 <b>Action ${approved ? 'approved' : 'rejected'}</b>\n${escapeHtml(pending.opts.summary)}`
+      );
       pending.resolve(approved);
       return true;
     }
@@ -265,7 +310,10 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
         pending.settled = true;
         clearTimeout(pending.timer);
         this.pending.delete(aid);
-        await this.safeEdit(pending.messageId, `🔧 <b>All ${pending.items.length} actions approved</b>`);
+        await this.safeEdit(
+          pending.messageId,
+          `🔧 <b>All ${pending.items.length} actions approved</b>`
+        );
         for (const it of pending.items) it.resolve(true);
         return true;
       }
@@ -274,7 +322,10 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
         pending.settled = true;
         clearTimeout(pending.timer);
         this.pending.delete(aid);
-        await this.safeEdit(pending.messageId, `🔧 <b>All ${pending.items.length} actions rejected</b>`);
+        await this.safeEdit(
+          pending.messageId,
+          `🔧 <b>All ${pending.items.length} actions rejected</b>`
+        );
         for (const it of pending.items) it.resolve(false);
         return true;
       }
@@ -330,10 +381,12 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
   }
 
   private async safeEdit(messageId: number, text: string): Promise<void> {
-    await this.bot.api.editMessageText(this.chatId, messageId, text, {
-      parse_mode: 'HTML',
-      reply_markup: { inline_keyboard: [] },
-    }).catch(() => {});
+    await this.bot.api
+      .editMessageText(this.chatId, messageId, text, {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: [] },
+      })
+      .catch(() => {});
   }
 }
 

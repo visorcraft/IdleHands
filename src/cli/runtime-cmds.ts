@@ -1,8 +1,8 @@
-import path from 'node:path';
-import readline from 'node:readline/promises';
-import { stdin as input, stdout as output } from 'node:process';
 import { spawnSync } from 'node:child_process';
-import type { RuntimeBackend, RuntimeHost, RuntimeModel } from '../runtime/types.js';
+import path from 'node:path';
+import { stdin as input, stdout as output } from 'node:process';
+import readline from 'node:readline/promises';
+
 import { probeModelsEndpoint, waitForModelsReady } from '../runtime/health.js';
 import {
   loadRuntimes,
@@ -12,7 +12,9 @@ import {
   bootstrapRuntimes,
   interpolateTemplate,
 } from '../runtime/store.js';
+import type { RuntimeBackend, RuntimeHost, RuntimeModel } from '../runtime/types.js';
 import { configDir, shellEscape } from '../utils.js';
+
 import { firstToken } from './command-utils.js';
 
 function runtimesFilePath(): string {
@@ -37,7 +39,10 @@ async function ask(rl: readline.Interface, prompt: string, fallback = ''): Promi
   return ans || fallback;
 }
 
-function runLocalCommand(command: string, timeoutSec = 5): { ok: boolean; code: number | null; stdout: string; stderr: string } {
+function runLocalCommand(
+  command: string,
+  timeoutSec = 5
+): { ok: boolean; code: number | null; stdout: string; stderr: string } {
   const p = spawnSync('bash', ['-lc', command], { encoding: 'utf8', timeout: timeoutSec * 1000 });
   return {
     ok: p.status === 0,
@@ -47,15 +52,15 @@ function runLocalCommand(command: string, timeoutSec = 5): { ok: boolean; code: 
   };
 }
 
-function runHostCommand(host: RuntimeHost, command: string, timeoutSec = 5): { ok: boolean; code: number | null; stdout: string; stderr: string } {
+function runHostCommand(
+  host: RuntimeHost,
+  command: string,
+  timeoutSec = 5
+): { ok: boolean; code: number | null; stdout: string; stderr: string } {
   if (host.transport === 'local') return runLocalCommand(command, timeoutSec);
 
   const target = `${host.connection.user ? `${host.connection.user}@` : ''}${host.connection.host ?? ''}`;
-  const sshParts = [
-    'ssh',
-    '-o', 'BatchMode=yes',
-    '-o', `ConnectTimeout=${timeoutSec}`,
-  ];
+  const sshParts = ['ssh', '-o', 'BatchMode=yes', '-o', `ConnectTimeout=${timeoutSec}`];
   if (host.connection.port) sshParts.push('-p', String(host.connection.port));
   if (host.connection.key_path) sshParts.push('-i', shellEscape(host.connection.key_path));
   sshParts.push(shellEscape(target), '--', 'bash', '-lc', shellEscape(command));
@@ -64,7 +69,9 @@ function runHostCommand(host: RuntimeHost, command: string, timeoutSec = 5): { o
 }
 
 function usage(kind: 'hosts' | 'backends' | 'models'): void {
-  console.log(`Usage:\n  idlehands ${kind}\n  idlehands ${kind} show <id>\n  idlehands ${kind} add\n  idlehands ${kind} edit <id>\n  idlehands ${kind} remove <id>\n  idlehands ${kind} validate\n  idlehands ${kind} test <id>\n  idlehands ${kind} doctor`);
+  console.log(
+    `Usage:\n  idlehands ${kind}\n  idlehands ${kind} show <id>\n  idlehands ${kind} add\n  idlehands ${kind} edit <id>\n  idlehands ${kind} remove <id>\n  idlehands ${kind} validate\n  idlehands ${kind} test <id>\n  idlehands ${kind} doctor`
+  );
 }
 
 export async function runHostsSubcommand(args: any, _config: any): Promise<void> {
@@ -104,7 +111,10 @@ export async function runHostsSubcommand(args: any, _config: any): Promise<void>
         id: await ask(rl, 'Host id (e.g. local-main)'),
         display_name: await ask(rl, 'Display name'),
         enabled: (await ask(rl, 'Enabled (y/n)', 'y')).toLowerCase().startsWith('y'),
-        transport: ((await ask(rl, 'Transport (local/ssh)', 'local')).toLowerCase() === 'ssh' ? 'ssh' : 'local'),
+        transport:
+          (await ask(rl, 'Transport (local/ssh)', 'local')).toLowerCase() === 'ssh'
+            ? 'ssh'
+            : 'local',
         connection: {
           host: undefined,
           port: undefined,
@@ -113,12 +123,18 @@ export async function runHostsSubcommand(args: any, _config: any): Promise<void>
           password: undefined,
         },
         capabilities: {
-          gpu: (await ask(rl, 'GPU tags (comma-separated)', '')).split(',').map((s) => s.trim()).filter(Boolean),
+          gpu: (await ask(rl, 'GPU tags (comma-separated)', ''))
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean),
           vram_gb: (() => {
             const raw = args['vram-gb'] ?? undefined;
             return raw == null ? undefined : Number(raw);
           })(),
-          backends: (await ask(rl, 'Supported backends (comma-separated)', '')).split(',').map((s) => s.trim()).filter(Boolean),
+          backends: (await ask(rl, 'Supported backends (comma-separated)', ''))
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean),
         },
         health: {
           check_cmd: await ask(rl, 'Health check command', 'true'),
@@ -241,7 +257,10 @@ export async function runHostsSubcommand(args: any, _config: any): Promise<void>
       });
       const commandToken = firstToken(checkCmd);
       if (commandToken) {
-        const checkBin = runLocalCommand(`command -v ${shellEscape(commandToken)} >/dev/null 2>&1`, 3);
+        const checkBin = runLocalCommand(
+          `command -v ${shellEscape(commandToken)} >/dev/null 2>&1`,
+          3
+        );
         if (!checkBin.ok) problems.push(`[${host.id}] missing local binary: ${commandToken}`);
       }
     }
@@ -265,13 +284,15 @@ export async function runBackendsSubcommand(args: any, _config: any): Promise<vo
   const runtimes = await loadRuntimes();
 
   if (!cmd) {
-    printList(runtimes.backends.map((b) => ({
-      id: b.id,
-      name: b.display_name,
-      enabled: b.enabled,
-      type: b.type,
-      host_filters: b.host_filters === 'any' ? 'any' : b.host_filters.join(','),
-    })));
+    printList(
+      runtimes.backends.map((b) => ({
+        id: b.id,
+        name: b.display_name,
+        enabled: b.enabled,
+        type: b.type,
+        host_filters: b.host_filters === 'any' ? 'any' : b.host_filters.join(','),
+      }))
+    );
     return;
   }
 
@@ -291,10 +312,19 @@ export async function runBackendsSubcommand(args: any, _config: any): Promise<vo
         id: await ask(rl, 'Backend id'),
         display_name: await ask(rl, 'Display name'),
         enabled: (await ask(rl, 'Enabled (y/n)', 'y')).toLowerCase().startsWith('y'),
-        type: (await ask(rl, 'Type (vulkan|rocm|cuda|metal|cpu|custom)', 'custom')) as RuntimeBackend['type'],
+        type: (await ask(
+          rl,
+          'Type (vulkan|rocm|cuda|metal|cpu|custom)',
+          'custom'
+        )) as RuntimeBackend['type'],
         host_filters: (() => {
           const raw = (args.hosts ?? '').toString();
-          return raw ? raw.split(',').map((s: string) => s.trim()).filter(Boolean) : 'any';
+          return raw
+            ? raw
+                .split(',')
+                .map((s: string) => s.trim())
+                .filter(Boolean)
+            : 'any';
         })(),
         apply_cmd: await ask(rl, 'Apply command (optional)', ''),
         verify_cmd: await ask(rl, 'Verify command (optional)', ''),
@@ -303,7 +333,13 @@ export async function runBackendsSubcommand(args: any, _config: any): Promise<vo
         args: undefined,
       };
       const filters = await ask(rl, 'Host filters (any or comma-separated ids)', 'any');
-      backend.host_filters = filters === 'any' ? 'any' : filters.split(',').map((s) => s.trim()).filter(Boolean);
+      backend.host_filters =
+        filters === 'any'
+          ? 'any'
+          : filters
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean);
       if (!backend.apply_cmd) backend.apply_cmd = null;
       if (!backend.verify_cmd) backend.verify_cmd = null;
       if (!backend.rollback_cmd) backend.rollback_cmd = null;
@@ -366,8 +402,14 @@ export async function runBackendsSubcommand(args: any, _config: any): Promise<vo
     const cmdText = interpolateTemplate(backend.verify_cmd, {
       backend_id: backend.id,
       backend_args: (backend.args ?? []).join(' '),
-      backend_env: Object.entries(backend.env ?? {}).map(([k, v]) => `${k}=${v}`).join(' '),
-      host: '', host_id: '', model_id: '', source: '', port: '',
+      backend_env: Object.entries(backend.env ?? {})
+        .map(([k, v]) => `${k}=${v}`)
+        .join(' '),
+      host: '',
+      host_id: '',
+      model_id: '',
+      source: '',
+      port: '',
     });
     const res = runLocalCommand(cmdText, 8);
     console.log(`[${backend.id}] ${res.ok ? 'OK' : 'FAIL'} (exit=${res.code ?? -1})`);
@@ -408,14 +450,16 @@ export async function runModelsSubcommand(args: any, _config: any): Promise<void
   const runtimes = await loadRuntimes();
 
   if (!cmd) {
-    printList(runtimes.models.map((m) => ({
-      id: m.id,
-      name: m.display_name,
-      enabled: m.enabled,
-      source: m.source,
-      hosts: m.host_policy === 'any' ? 'any' : m.host_policy.join(','),
-      backends: m.backend_policy === 'any' ? 'any' : m.backend_policy.join(','),
-    })));
+    printList(
+      runtimes.models.map((m) => ({
+        id: m.id,
+        name: m.display_name,
+        enabled: m.enabled,
+        source: m.source,
+        hosts: m.host_policy === 'any' ? 'any' : m.host_policy.join(','),
+        backends: m.backend_policy === 'any' ? 'any' : m.backend_policy.join(','),
+      }))
+    );
     return;
   }
 
@@ -456,7 +500,11 @@ export async function runModelsSubcommand(args: any, _config: any): Promise<void
           (b) => b.type === 'rocm' && b.args?.some((a) => a === rpcAddr)
         );
         if (!existingBackend) {
-          const createBackend = (await ask(rl, `Create RPC backend '${rpcBackendName}'? (y/n)`, 'y')).toLowerCase().startsWith('y');
+          const createBackend = (
+            await ask(rl, `Create RPC backend '${rpcBackendName}'? (y/n)`, 'y')
+          )
+            .toLowerCase()
+            .startsWith('y');
           if (createBackend) {
             existingBackend = {
               id: rpcBackendName,
@@ -468,7 +516,18 @@ export async function runModelsSubcommand(args: any, _config: any): Promise<void
               verify_cmd: 'rocminfo >/dev/null 2>&1',
               rollback_cmd: null,
               env: { ROCBLAS_USE_HIPBLASLT: '1' },
-              args: ['-ngl', '99', '-fa', 'on', '--rpc', rpcAddr, '-ts', tsRatio, '-dio', '--no-warmup'],
+              args: [
+                '-ngl',
+                '99',
+                '-fa',
+                'on',
+                '--rpc',
+                rpcAddr,
+                '-ts',
+                tsRatio,
+                '-dio',
+                '--no-warmup',
+              ],
             };
             runtimes.backends.push(existingBackend);
             console.log(`  Created RPC backend: ${rpcBackendName}`);
@@ -479,11 +538,14 @@ export async function runModelsSubcommand(args: any, _config: any): Promise<void
         rpcBackendId = existingBackend?.id;
 
         // Size-aware probe defaults for RPC models (large models take minutes to load)
-        rpcProbeTimeout = Number(await ask(rl, 'Probe timeout sec (large RPC models need 300-7200)', '3600'));
+        rpcProbeTimeout = Number(
+          await ask(rl, 'Probe timeout sec (large RPC models need 300-7200)', '3600')
+        );
         rpcProbeInterval = Number(await ask(rl, 'Probe interval ms', '5000'));
 
         // Default start_cmd with -dio baked in (backend_args already includes it from the RPC backend)
-        startCmdDefault = 'nohup env {backend_env} llama-server -m {source} --port {port} --ctx-size 4096 {backend_args} --host 0.0.0.0 > /tmp/llama-server.log 2>&1 &';
+        startCmdDefault =
+          'nohup env {backend_env} llama-server -m {source} --port {port} --ctx-size 4096 {backend_args} --host 0.0.0.0 > /tmp/llama-server.log 2>&1 &';
       }
 
       const model: RuntimeModel = {
@@ -516,8 +578,20 @@ export async function runModelsSubcommand(args: any, _config: any): Promise<void
       } else {
         const hp = await ask(rl, 'Host policy (any or comma-separated ids)', 'any');
         const bp = await ask(rl, 'Backend policy (any or comma-separated ids)', 'any');
-        model.host_policy = hp === 'any' ? 'any' : hp.split(',').map((s) => s.trim()).filter(Boolean);
-        model.backend_policy = bp === 'any' ? 'any' : bp.split(',').map((s) => s.trim()).filter(Boolean);
+        model.host_policy =
+          hp === 'any'
+            ? 'any'
+            : hp
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
+        model.backend_policy =
+          bp === 'any'
+            ? 'any'
+            : bp
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
       }
 
       await saveRuntimes({ ...runtimes, models: [...runtimes.models, model] });
@@ -573,19 +647,27 @@ export async function runModelsSubcommand(args: any, _config: any): Promise<void
     const model = runtimes.models.find((m) => m.id === id);
     if (!model) throw new Error(`model not found: ${id}`);
 
-    const host = model.host_policy === 'any'
-      ? runtimes.hosts.find((h) => h.enabled)
-      : model.host_policy.map((hid) => runtimes.hosts.find((h) => h.id === hid && h.enabled)).find(Boolean);
+    const host =
+      model.host_policy === 'any'
+        ? runtimes.hosts.find((h) => h.enabled)
+        : model.host_policy
+            .map((hid) => runtimes.hosts.find((h) => h.id === hid && h.enabled))
+            .find(Boolean);
     if (!host) throw new Error(`no eligible host for model: ${model.id}`);
 
-    const backend = model.backend_policy === 'any'
-      ? runtimes.backends.find((b) => b.enabled)
-      : model.backend_policy.map((bid) => runtimes.backends.find((b) => b.id === bid && b.enabled)).find(Boolean);
+    const backend =
+      model.backend_policy === 'any'
+        ? runtimes.backends.find((b) => b.enabled)
+        : model.backend_policy
+            .map((bid) => runtimes.backends.find((b) => b.id === bid && b.enabled))
+            .find(Boolean);
 
     const port = model.runtime_defaults?.port ?? 8080;
     const backendArgs = backend?.args?.map((a) => shellEscape(a)).join(' ') ?? '';
     const backendEnv = backend?.env
-      ? Object.entries(backend.env).map(([k, v]) => `${k}=${shellEscape(String(v))}`).join(' ')
+      ? Object.entries(backend.env)
+          .map(([k, v]) => `${k}=${shellEscape(String(v))}`)
+          .join(' ')
       : '';
 
     const cmdText = interpolateTemplate(model.launch.probe_cmd, {
@@ -614,10 +696,13 @@ export async function runModelsSubcommand(args: any, _config: any): Promise<void
     for (const m of runtimes.models) {
       if (!m.enabled) continue;
       if (m.host_policy !== 'any') {
-        for (const h of m.host_policy) if (!hostIds.has(h)) problems.push(`[${m.id}] unknown host in host_policy: ${h}`);
+        for (const h of m.host_policy)
+          if (!hostIds.has(h)) problems.push(`[${m.id}] unknown host in host_policy: ${h}`);
       }
       if (m.backend_policy !== 'any') {
-        for (const b of m.backend_policy) if (!backendIds.has(b)) problems.push(`[${m.id}] unknown backend in backend_policy: ${b}`);
+        for (const b of m.backend_policy)
+          if (!backendIds.has(b))
+            problems.push(`[${m.id}] unknown backend in backend_policy: ${b}`);
       }
       for (const c of [m.launch.start_cmd, m.launch.probe_cmd]) {
         const token = firstToken(c);
@@ -637,8 +722,10 @@ export async function runModelsSubcommand(args: any, _config: any): Promise<void
   usage('models');
 }
 
-
-function deriveProbeDefaultsFromSizeGiB(sizeGiB: number): { timeoutSec: number; intervalMs: number } {
+function deriveProbeDefaultsFromSizeGiB(sizeGiB: number): {
+  timeoutSec: number;
+  intervalMs: number;
+} {
   if (!Number.isFinite(sizeGiB) || sizeGiB <= 0) return { timeoutSec: 60, intervalMs: 1000 };
   if (sizeGiB <= 10) return { timeoutSec: 120, intervalMs: 1000 };
   if (sizeGiB <= 40) return { timeoutSec: 300, intervalMs: 1200 };
@@ -650,7 +737,11 @@ function deriveProbeDefaultsFromSizeGiB(sizeGiB: number): { timeoutSec: number; 
 async function estimateModelSizeGiBOnHost(
   modelSource: string,
   _host: RuntimeHost,
-  _runOnHost: (command: string, host: RuntimeHost, timeoutMs: number) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
+  _runOnHost: (
+    command: string,
+    host: RuntimeHost,
+    timeoutMs: number
+  ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
 ): Promise<number | null> {
   const src = modelSource.toLowerCase();
 
@@ -674,7 +765,11 @@ async function estimateModelSizeGiBOnHost(
 async function applyDynamicProbeDefaults(
   result: any,
   rtConfig: { hosts: RuntimeHost[]; models: RuntimeModel[] },
-  runOnHost: (command: string, host: RuntimeHost, timeoutMs: number) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
+  runOnHost: (
+    command: string,
+    host: RuntimeHost,
+    timeoutMs: number
+  ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
 ): Promise<void> {
   if (!result?.ok || !Array.isArray(result?.steps)) return;
 
@@ -695,7 +790,7 @@ async function applyDynamicProbeDefaults(
 
   const d = deriveProbeDefaultsFromSizeGiB(sizeGiB);
   for (const step of result.steps) {
-    if (step.kind !== "probe_health") continue;
+    if (step.kind !== 'probe_health') continue;
     if (!hasExplicitTimeout) step.timeout_sec = d.timeoutSec;
     if (!hasExplicitInterval) step.probe_interval_ms = d.intervalMs;
   }
@@ -735,10 +830,13 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
   const forceRestart = force || restart;
   const waitReady = !!(args['wait-ready'] ?? args.wait_ready);
   const waitTimeoutSecRaw = Number(args['wait-timeout'] ?? args.wait_timeout ?? args.timeout ?? 0);
-  const waitTimeoutSec = Number.isFinite(waitTimeoutSecRaw) && waitTimeoutSecRaw > 0 ? waitTimeoutSecRaw : undefined;
+  const waitTimeoutSec =
+    Number.isFinite(waitTimeoutSecRaw) && waitTimeoutSecRaw > 0 ? waitTimeoutSecRaw : undefined;
 
   if (!modelId) {
-    console.log('Usage: idlehands select --model <id> [--backend <id>] [--host <id>] [--dry-run] [--json] [--force] [--restart] [--wait-ready] [--wait-timeout <sec>]');
+    console.log(
+      'Usage: idlehands select --model <id> [--backend <id>] [--host <id>] [--dry-run] [--json] [--force] [--restart] [--wait-ready] [--wait-timeout <sec>]'
+    );
     console.log('       idlehands select status');
     return;
   }
@@ -748,9 +846,13 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
 
   const rtConfig = await loadRuntimes();
   const active = await loadActiveRuntime();
-  const mode = dryRun ? 'dry-run' as const : 'live' as const;
+  const mode = dryRun ? ('dry-run' as const) : ('live' as const);
 
-  const result = plan({ modelId, backendOverride, hostOverride, mode, forceRestart }, rtConfig, active);
+  const result = plan(
+    { modelId, backendOverride, hostOverride, mode, forceRestart },
+    rtConfig,
+    active
+  );
 
   await applyDynamicProbeDefaults(result, rtConfig, runOnHost);
 
@@ -783,27 +885,32 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
   const rl = await import('node:readline/promises');
   const iface = rl.createInterface({ input: process.stdin, output: process.stdout });
 
-  const executeWithRenderer = async (planResult: typeof result) => execute(planResult, {
-    onStep: (step, status, detail) => {
-      if (status === 'start') {
-        process.stdout.write(`  ${step.description}...`);
-      } else if (status === 'done') {
-        process.stdout.write(' ✓\n');
-      } else if (status === 'error') {
-        process.stdout.write(' ✗\n');
-        if (detail) {
-          for (const line of detail.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 6)) {
-            process.stdout.write(`    ${line}\n`);
+  const executeWithRenderer = async (planResult: typeof result) =>
+    execute(planResult, {
+      onStep: (step, status, detail) => {
+        if (status === 'start') {
+          process.stdout.write(`  ${step.description}...`);
+        } else if (status === 'done') {
+          process.stdout.write(' ✓\n');
+        } else if (status === 'error') {
+          process.stdout.write(' ✗\n');
+          if (detail) {
+            for (const line of detail
+              .split('\n')
+              .map((l) => l.trim())
+              .filter(Boolean)
+              .slice(0, 6)) {
+              process.stdout.write(`    ${line}\n`);
+            }
           }
         }
-      }
-    },
-    confirm: async (prompt) => {
-      const ans = (await iface.question(`${prompt} [y/N] `)).trim().toLowerCase();
-      return ans === 'y' || ans === 'yes';
-    },
-    force,
-  });
+      },
+      confirm: async (prompt) => {
+        const ans = (await iface.question(`${prompt} [y/N] `)).trim().toLowerCase();
+        return ans === 'y' || ans === 'yes';
+      },
+      force,
+    });
 
   let executedPlan = result;
   let execResult = await executeWithRenderer(result);
@@ -811,7 +918,11 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
   // Reuse-probe fallback: if reuse validation fails, force restart automatically.
   if (!execResult.ok && result.reuse && !forceRestart) {
     console.error('Reuse health check failed. Retrying with forced restart...');
-    const restartPlan = plan({ modelId, backendOverride, hostOverride, mode: 'live', forceRestart: true }, rtConfig, active);
+    const restartPlan = plan(
+      { modelId, backendOverride, hostOverride, mode: 'live', forceRestart: true },
+      rtConfig,
+      active
+    );
     if (restartPlan.ok) {
       executedPlan = restartPlan;
       await applyDynamicProbeDefaults(restartPlan, rtConfig, runOnHost);
@@ -819,11 +930,19 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
     }
   }
 
-  const readyChecks: Array<{ hostId: string; ok: boolean; attempts: number; reason?: string; status?: string; httpCode?: number | null; modelIds?: string[] }> = [];
+  const readyChecks: Array<{
+    hostId: string;
+    ok: boolean;
+    attempts: number;
+    reason?: string;
+    status?: string;
+    httpCode?: number | null;
+    modelIds?: string[];
+  }> = [];
   let readyOk = true;
 
   if (execResult.ok && waitReady) {
-    const timeoutSec = waitTimeoutSec ?? (executedPlan.model.launch.probe_timeout_sec ?? 60);
+    const timeoutSec = waitTimeoutSec ?? executedPlan.model.launch.probe_timeout_sec ?? 60;
     for (const resolvedHost of executedPlan.hosts) {
       const hostCfg = rtConfig.hosts.find((h) => h.id === resolvedHost.id);
       if (!hostCfg) continue;
@@ -858,10 +977,16 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
   iface.close();
 
   if (jsonOut) {
-    console.log(JSON.stringify({
-      execute: execResult,
-      waitReady: waitReady ? { ok: readyOk, checks: readyChecks } : undefined,
-    }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          execute: execResult,
+          waitReady: waitReady ? { ok: readyOk, checks: readyChecks } : undefined,
+        },
+        null,
+        2
+      )
+    );
   } else if (execResult.ok) {
     if (execResult.reused) {
       console.log('Runtime already active and healthy. No changes needed.');
@@ -925,7 +1050,10 @@ export async function runHealthSubcommand(args: any, _config: any): Promise<void
     }
 
     if (trimmed.includes(',')) {
-      const parts = trimmed.split(',').map((s) => s.trim()).filter(Boolean);
+      const parts = trimmed
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
       const ports = parts.map(Number).filter((p) => Number.isFinite(p) && p >= 1 && p <= 65535);
       return ports.length > 0 ? ports : null;
     }
@@ -947,20 +1075,43 @@ export async function runHealthSubcommand(args: any, _config: any): Promise<void
   const report = {
     ok: true,
     generatedAt: new Date().toISOString(),
-    hosts: [] as Array<{ id: string; ok: boolean; exitCode: number; stdout: string; stderr: string }>,
-    configuredModels: [] as Array<{ modelId: string; hostId: string; ok: boolean; exitCode: number; detail: string }>,
+    hosts: [] as Array<{
+      id: string;
+      ok: boolean;
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+    }>,
+    configuredModels: [] as Array<{
+      modelId: string;
+      hostId: string;
+      ok: boolean;
+      exitCode: number;
+      detail: string;
+    }>,
     discovery: {
       ports: [] as number[],
-      hosts: [] as Array<{ hostId: string; services: Array<{ port: number; status: string; httpCode: number | null; modelIds: string[]; stderr: string; exitCode: number }> }>,
+      hosts: [] as Array<{
+        hostId: string;
+        services: Array<{
+          port: number;
+          status: string;
+          httpCode: number | null;
+          modelIds: string[];
+          stderr: string;
+          exitCode: number;
+        }>;
+      }>,
     },
   };
 
   if (!jsonOut) console.log(`\n${BOLD}Hosts${RESET}`);
 
   for (const host of enabledHosts) {
-    const label = host.transport === 'ssh'
-      ? `${host.id} (${host.connection.user ? host.connection.user + '@' : ''}${host.connection.host ?? '?'})`
-      : `${host.id} (local)`;
+    const label =
+      host.transport === 'ssh'
+        ? `${host.id} (${host.connection.user ? host.connection.user + '@' : ''}${host.connection.host ?? '?'})`
+        : `${host.id} (local)`;
 
     const cmd = host.health.check_cmd;
     const timeoutMs = (host.health.timeout_sec ?? 5) * 1000;
@@ -996,19 +1147,23 @@ export async function runHealthSubcommand(args: any, _config: any): Promise<void
   }
 
   for (const model of enabledModels) {
-    const targetHosts = model.host_policy === 'any'
-      ? enabledHosts
-      : enabledHosts.filter((h) => (model.host_policy as string[]).includes(h.id));
+    const targetHosts =
+      model.host_policy === 'any'
+        ? enabledHosts
+        : enabledHosts.filter((h) => (model.host_policy as string[]).includes(h.id));
 
-    const backend = model.backend_policy === 'any'
-      ? enabledBackends[0] ?? null
-      : enabledBackends.find((b) => (model.backend_policy as string[]).includes(b.id)) ?? null;
+    const backend =
+      model.backend_policy === 'any'
+        ? (enabledBackends[0] ?? null)
+        : (enabledBackends.find((b) => (model.backend_policy as string[]).includes(b.id)) ?? null);
 
     for (const host of targetHosts) {
       const port = String(model.runtime_defaults?.port ?? 8080);
       const backendArgs = backend?.args?.map((a) => shellEscape(a)).join(' ') ?? '';
       const backendEnv = backend?.env
-        ? Object.entries(backend.env).map(([k, v]) => `${k}=${shellEscape(String(v))}`).join(' ')
+        ? Object.entries(backend.env)
+            .map(([k, v]) => `${k}=${shellEscape(String(v))}`)
+            .join(' ')
         : '';
 
       const vars: Record<string, string | number | undefined> = {
@@ -1046,7 +1201,9 @@ export async function runHealthSubcommand(args: any, _config: any): Promise<void
       if (result.exitCode === 0) {
         if (!jsonOut) {
           const body = result.stdout.trim();
-          console.log(`${GREEN}✓${RESET}${body ? ` ${DIM}${body.split('\n')[0].slice(0, 80)}${RESET}` : ''}`);
+          console.log(
+            `${GREEN}✓${RESET}${body ? ` ${DIM}${body.split('\n')[0].slice(0, 80)}${RESET}` : ''}`
+          );
         }
       } else {
         if (!jsonOut) {
@@ -1066,7 +1223,9 @@ export async function runHealthSubcommand(args: any, _config: any): Promise<void
   if (scanPortsOverride) {
     candidatePorts = scanPortsOverride;
   } else {
-    const configuredPorts = new Set<number>(enabledModels.map((m) => m.runtime_defaults?.port ?? 8080));
+    const configuredPorts = new Set<number>(
+      enabledModels.map((m) => m.runtime_defaults?.port ?? 8080)
+    );
     for (let p = 8080; p <= 8090; p++) configuredPorts.add(p);
     candidatePorts = Array.from(configuredPorts).sort((a, b) => a - b);
   }
@@ -1076,7 +1235,17 @@ export async function runHealthSubcommand(args: any, _config: any): Promise<void
   if (!jsonOut) console.log(`\n${BOLD}Discovered Servers (/v1/models + /health)${RESET}`);
 
   for (const host of enabledHosts) {
-    const hostEntry = { hostId: host.id, services: [] as Array<{ port: number; status: string; httpCode: number | null; modelIds: string[]; stderr: string; exitCode: number }> };
+    const hostEntry = {
+      hostId: host.id,
+      services: [] as Array<{
+        port: number;
+        status: string;
+        httpCode: number | null;
+        modelIds: string[];
+        stderr: string;
+        exitCode: number;
+      }>,
+    };
 
     if (!jsonOut) console.log(`  ${host.id}:`);
 
@@ -1095,10 +1264,17 @@ export async function runHealthSubcommand(args: any, _config: any): Promise<void
       });
 
       if (!jsonOut) {
-        const icon = probe.status === 'ready' ? `${GREEN}✓${RESET}` : probe.status === 'loading' ? `${YELLOW}~${RESET}` : `${DIM}?${RESET}`;
+        const icon =
+          probe.status === 'ready'
+            ? `${GREEN}✓${RESET}`
+            : probe.status === 'loading'
+              ? `${YELLOW}~${RESET}`
+              : `${DIM}?${RESET}`;
         const extras = probe.modelIds.filter((id) => !configuredModelIds.has(id));
         const idsText = probe.modelIds.length ? ` models=${probe.modelIds.join(', ')}` : '';
-        const extrasText = extras.length ? ` ${YELLOW}(extra/unconfigured: ${extras.join(', ')})${RESET}` : '';
+        const extrasText = extras.length
+          ? ` ${YELLOW}(extra/unconfigured: ${extras.join(', ')})${RESET}`
+          : '';
         const httpText = probe.httpCode != null ? ` http=${probe.httpCode}` : '';
         console.log(`    ${icon} :${port} ${probe.status}${httpText}${idsText}${extrasText}`);
       }

@@ -4,21 +4,48 @@
  */
 
 import { Bot, InputFile } from 'grammy';
-import type { IdlehandsConfig, BotTelegramConfig, ModelEscalation } from '../types.js';
+
 import type { AgentHooks } from '../agent.js';
-import { SessionManager, type ManagedSession } from './session-manager.js';
-import { markdownToTelegramHtml, splitMessage, escapeHtml, formatToolCallSummary } from './format.js';
-import { ProgressPresenter } from '../progress/progress-presenter.js';
-import { MessageEditScheduler, classifyTelegramEditError } from '../progress/message-edit-scheduler.js';
-import { PKG_VERSION } from '../utils.js';
 import {
-  handleStart, handleHelp, handleVersion, handleNew, handleCancel,
-  handleStatus, handleWatchdog, handleDir, handleModel, handleCompact,
-  handleApproval, handleMode, handleSubAgents, handleChanges, handleUndo, handleVault,
-  handleAnton, handleAgent, handleAgents, handleEscalate, handleDeescalate,
+  MessageEditScheduler,
+  classifyTelegramEditError,
+} from '../progress/message-edit-scheduler.js';
+import { ProgressPresenter } from '../progress/progress-presenter.js';
+import type { IdlehandsConfig, BotTelegramConfig, ModelEscalation } from '../types.js';
+import { PKG_VERSION } from '../utils.js';
+import { formatWatchdogCancelMessage, resolveWatchdogSettings } from '../watchdog.js';
+
+import {
+  handleStart,
+  handleHelp,
+  handleVersion,
+  handleNew,
+  handleCancel,
+  handleStatus,
+  handleWatchdog,
+  handleDir,
+  handleModel,
+  handleCompact,
+  handleApproval,
+  handleMode,
+  handleSubAgents,
+  handleChanges,
+  handleUndo,
+  handleVault,
+  handleAnton,
+  handleAgent,
+  handleAgents,
+  handleEscalate,
+  handleDeescalate,
 } from './commands.js';
 import { TelegramConfirmProvider } from './confirm-telegram.js';
-import { formatWatchdogCancelMessage, resolveWatchdogSettings } from '../watchdog.js';
+import {
+  markdownToTelegramHtml,
+  splitMessage,
+  escapeHtml,
+  formatToolCallSummary,
+} from './format.js';
+import { SessionManager, type ManagedSession } from './session-manager.js';
 
 // ---------------------------------------------------------------------------
 // Escalation helpers (mirrored from discord.ts)
@@ -39,9 +66,31 @@ function detectEscalation(text: string): { escalate: boolean; reason?: string } 
 
 /** Keyword presets for common escalation triggers */
 const KEYWORD_PRESETS: Record<string, string[]> = {
-  coding: ['build', 'implement', 'create', 'develop', 'architect', 'refactor', 'debug', 'fix', 'code', 'program', 'write'],
+  coding: [
+    'build',
+    'implement',
+    'create',
+    'develop',
+    'architect',
+    'refactor',
+    'debug',
+    'fix',
+    'code',
+    'program',
+    'write',
+  ],
   planning: ['plan', 'design', 'roadmap', 'strategy', 'analyze', 'research', 'evaluate', 'compare'],
-  complex: ['full', 'complete', 'comprehensive', 'multi-step', 'integrate', 'migration', 'overhaul', 'entire', 'whole'],
+  complex: [
+    'full',
+    'complete',
+    'comprehensive',
+    'multi-step',
+    'integrate',
+    'migration',
+    'overhaul',
+    'entire',
+    'whole',
+  ],
 };
 
 /**
@@ -50,7 +99,7 @@ const KEYWORD_PRESETS: Record<string, string[]> = {
  */
 function matchKeywords(text: string, keywords: string[], presets?: string[]): string[] {
   const allKeywords: string[] = [...keywords];
-  
+
   // Add preset keywords
   if (presets) {
     for (const preset of presets) {
@@ -58,12 +107,12 @@ function matchKeywords(text: string, keywords: string[], presets?: string[]): st
       if (presetWords) allKeywords.push(...presetWords);
     }
   }
-  
+
   if (allKeywords.length === 0) return [];
-  
+
   const lowerText = text.toLowerCase();
   const matched: string[] = [];
-  
+
   for (const kw of allKeywords) {
     if (kw.startsWith('re:')) {
       // Regex pattern
@@ -79,7 +128,7 @@ function matchKeywords(text: string, keywords: string[], presets?: string[]): st
       if (wordRegex.test(lowerText)) matched.push(kw);
     }
   }
-  
+
   return matched;
 }
 
@@ -93,12 +142,12 @@ function checkKeywordEscalation(
   escalation: ModelEscalation | undefined
 ): { escalate: boolean; tier?: number; reason?: string } {
   if (!escalation) return { escalate: false };
-  
+
   // Tiered keyword escalation
   if (escalation.tiers && escalation.tiers.length > 0) {
     let highestTier = -1;
     let highestReason = '';
-    
+
     // Check each tier, highest matching tier wins
     for (let i = 0; i < escalation.tiers.length; i++) {
       const tier = escalation.tiers[i];
@@ -107,35 +156,35 @@ function checkKeywordEscalation(
         tier.keywords || [],
         tier.keyword_presets as string[] | undefined
       );
-      
+
       if (matched.length > 0 && i > highestTier) {
         highestTier = i;
         highestReason = `tier ${i} keyword match: ${matched.slice(0, 3).join(', ')}${matched.length > 3 ? '...' : ''}`;
       }
     }
-    
+
     if (highestTier >= 0) {
       return { escalate: true, tier: highestTier, reason: highestReason };
     }
-    
+
     return { escalate: false };
   }
-  
+
   // Legacy flat keywords (treated as tier 0)
   const matched = matchKeywords(
     text,
     escalation.keywords || [],
     escalation.keyword_presets as string[] | undefined
   );
-  
+
   if (matched.length > 0) {
-    return { 
+    return {
       escalate: true,
       tier: 0,
-      reason: `keyword match: ${matched.slice(0, 3).join(', ')}${matched.length > 3 ? '...' : ''}`
+      reason: `keyword match: ${matched.slice(0, 3).join(', ')}${matched.length > 3 ? '...' : ''}`,
     };
   }
-  
+
   return { escalate: false };
 }
 
@@ -232,16 +281,20 @@ class StreamingMessage {
       const summary = text.slice(0, 200).replace(/\n/g, ' ').trim();
       const summaryHtml = `📄 Response is ${text.length.toLocaleString()} chars — sent as file.\n\n<i>${escapeHtml(summary)}…</i>`;
       if (this.messageId) {
-        await this.bot.api.editMessageText(this.chatId, this.messageId, summaryHtml, {
-          parse_mode: 'HTML',
-        }).catch(() => {});
+        await this.bot.api
+          .editMessageText(this.chatId, this.messageId, summaryHtml, {
+            parse_mode: 'HTML',
+          })
+          .catch(() => {});
       }
       const fileContent = Buffer.from(text, 'utf-8');
-      await this.bot.api.sendDocument(this.chatId, new InputFile(fileContent, 'response.md'), {
-        caption: `Full response (${text.length.toLocaleString()} chars)`,
-      }).catch((e: any) => {
-        console.error(`[bot] sendDocument error: ${e?.message ?? e}`);
-      });
+      await this.bot.api
+        .sendDocument(this.chatId, new InputFile(fileContent, 'response.md'), {
+          caption: `Full response (${text.length.toLocaleString()} chars)`,
+        })
+        .catch((e: any) => {
+          console.error(`[bot] sendDocument error: ${e?.message ?? e}`);
+        });
       return;
     }
 
@@ -258,7 +311,9 @@ class StreamingMessage {
         // If edit fails (too old, etc.), send as new message
         const desc = e?.description ?? '';
         if (desc.includes('message to edit not found')) {
-          await this.bot.api.sendMessage(this.chatId, chunks[0], { parse_mode: 'HTML' }).catch(() => {});
+          await this.bot.api
+            .sendMessage(this.chatId, chunks[0], { parse_mode: 'HTML' })
+            .catch(() => {});
         }
       }
     }
@@ -274,10 +329,9 @@ class StreamingMessage {
     }
 
     if (chunks.length > 10) {
-      await this.bot.api.sendMessage(
-        this.chatId,
-        '[truncated — response too long]'
-      ).catch(() => {});
+      await this.bot.api
+        .sendMessage(this.chatId, '[truncated — response too long]')
+        .catch(() => {});
     }
   }
 
@@ -325,7 +379,9 @@ class StreamingMessage {
         // fall through to send
       }
     }
-    await this.bot.api.sendMessage(this.chatId, html.slice(0, 4096), { parse_mode: 'HTML' }).catch(() => {});
+    await this.bot.api
+      .sendMessage(this.chatId, html.slice(0, 4096), { parse_mode: 'HTML' })
+      .catch(() => {});
   }
 
   /**
@@ -352,9 +408,11 @@ class StreamingMessage {
     }
     html += `<i>${escapeHtml(note)}</i>`;
 
-    await this.bot.api.editMessageText(this.chatId, this.messageId, html.slice(0, 4096), {
-      parse_mode: 'HTML',
-    }).catch(() => {});
+    await this.bot.api
+      .editMessageText(this.chatId, this.messageId, html.slice(0, 4096), {
+        parse_mode: 'HTML',
+      })
+      .catch(() => {});
   }
 }
 
@@ -362,7 +420,10 @@ class StreamingMessage {
 // Bot startup
 // ---------------------------------------------------------------------------
 
-export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTelegramConfig): Promise<void> {
+export async function startTelegramBot(
+  config: IdlehandsConfig,
+  botConfig: BotTelegramConfig
+): Promise<void> {
   // Validate config
   const token = process.env.IDLEHANDS_TG_TOKEN || botConfig.token;
   if (!token) {
@@ -380,7 +441,9 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
         : [];
   const allowedUsers = new Set(rawUsers);
   if (allowedUsers.size === 0) {
-    console.error('[bot] bot.telegram.allowed_users is empty — refusing to start an unauthenticated bot.');
+    console.error(
+      '[bot] bot.telegram.allowed_users is empty — refusing to start an unauthenticated bot.'
+    );
     process.exit(1);
   }
 
@@ -388,7 +451,7 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
   const sessions = new SessionManager(
     config,
     botConfig,
-    (chatId) => new TelegramConfirmProvider(bot, chatId, botConfig.confirm_timeout_sec ?? 300),
+    (chatId) => new TelegramConfirmProvider(bot, chatId, botConfig.confirm_timeout_sec ?? 300)
   );
   const editIntervalMs = botConfig.edit_interval_ms ?? 1500;
   const replyToUserMessages = botConfig.reply_to_user_messages === true;
@@ -479,8 +542,9 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
         await ctx.reply('No hosts configured. Use `idlehands hosts add` in CLI.');
         return;
       }
-      const lines = redacted.hosts.map((h) =>
-        `${h.enabled ? '🟢' : '🔴'} *${h.display_name}* (\`${h.id}\`)\n  Transport: ${h.transport}`,
+      const lines = redacted.hosts.map(
+        (h) =>
+          `${h.enabled ? '🟢' : '🔴'} *${h.display_name}* (\`${h.id}\`)\n  Transport: ${h.transport}`
       );
       await ctx.reply(lines.join('\n\n'), { parse_mode: 'Markdown' });
     } catch (e: any) {
@@ -497,8 +561,8 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
         await ctx.reply('No backends configured. Use `idlehands backends add` in CLI.');
         return;
       }
-      const lines = redacted.backends.map((b) =>
-        `${b.enabled ? '🟢' : '🔴'} *${b.display_name}* (\`${b.id}\`)\n  Type: ${b.type}`,
+      const lines = redacted.backends.map(
+        (b) => `${b.enabled ? '🟢' : '🔴'} *${b.display_name}* (\`${b.id}\`)\n  Type: ${b.type}`
       );
       await ctx.reply(lines.join('\n\n'), { parse_mode: 'Markdown' });
     } catch (e: any) {
@@ -514,8 +578,9 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
         await ctx.reply('No runtime models configured.');
         return;
       }
-      const lines = config.models.map((m: any) =>
-        `${m.enabled ? '🟢' : '🔴'} *${m.display_name}* (\`${m.id}\`)\n  Source: \`${m.source}\``,
+      const lines = config.models.map(
+        (m: any) =>
+          `${m.enabled ? '🟢' : '🔴'} *${m.display_name}* (\`${m.id}\`)\n  Source: \`${m.source}\``
       );
       await ctx.reply(lines.join('\n\n'), { parse_mode: 'Markdown' });
     } catch (e: any) {
@@ -577,16 +642,16 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
         return;
       }
 
-      const statusMsg = await ctx.reply(`⏳ Switching to *${result.model.display_name}*...`, { parse_mode: 'Markdown' });
+      const statusMsg = await ctx.reply(`⏳ Switching to *${result.model.display_name}*...`, {
+        parse_mode: 'Markdown',
+      });
 
       const execResult = await execute(result, {
         onStep: async (step, status) => {
           if (status === 'done') {
-            await ctx.api.editMessageText(
-              ctx.chat.id,
-              statusMsg.message_id,
-              `⏳ ${step.description}... ✓`,
-            ).catch(() => {});
+            await ctx.api
+              .editMessageText(ctx.chat.id, statusMsg.message_id, `⏳ ${step.description}... ✓`)
+              .catch(() => {});
           }
         },
         confirm: async (prompt) => {
@@ -596,7 +661,9 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
       });
 
       if (execResult.ok) {
-        await ctx.reply(`✅ Switched to *${result.model.display_name}*`, { parse_mode: 'Markdown' });
+        await ctx.reply(`✅ Switched to *${result.model.display_name}*`, {
+          parse_mode: 'Markdown',
+        });
       } else {
         await ctx.reply(`❌ Switch failed: ${execResult.error || 'unknown error'}`);
       }
@@ -622,7 +689,9 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
 
     const provider = managed.confirmProvider as TelegramConfirmProvider;
     const handled = await provider.handleCallback(data);
-    await ctx.answerCallbackQuery(handled ? undefined : { text: 'Unknown action.' }).catch(() => {});
+    await ctx
+      .answerCallbackQuery(handled ? undefined : { text: 'Unknown action.' })
+      .catch(() => {});
   });
 
   // ---------------------------------------------------------------------------
@@ -656,18 +725,24 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
     // Get or create session
     const managed = await sessions.getOrCreate(chatId, userId);
     if (!managed) {
-      await ctx.reply('⚠️ Too many active sessions. Try again later (or wait for an old session to expire).');
+      await ctx.reply(
+        '⚠️ Too many active sessions. Try again later (or wait for an old session to expire).'
+      );
       return;
     }
 
     // Concurrency guard
     if (managed.inFlight) {
       if (managed.pendingQueue.length >= sessions.maxQueue) {
-        await ctx.reply(`⏳ Queued (${managed.pendingQueue.length} pending). Use /cancel to abort the current task.`);
+        await ctx.reply(
+          `⏳ Queued (${managed.pendingQueue.length} pending). Use /cancel to abort the current task.`
+        );
         return;
       }
       managed.pendingQueue.push(text);
-      await ctx.reply(`⏳ Queued (#${managed.pendingQueue.length}). Still working on the previous request.`);
+      await ctx.reply(
+        `⏳ Queued (#${managed.pendingQueue.length}). Still working on the previous request.`
+      );
       return;
     }
 
@@ -690,11 +765,16 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
         maxCompactions: maxWatchdogCompacts,
         idleGraceTimeouts: watchdogIdleGraceTimeouts,
         debugAbortReason,
-      },
+      }
     ).catch((e: any) => {
       const errMsg = e?.message ?? String(e);
       console.error(`[bot] processMessage failed for chat ${chatId}: ${errMsg}`);
-      bot.api.sendMessage(chatId, `⚠️ Bot error: ${errMsg.length > 300 ? errMsg.slice(0, 297) + '...' : errMsg}`).catch(() => {});
+      bot.api
+        .sendMessage(
+          chatId,
+          `⚠️ Bot error: ${errMsg.length > 300 ? errMsg.slice(0, 297) + '...' : errMsg}`
+        )
+        .catch(() => {});
     });
   });
 
@@ -707,7 +787,12 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
     const expired = origCleanup();
     for (const chatId of expired) {
       console.error(`[bot] session ${chatId} expired`);
-      bot.api.sendMessage(chatId, '⏱ Session expired due to inactivity. Send a new message to start fresh.').catch(() => {});
+      bot.api
+        .sendMessage(
+          chatId,
+          '⏱ Session expired due to inactivity. Send a new message to start fresh.'
+        )
+        .catch(() => {});
     }
   };
   // Override the internal cleanup to also notify users
@@ -773,8 +858,11 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
 
   for (const opts of commandScopes) {
     await bot.api.deleteMyCommands(opts as any).catch(() => {});
-    await bot.api.setMyCommands(telegramCommands, opts as any)
-      .catch((e) => console.error(`[bot] setMyCommands failed (${JSON.stringify(opts)}): ${e?.message}`));
+    await bot.api
+      .setMyCommands(telegramCommands, opts as any)
+      .catch((e) =>
+        console.error(`[bot] setMyCommands failed (${JSON.stringify(opts)}): ${e?.message}`)
+      );
   }
 
   // ---------------------------------------------------------------------------
@@ -790,11 +878,15 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
     if (botInfo.can_join_groups) {
       console.error('[bot] ⚠️  WARNING: Bot has "Allow Groups" enabled in BotFather.');
       console.error('[bot]    Groups are blocked in code, but disable at the source:');
-      console.error('[bot]    → Open @BotFather → /mybots → select bot → Bot Settings → Allow Groups → Turn OFF');
+      console.error(
+        '[bot]    → Open @BotFather → /mybots → select bot → Bot Settings → Allow Groups → Turn OFF'
+      );
     }
     if (botInfo.can_read_all_group_messages) {
       console.error('[bot] ⚠️  WARNING: Bot has "Group Privacy" disabled (can read all messages).');
-      console.error('[bot]    → Open @BotFather → /mybots → select bot → Bot Settings → Group Privacy → Turn ON');
+      console.error(
+        '[bot]    → Open @BotFather → /mybots → select bot → Bot Settings → Group Privacy → Turn ON'
+      );
     }
   } catch (e: any) {
     console.error(`[bot] getMe() failed: ${e?.message ?? e}`);
@@ -828,13 +920,17 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
   console.error(`[bot] Model: ${config.model || 'auto'} | Endpoint: ${config.endpoint}`);
   console.error(`[bot] Allowed users: [${[...allowedUsers].join(', ')}]`);
   console.error(`[bot] Default dir: ${botConfig.default_dir || config.dir || '~'}`);
-  console.error(`[bot] Watchdog: timeout=${watchdogMs}ms compactions=${maxWatchdogCompacts} grace=${watchdogIdleGraceTimeouts}`);
-  
+  console.error(
+    `[bot] Watchdog: timeout=${watchdogMs}ms compactions=${maxWatchdogCompacts} grace=${watchdogIdleGraceTimeouts}`
+  );
+
   // Log multi-agent config
   const agents = botConfig.agents;
   if (agents && Object.keys(agents).length > 0) {
     const agentIds = Object.keys(agents);
-    console.error(`[bot] Multi-agent mode: ${agentIds.length} agents configured [${agentIds.join(', ')}]`);
+    console.error(
+      `[bot] Multi-agent mode: ${agentIds.length} agents configured [${agentIds.join(', ')}]`
+    );
     const routing = botConfig.routing;
     if (routing?.default) {
       console.error(`[bot] Default agent: ${routing.default}`);
@@ -845,7 +941,6 @@ export async function startTelegramBot(config: IdlehandsConfig, botConfig: BotTe
     onStart: () => console.error('[bot] Polling active'),
   });
 }
-
 
 async function probeModelEndpoint(endpoint: string): Promise<boolean> {
   const base = endpoint.replace(/\/$/, '');
@@ -861,7 +956,11 @@ async function probeModelEndpoint(endpoint: string): Promise<boolean> {
   }
 }
 
-async function waitForModelEndpoint(endpoint: string, totalMs = 60_000, stepMs = 2_500): Promise<boolean> {
+async function waitForModelEndpoint(
+  endpoint: string,
+  totalMs = 60_000,
+  stepMs = 2_500
+): Promise<boolean> {
   const started = Date.now();
   while (Date.now() - started < totalMs) {
     if (await probeModelEndpoint(endpoint)) return true;
@@ -888,7 +987,7 @@ async function processMessage(
     maxCompactions?: number;
     idleGraceTimeouts?: number;
     debugAbortReason?: boolean;
-  },
+  }
 ): Promise<void> {
   let turn = sessions.beginTurn(managed.chatId);
   if (!turn) return;
@@ -900,17 +999,17 @@ async function processMessage(
     const targetEndpoint = managed.pendingEscalationEndpoint;
     managed.pendingEscalation = null;
     managed.pendingEscalationEndpoint = null;
-    
+
     // Find the model index in escalation chain
     const escalation = managed.agentPersona?.escalation;
     if (escalation?.models) {
       const idx = escalation.models.indexOf(targetModel);
       if (idx !== -1) {
-        managed.currentModelIndex = idx + 1;  // +1 because 0 is base model
+        managed.currentModelIndex = idx + 1; // +1 because 0 is base model
         managed.escalationCount += 1;
       }
     }
-    
+
     // Recreate session with escalated model
     try {
       await sessions.recreateSession(managed.chatId, {
@@ -922,7 +1021,7 @@ async function processMessage(
       console.error(`[bot:telegram] escalation failed: ${e?.message ?? e}`);
       // Continue with current model if escalation fails
     }
-    
+
     // Re-acquire turn after recreation - must update turnId!
     const newTurn = sessions.beginTurn(managed.chatId);
     if (!newTurn) {
@@ -944,16 +1043,18 @@ async function processMessage(
     if (kwResult.escalate && kwResult.tier !== undefined) {
       // Use the tier to select the target model
       const targetModelIndex = Math.min(kwResult.tier, escalation.models.length - 1);
-      const currentTier = managed.currentModelIndex - 1;  // -1 because 0 is base model
+      const currentTier = managed.currentModelIndex - 1; // -1 because 0 is base model
       if (targetModelIndex > currentTier) {
         const targetModel = escalation.models[targetModelIndex];
         const tierEndpoint = escalation.tiers?.[targetModelIndex]?.endpoint;
-        console.error(`[bot:telegram] ${managed.userId} keyword escalation: ${kwResult.reason} → ${targetModel}${tierEndpoint ? ` @ ${tierEndpoint}` : ''}`);
-        
+        console.error(
+          `[bot:telegram] ${managed.userId} keyword escalation: ${kwResult.reason} → ${targetModel}${tierEndpoint ? ` @ ${tierEndpoint}` : ''}`
+        );
+
         // Set up escalation
         managed.currentModelIndex = targetModelIndex + 1;
         managed.escalationCount += 1;
-        
+
         // Recreate session with escalated model
         try {
           await sessions.recreateSession(managed.chatId, {
@@ -977,7 +1078,13 @@ async function processMessage(
     }
   }
 
-  const streaming = new StreamingMessage(bot, managed.chatId, editIntervalMs, replyToId, fileThresholdChars);
+  const streaming = new StreamingMessage(
+    bot,
+    managed.chatId,
+    editIntervalMs,
+    replyToId,
+    fileThresholdChars
+  );
   await streaming.init();
 
   const uiHooks = streaming.hooks();
@@ -1027,7 +1134,7 @@ async function processMessage(
       watchdog_idle_grace_timeouts: watchdogOptions?.idleGraceTimeouts,
       debug_abort_reason: watchdogOptions?.debugAbortReason,
     },
-    baseConfig,
+    baseConfig
   );
   const watchdogMs = resolvedWatchdog.timeoutMs;
   const maxWatchdogCompacts = resolvedWatchdog.maxCompactions;
@@ -1045,7 +1152,9 @@ async function processMessage(
         watchdogGraceUsed += 1;
         current.lastProgressAt = Date.now();
         streaming.setBanner('⏳ Still working... model is taking longer than usual.');
-        console.error(`[bot:telegram] ${managed.chatId} watchdog inactivity on turn ${turnId} — applying grace period (${watchdogGraceUsed}/${watchdogIdleGraceTimeouts})`);
+        console.error(
+          `[bot:telegram] ${managed.chatId} watchdog inactivity on turn ${turnId} — applying grace period (${watchdogGraceUsed}/${watchdogIdleGraceTimeouts})`
+        );
         return;
       }
 
@@ -1053,20 +1162,33 @@ async function processMessage(
         current.watchdogCompactAttempts++;
         watchdogCompactPending = true;
         streaming.setBanner('🧹 Compacting context and retrying...');
-        console.error(`[bot:telegram] ${managed.chatId} watchdog timeout on turn ${turnId} — compacting and retrying (attempt ${current.watchdogCompactAttempts}/${maxWatchdogCompacts})`);
-        try { current.activeAbortController?.abort(); } catch {}
-        current.session.compactHistory({ force: true }).then((result) => {
-          console.error(`[bot:telegram] ${managed.chatId} watchdog compaction: freed ${result.freedTokens} tokens, dropped ${result.droppedMessages} messages`);
-          streaming.setBanner(null);
-          current.lastProgressAt = Date.now();
-          watchdogCompactPending = false;
-        }).catch((e: any) => {
-          console.error(`[bot:telegram] ${managed.chatId} watchdog compaction failed: ${e?.message ?? e}`);
-          streaming.setBanner(null);
-          watchdogCompactPending = false;
-        });
+        console.error(
+          `[bot:telegram] ${managed.chatId} watchdog timeout on turn ${turnId} — compacting and retrying (attempt ${current.watchdogCompactAttempts}/${maxWatchdogCompacts})`
+        );
+        try {
+          current.activeAbortController?.abort();
+        } catch {}
+        current.session
+          .compactHistory({ force: true })
+          .then((result) => {
+            console.error(
+              `[bot:telegram] ${managed.chatId} watchdog compaction: freed ${result.freedTokens} tokens, dropped ${result.droppedMessages} messages`
+            );
+            streaming.setBanner(null);
+            current.lastProgressAt = Date.now();
+            watchdogCompactPending = false;
+          })
+          .catch((e: any) => {
+            console.error(
+              `[bot:telegram] ${managed.chatId} watchdog compaction failed: ${e?.message ?? e}`
+            );
+            streaming.setBanner(null);
+            watchdogCompactPending = false;
+          });
       } else {
-        console.error(`[bot:telegram] ${managed.chatId} watchdog timeout on turn ${turnId} — max compaction attempts reached, cancelling`);
+        console.error(
+          `[bot:telegram] ${managed.chatId} watchdog timeout on turn ${turnId} — max compaction attempts reached, cancelling`
+        );
         watchdogForcedCancel = true;
         sessions.cancelActive(managed.chatId);
       }
@@ -1088,10 +1210,15 @@ async function processMessage(
         : text;
 
       try {
-        const result = await managed.session.ask(askText, { ...hooks, signal: attemptController.signal });
+        const result = await managed.session.ask(askText, {
+          ...hooks,
+          signal: attemptController.signal,
+        });
         askComplete = true;
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.error(`[bot] ${managed.chatId} ask() completed: ${result.turns} turns, ${result.toolCalls} tool calls, ${elapsed}s`);
+        console.error(
+          `[bot] ${managed.chatId} ask() completed: ${result.turns} turns, ${result.toolCalls} tool calls, ${elapsed}s`
+        );
 
         // Check for auto-escalation request in response
         const escalation = managed.agentPersona?.escalation;
@@ -1106,10 +1233,14 @@ async function processMessage(
             const targetModel = escalation!.models![nextIndex];
             const tierEndpoint = escalation!.tiers?.[nextIndex]?.endpoint;
 
-            console.error(`[bot:telegram] ${managed.userId} auto-escalation requested: ${escResult.reason}${tierEndpoint ? ` @ ${tierEndpoint}` : ''}`);
+            console.error(
+              `[bot:telegram] ${managed.userId} auto-escalation requested: ${escResult.reason}${tierEndpoint ? ` @ ${tierEndpoint}` : ''}`
+            );
 
             // Notify user about escalation
-            await streaming.finalizeError(`⚡ Escalating to \`${targetModel}\` (${escResult.reason})...`);
+            await streaming.finalizeError(
+              `⚡ Escalating to \`${targetModel}\` (${escResult.reason})...`
+            );
 
             // Set up escalation for re-run
             managed.pendingEscalation = targetModel;
@@ -1144,7 +1275,7 @@ async function processMessage(
                   maxCompactions: maxWatchdogCompacts,
                   idleGraceTimeouts: watchdogIdleGraceTimeouts,
                   debugAbortReason,
-                },
+                }
               );
             }
             return;
@@ -1158,7 +1289,9 @@ async function processMessage(
 
         // If aborted by watchdog compaction, wait for compaction to finish then retry
         if (isAbort && watchdogCompactPending) {
-          console.error(`[bot:telegram] ${managed.chatId} ask() aborted by watchdog compaction — waiting for compaction to finish`);
+          console.error(
+            `[bot:telegram] ${managed.chatId} ask() aborted by watchdog compaction — waiting for compaction to finish`
+          );
           while (watchdogCompactPending) {
             await new Promise((r) => setTimeout(r, 500));
           }
@@ -1179,23 +1312,39 @@ async function processMessage(
             });
             await streaming.finalizeError(detail);
           }
-        } else if (msg.includes('ECONNREFUSED') || msg.includes('Connection timeout') || msg.includes('503') || msg.includes('model loading')) {
+        } else if (
+          msg.includes('ECONNREFUSED') ||
+          msg.includes('Connection timeout') ||
+          msg.includes('503') ||
+          msg.includes('model loading')
+        ) {
           const endpoint = (managed.session as any)?.endpoint || '';
           const recovered = endpoint ? await waitForModelEndpoint(endpoint, 60_000, 2_500) : false;
           if (recovered) {
             try {
-              const retry = await managed.session.ask(text, { ...hooks, signal: turn.controller.signal });
-              if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalize(retry.text);
+              const retry = await managed.session.ask(text, {
+                ...hooks,
+                signal: turn.controller.signal,
+              });
+              if (sessions.isTurnActive(managed.chatId, turnId))
+                await streaming.finalize(retry.text);
               return;
             } catch (retryErr: any) {
               const retryMsg = retryErr?.message ?? String(retryErr);
-              if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalizeError(`Model server came back but retry failed: ${retryMsg.length > 140 ? retryMsg.slice(0, 137) + '...' : retryMsg}`);
+              if (sessions.isTurnActive(managed.chatId, turnId))
+                await streaming.finalizeError(
+                  `Model server came back but retry failed: ${retryMsg.length > 140 ? retryMsg.slice(0, 137) + '...' : retryMsg}`
+                );
               return;
             }
           }
-          if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalizeError('Model server is starting up or restarting. I waited up to 60s but it is still unavailable — please retry shortly.');
+          if (sessions.isTurnActive(managed.chatId, turnId))
+            await streaming.finalizeError(
+              'Model server is starting up or restarting. I waited up to 60s but it is still unavailable — please retry shortly.'
+            );
         } else {
-          if (sessions.isTurnActive(managed.chatId, turnId)) await streaming.finalizeError(msg.length > 200 ? msg.slice(0, 197) + '...' : msg);
+          if (sessions.isTurnActive(managed.chatId, turnId))
+            await streaming.finalizeError(msg.length > 200 ? msg.slice(0, 197) + '...' : msg);
         }
       }
     }
@@ -1210,7 +1359,7 @@ async function processMessage(
       const baseModel = current.agentPersona.model || baseConfig?.model || 'default';
       current.currentModelIndex = 0;
       current.escalationCount = 0;
-      
+
       try {
         await sessions.recreateSession(current.chatId, { model: baseModel });
         console.error(`[bot:telegram] ${current.userId} auto-deescalated to ${baseModel}`);
@@ -1239,7 +1388,7 @@ async function processMessage(
             maxCompactions: maxWatchdogCompacts,
             idleGraceTimeouts: watchdogIdleGraceTimeouts,
             debugAbortReason,
-          },
+          }
         );
       }, 500);
     }

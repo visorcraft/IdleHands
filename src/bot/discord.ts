@@ -1,3 +1,6 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
 import {
   Client,
   Events,
@@ -9,11 +12,36 @@ import {
   type Message,
   type TextBasedChannel,
 } from 'discord.js';
-import path from 'node:path';
-import fs from 'node:fs/promises';
+
 import { createSession, type AgentSession, type AgentHooks } from '../agent.js';
+import { runAnton } from '../anton/controller.js';
+import { parseTaskFile } from '../anton/parser.js';
+import {
+  formatRunSummary,
+  formatProgressBar,
+  formatTaskStart,
+  formatTaskEnd,
+  formatTaskSkip,
+} from '../anton/reporter.js';
+import type { AntonRunConfig, AntonProgressCallback } from '../anton/types.js';
+import { firstToken } from '../cli/command-utils.js';
+import { chainAgentHooks } from '../progress/agent-hooks.js';
 import type { ApprovalMode, BotDiscordConfig, IdlehandsConfig, AgentPersona } from '../types.js';
+import { projectDir, PKG_VERSION } from '../utils.js';
+import {
+  WATCHDOG_RECOMMENDED_TUNING_TEXT,
+  formatWatchdogCancelMessage,
+  resolveWatchdogSettings,
+  shouldRecommendWatchdogTuning,
+} from '../watchdog.js';
+
 import { DiscordConfirmProvider } from './confirm-discord.js';
+import {
+  detectRepoCandidates,
+  expandHome,
+  isPathAllowed,
+  normalizeAllowedDirs,
+} from './dir-guard.js';
 import {
   parseAllowedUsers,
   normalizeApprovalMode,
@@ -24,16 +52,7 @@ import {
   resolveAgentForMessage,
   sessionKeyForMessage,
 } from './discord-routing.js';
-import { firstToken } from '../cli/command-utils.js';
-import { projectDir, PKG_VERSION } from '../utils.js';
-import { WATCHDOG_RECOMMENDED_TUNING_TEXT, formatWatchdogCancelMessage, resolveWatchdogSettings, shouldRecommendWatchdogTuning } from '../watchdog.js';
-import { detectRepoCandidates, expandHome, isPathAllowed, normalizeAllowedDirs } from './dir-guard.js';
-import { runAnton } from '../anton/controller.js';
-import { parseTaskFile } from '../anton/parser.js';
-import { formatRunSummary, formatProgressBar, formatTaskStart, formatTaskEnd, formatTaskSkip } from '../anton/reporter.js';
-import type { AntonRunConfig, AntonProgressCallback } from '../anton/types.js';
 import { DiscordStreamingMessage } from './discord-streaming.js';
-import { chainAgentHooks } from '../progress/agent-hooks.js';
 
 type SessionState = 'idle' | 'running' | 'canceling' | 'resetting';
 
@@ -61,14 +80,17 @@ type ManagedSession = {
   antonLastResult: import('../anton/types.js').AntonRunResult | null;
   antonProgress: import('../anton/types.js').AntonProgress | null;
   // Escalation tracking
-  currentModelIndex: number;  // 0 = base model, 1+ = escalated
-  escalationCount: number;    // how many times escalated this turn
-  pendingEscalation: string | null;  // model to escalate to on next message
+  currentModelIndex: number; // 0 = base model, 1+ = escalated
+  escalationCount: number; // how many times escalated this turn
+  pendingEscalation: string | null; // model to escalate to on next message
   // Watchdog compaction recovery
-  watchdogCompactAttempts: number;  // how many times watchdog has compacted this turn
+  watchdogCompactAttempts: number; // how many times watchdog has compacted this turn
 };
 
-export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDiscordConfig): Promise<void> {
+export async function startDiscordBot(
+  config: IdlehandsConfig,
+  botConfig: BotDiscordConfig
+): Promise<void> {
   const token = process.env.IDLEHANDS_DISCORD_TOKEN || botConfig.token;
   if (!token) {
     console.error('[bot:discord] Missing token. Set IDLEHANDS_DISCORD_TOKEN or bot.discord.token.');
@@ -77,7 +99,9 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
 
   const allowedUsers = parseAllowedUsers(botConfig);
   if (allowedUsers.size === 0) {
-    console.error('[bot:discord] bot.discord.allowed_users is empty — refusing to start unauthenticated bot.');
+    console.error(
+      '[bot:discord] bot.discord.allowed_users is empty — refusing to start unauthenticated bot.'
+    );
     process.exit(1);
   }
 
@@ -86,7 +110,10 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
   const maxSessions = botConfig.max_sessions ?? 5;
   const maxQueue = botConfig.max_queue ?? 3;
   const sessionTimeoutMs = (botConfig.session_timeout_min ?? 30) * 60_000;
-  const approvalMode = normalizeApprovalMode(botConfig.approval_mode, config.approval_mode ?? 'auto-edit');
+  const approvalMode = normalizeApprovalMode(
+    botConfig.approval_mode,
+    config.approval_mode ?? 'auto-edit'
+  );
   const defaultDir = botConfig.default_dir || projectDir(config);
   const replyToUserMessages = botConfig.reply_to_user_messages === true;
   const watchdogSettings = resolveWatchdogSettings(botConfig, config);
@@ -127,7 +154,10 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
     }
 
     if (managed) {
-      const idleSec = managed.lastProgressAt > 0 ? ((Date.now() - managed.lastProgressAt) / 1000).toFixed(1) : 'n/a';
+      const idleSec =
+        managed.lastProgressAt > 0
+          ? ((Date.now() - managed.lastProgressAt) / 1000).toFixed(1)
+          : 'n/a';
       lines.push('');
       lines.push(`In-flight: ${managed.inFlight ? 'yes' : 'no'}`);
       lines.push(`State: ${managed.state}`);
@@ -145,7 +175,7 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
     // Resolve which agent should handle this message
     const { agentId, persona } = resolveAgentForMessage(msg, botConfig.agents, botConfig.routing);
     const key = sessionKeyForMessage(msg, allowGuilds, agentId);
-    
+
     const existing = sessions.get(key);
     if (existing) {
       existing.lastActivity = Date.now();
@@ -158,12 +188,16 @@ export async function startDiscordBot(config: IdlehandsConfig, botConfig: BotDis
 
     // Build config with agent-specific overrides
     const allowedDirs = normalizeAllowedDirs(persona?.allowed_dirs ?? botConfig.allowed_dirs);
-    const agentDir = path.resolve(expandHome(persona?.default_dir || persona?.allowed_dirs?.[0] || defaultDir));
-    const agentApproval = persona?.approval_mode 
+    const agentDir = path.resolve(
+      expandHome(persona?.default_dir || persona?.allowed_dirs?.[0] || defaultDir)
+    );
+    const agentApproval = persona?.approval_mode
       ? normalizeApprovalMode(persona.approval_mode, approvalMode)
       : approvalMode;
 
-    const repoCandidates = await detectRepoCandidates(agentDir, allowedDirs).catch(() => [] as string[]);
+    const repoCandidates = await detectRepoCandidates(agentDir, allowedDirs).catch(
+      () => [] as string[]
+    );
     const requireDirPinForMutations = repoCandidates.length > 1;
     const dirPinned = !requireDirPinForMutations;
 
@@ -186,7 +220,7 @@ Examples:
 
 Only escalate when genuinely needed. Most tasks should be handled by your current model.
 When you escalate, your request will be re-run on a more capable model.`;
-      
+
       systemPrompt = (systemPrompt || '') + escalationInstructions;
     }
 
@@ -211,7 +245,7 @@ When you escalate, your request will be re-run on a more capable model.`;
     const confirmProvider = new DiscordConfirmProvider(
       msg.channel,
       msg.author.id,
-      botConfig.confirm_timeout_sec ?? 300,
+      botConfig.confirm_timeout_sec ?? 300
     );
 
     const session = await createSession({
@@ -249,12 +283,14 @@ When you escalate, your request will be re-run on a more capable model.`;
       watchdogCompactAttempts: 0,
     };
     sessions.set(key, managed);
-    
+
     // Log agent assignment for debugging
     if (persona) {
-      console.error(`[bot:discord] ${msg.author.id} → agent:${agentId} (${persona.display_name || agentId})`);
+      console.error(
+        `[bot:discord] ${msg.author.id} → agent:${agentId} (${persona.display_name || agentId})`
+      );
     }
-    
+
     return managed;
   }
 
@@ -267,8 +303,12 @@ When you escalate, your request will be re-run on a more capable model.`;
     s.antonActive = false;
     s.antonAbortSignal = null;
     s.antonProgress = null;
-    try { s.activeAbortController?.abort(); } catch {}
-    try { s.session.cancel(); } catch {}
+    try {
+      s.activeAbortController?.abort();
+    } catch {}
+    try {
+      s.session.cancel();
+    } catch {}
     sessions.delete(key);
   }
 
@@ -281,8 +321,9 @@ When you escalate, your request will be re-run on a more capable model.`;
     }
   }, 60_000);
 
-
-  function beginTurn(managed: ManagedSession): { turnId: number; controller: AbortController } | null {
+  function beginTurn(
+    managed: ManagedSession
+  ): { turnId: number; controller: AbortController } | null {
     if (managed.inFlight || managed.state === 'resetting') return null;
     const controller = new AbortController();
     managed.inFlight = true;
@@ -326,8 +367,12 @@ When you escalate, your request will be re-run on a more capable model.`;
 
     if (wasRunning) {
       managed.state = 'canceling';
-      try { managed.activeAbortController?.abort(); } catch {}
-      try { managed.session.cancel(); } catch {}
+      try {
+        managed.activeAbortController?.abort();
+      } catch {}
+      try {
+        managed.session.cancel();
+      } catch {}
     }
 
     managed.lastActivity = Date.now();
@@ -348,23 +393,23 @@ When you escalate, your request will be re-run on a more capable model.`;
     if (managed.pendingEscalation) {
       const targetModel = managed.pendingEscalation;
       managed.pendingEscalation = null;
-      
+
       // Find the model index in escalation chain
       const escalation = managed.agentPersona?.escalation;
       if (escalation?.models) {
         const idx = escalation.models.indexOf(targetModel);
         if (idx !== -1) {
-          managed.currentModelIndex = idx + 1;  // +1 because 0 is base model
+          managed.currentModelIndex = idx + 1; // +1 because 0 is base model
           managed.escalationCount += 1;
         }
       }
-      
+
       // Recreate session with escalated model
       const cfg: IdlehandsConfig = {
         ...managed.config,
         model: targetModel,
       };
-      
+
       try {
         await recreateSession(managed, cfg);
         console.error(`[bot:discord] ${managed.userId} escalated to ${targetModel}`);
@@ -372,7 +417,7 @@ When you escalate, your request will be re-run on a more capable model.`;
         console.error(`[bot:discord] escalation failed: ${e?.message ?? e}`);
         // Continue with current model if escalation fails
       }
-      
+
       // Re-acquire turn after recreation - must update turnId!
       const newTurn = beginTurn(managed);
       if (!newTurn) return;
@@ -389,24 +434,26 @@ When you escalate, your request will be re-run on a more capable model.`;
         // Use the tier to select the target model (tier 0 → models[0], tier 1 → models[1], etc.)
         const targetModelIndex = Math.min(kwResult.tier, escalation.models.length - 1);
         // Only escalate if target tier is higher than current (currentModelIndex 0 = base, 1 = models[0], etc.)
-        const currentTier = managed.currentModelIndex - 1;  // -1 because 0 is base model
+        const currentTier = managed.currentModelIndex - 1; // -1 because 0 is base model
         if (targetModelIndex > currentTier) {
           const targetModel = escalation.models[targetModelIndex];
           // Get endpoint from tier if defined
           const tierEndpoint = escalation.tiers?.[targetModelIndex]?.endpoint;
-          console.error(`[bot:discord] ${managed.userId} keyword escalation: ${kwResult.reason} → ${targetModel}${tierEndpoint ? ` @ ${tierEndpoint}` : ''}`);
-          
+          console.error(
+            `[bot:discord] ${managed.userId} keyword escalation: ${kwResult.reason} → ${targetModel}${tierEndpoint ? ` @ ${tierEndpoint}` : ''}`
+          );
+
           // Set up escalation
-          managed.currentModelIndex = targetModelIndex + 1;  // +1 because 0 is base model
+          managed.currentModelIndex = targetModelIndex + 1; // +1 because 0 is base model
           managed.escalationCount += 1;
-          
+
           // Recreate session with escalated model and optional endpoint override
           const cfg: IdlehandsConfig = {
             ...managed.config,
             model: targetModel,
             ...(tierEndpoint && { endpoint: tierEndpoint }),
           };
-          
+
           try {
             await recreateSession(managed, cfg);
             // Re-acquire turn after recreation - must update turnId!
@@ -423,7 +470,9 @@ When you escalate, your request will be re-run on a more capable model.`;
     }
 
     const placeholder = await sendUserVisible(msg, '⏳ Thinking...').catch(() => null);
-    const streamer = new DiscordStreamingMessage(placeholder, msg.channel, { editIntervalMs: 1500 });
+    const streamer = new DiscordStreamingMessage(placeholder, msg.channel, {
+      editIntervalMs: 1500,
+    });
     streamer.start();
 
     const baseHooks: AgentHooks = {
@@ -464,7 +513,9 @@ When you escalate, your request will be re-run on a more capable model.`;
         if (watchdogGraceUsed < watchdogIdleGraceTimeouts) {
           watchdogGraceUsed += 1;
           managed.lastProgressAt = Date.now();
-          console.error(`[bot:discord] ${managed.userId} watchdog inactivity on turn ${turnId} — applying grace period (${watchdogGraceUsed}/${watchdogIdleGraceTimeouts})`);
+          console.error(
+            `[bot:discord] ${managed.userId} watchdog inactivity on turn ${turnId} — applying grace period (${watchdogGraceUsed}/${watchdogIdleGraceTimeouts})`
+          );
           streamer.setBanner('⏳ Still working... model is taking longer than usual.');
           return;
         }
@@ -472,19 +523,32 @@ When you escalate, your request will be re-run on a more capable model.`;
         if (managed.watchdogCompactAttempts < maxWatchdogCompacts) {
           managed.watchdogCompactAttempts++;
           watchdogCompactPending = true;
-          console.error(`[bot:discord] ${managed.userId} watchdog timeout on turn ${turnId} — compacting and retrying (attempt ${managed.watchdogCompactAttempts}/${maxWatchdogCompacts})`);
+          console.error(
+            `[bot:discord] ${managed.userId} watchdog timeout on turn ${turnId} — compacting and retrying (attempt ${managed.watchdogCompactAttempts}/${maxWatchdogCompacts})`
+          );
           // Cancel current request, compact, and re-send
-          try { managed.activeAbortController?.abort(); } catch {}
-          managed.session.compactHistory({ force: true }).then((result) => {
-            console.error(`[bot:discord] ${managed.userId} watchdog compaction: freed ${result.freedTokens} tokens, dropped ${result.droppedMessages} messages`);
-            managed.lastProgressAt = Date.now();
-            watchdogCompactPending = false;
-          }).catch((e) => {
-            console.error(`[bot:discord] ${managed.userId} watchdog compaction failed: ${e?.message ?? e}`);
-            watchdogCompactPending = false;
-          });
+          try {
+            managed.activeAbortController?.abort();
+          } catch {}
+          managed.session
+            .compactHistory({ force: true })
+            .then((result) => {
+              console.error(
+                `[bot:discord] ${managed.userId} watchdog compaction: freed ${result.freedTokens} tokens, dropped ${result.droppedMessages} messages`
+              );
+              managed.lastProgressAt = Date.now();
+              watchdogCompactPending = false;
+            })
+            .catch((e) => {
+              console.error(
+                `[bot:discord] ${managed.userId} watchdog compaction failed: ${e?.message ?? e}`
+              );
+              watchdogCompactPending = false;
+            });
         } else {
-          console.error(`[bot:discord] ${managed.userId} watchdog timeout on turn ${turnId} — max compaction attempts reached, cancelling`);
+          console.error(
+            `[bot:discord] ${managed.userId} watchdog timeout on turn ${turnId} — max compaction attempts reached, cancelling`
+          );
           watchdogForcedCancel = true;
           cancelActive(managed);
         }
@@ -504,7 +568,11 @@ When you escalate, your request will be re-run on a more capable model.`;
           ? 'Continue working on the task from where you left off. Context was compacted to free memory — do NOT restart from the beginning.'
           : msg.content;
 
-        const hooks = chainAgentHooks({ signal: attemptController.signal }, baseHooks, streamer.hooks());
+        const hooks = chainAgentHooks(
+          { signal: attemptController.signal },
+          baseHooks,
+          streamer.hooks()
+        );
 
         try {
           const result = await managed.session.ask(askText, hooks);
@@ -527,9 +595,13 @@ When you escalate, your request will be re-run on a more capable model.`;
               // Get endpoint from tier if defined
               const tierEndpoint = escalation!.tiers?.[nextIndex]?.endpoint;
 
-              console.error(`[bot:discord] ${managed.userId} auto-escalation requested: ${escResult.reason}${tierEndpoint ? ` @ ${tierEndpoint}` : ''}`);
+              console.error(
+                `[bot:discord] ${managed.userId} auto-escalation requested: ${escResult.reason}${tierEndpoint ? ` @ ${tierEndpoint}` : ''}`
+              );
 
-              await streamer.finalizeError(`⚡ Escalating to \`${targetModel}\` (${escResult.reason})...`);
+              await streamer.finalizeError(
+                `⚡ Escalating to \`${targetModel}\` (${escResult.reason})...`
+              );
 
               // Set up escalation for re-run
               managed.pendingEscalation = targetModel;
@@ -561,7 +633,9 @@ When you escalate, your request will be re-run on a more capable model.`;
 
           // If aborted by watchdog compaction, wait for compaction to finish then retry
           if (isAbort && watchdogCompactPending) {
-            streamer.setBanner(`🔄 Context too large — compacting and retrying (attempt ${managed.watchdogCompactAttempts}/${maxWatchdogCompacts})...`);
+            streamer.setBanner(
+              `🔄 Context too large — compacting and retrying (attempt ${managed.watchdogCompactAttempts}/${maxWatchdogCompacts})...`
+            );
             // Wait for the async compaction to complete
             while (watchdogCompactPending) {
               await new Promise((r) => setTimeout(r, 500));
@@ -599,12 +673,12 @@ When you escalate, your request will be re-run on a more capable model.`;
         const baseModel = managed.agentPersona.model || config.model || 'default';
         managed.currentModelIndex = 0;
         managed.escalationCount = 0;
-        
+
         const cfg: IdlehandsConfig = {
           ...managed.config,
           model: baseModel,
         };
-        
+
         try {
           await recreateSession(managed, cfg);
           console.error(`[bot:discord] ${managed.userId} auto-deescalated to ${baseModel}`);
@@ -626,25 +700,32 @@ When you escalate, your request will be re-run on a more capable model.`;
   async function recreateSession(managed: ManagedSession, cfg: IdlehandsConfig): Promise<void> {
     managed.state = 'resetting';
     managed.pendingQueue = [];
-    try { managed.activeAbortController?.abort(); } catch {}
-    
+    try {
+      managed.activeAbortController?.abort();
+    } catch {}
+
     // Preserve conversation history before destroying the old session
     const oldMessages = managed.session.messages.slice();
-    
-    try { managed.session.cancel(); } catch {}
+
+    try {
+      managed.session.cancel();
+    } catch {}
 
     const session = await createSession({
       config: cfg,
       confirmProvider: managed.confirmProvider,
       confirm: async () => true,
     });
-    
+
     // Restore conversation history to the new session
     if (oldMessages.length > 0) {
       try {
         session.restore(oldMessages);
       } catch (e) {
-        console.error(`[bot:discord] Failed to restore ${oldMessages.length} messages after escalation:`, e);
+        console.error(
+          `[bot:discord] Failed to restore ${oldMessages.length} messages after escalation:`,
+          e
+        );
       }
     }
 
@@ -662,7 +743,9 @@ When you escalate, your request will be re-run on a more capable model.`;
     console.error(`[bot:discord] Allowed users: [${[...allowedUsers].join(', ')}]`);
     console.error(`[bot:discord] Default dir: ${defaultDir}`);
     console.error(`[bot:discord] Approval: ${approvalMode}`);
-    console.error(`[bot:discord] Watchdog: timeout=${watchdogMs}ms compactions=${maxWatchdogCompacts} grace=${watchdogIdleGraceTimeouts}`);
+    console.error(
+      `[bot:discord] Watchdog: timeout=${watchdogMs}ms compactions=${maxWatchdogCompacts} grace=${watchdogIdleGraceTimeouts}`
+    );
     if (allowGuilds) {
       console.error(`[bot:discord] Guild mode enabled${guildId ? ` (guild ${guildId})` : ''}`);
     }
@@ -670,13 +753,15 @@ When you escalate, your request will be re-run on a more capable model.`;
     const agents = botConfig.agents;
     if (agents && Object.keys(agents).length > 0) {
       const agentIds = Object.keys(agents);
-      console.error(`[bot:discord] Multi-agent mode: ${agentIds.length} agents configured [${agentIds.join(', ')}]`);
+      console.error(
+        `[bot:discord] Multi-agent mode: ${agentIds.length} agents configured [${agentIds.join(', ')}]`
+      );
       const routing = botConfig.routing;
       if (routing?.default) {
         console.error(`[bot:discord] Default agent: ${routing.default}`);
       }
     }
-    
+
     // Register slash commands
     try {
       const commands = [
@@ -684,22 +769,32 @@ When you escalate, your request will be re-run on a more capable model.`;
         new SlashCommandBuilder().setName('version').setDescription('Show version'),
         new SlashCommandBuilder().setName('new').setDescription('Start a new session'),
         new SlashCommandBuilder().setName('status').setDescription('Show session statistics'),
-        new SlashCommandBuilder().setName('watchdog').setDescription('Show watchdog settings/status'),
+        new SlashCommandBuilder()
+          .setName('watchdog')
+          .setDescription('Show watchdog settings/status'),
         new SlashCommandBuilder().setName('agent').setDescription('Show current agent info'),
         new SlashCommandBuilder().setName('agents').setDescription('List all configured agents'),
         new SlashCommandBuilder().setName('cancel').setDescription('Cancel the current operation'),
         new SlashCommandBuilder().setName('reset').setDescription('Reset the session'),
-        new SlashCommandBuilder().setName('escalate').setDescription('Escalate to a larger model')
-          .addStringOption(option => option.setName('model').setDescription('Model name or "next"').setRequired(false)),
+        new SlashCommandBuilder()
+          .setName('escalate')
+          .setDescription('Escalate to a larger model')
+          .addStringOption((option) =>
+            option.setName('model').setDescription('Model name or "next"').setRequired(false)
+          ),
         new SlashCommandBuilder().setName('deescalate').setDescription('Return to base model'),
-      ].map(cmd => cmd.toJSON());
-      
+      ].map((cmd) => cmd.toJSON());
+
       const rest = new REST({ version: '10' }).setToken(token);
-      
+
       // Register globally (takes up to 1 hour to propagate) or per-guild (instant)
       if (guildId) {
-        await rest.put(Routes.applicationGuildCommands(client.user!.id, guildId), { body: commands });
-        console.error(`[bot:discord] Registered ${commands.length} slash commands for guild ${guildId}`);
+        await rest.put(Routes.applicationGuildCommands(client.user!.id, guildId), {
+          body: commands,
+        });
+        console.error(
+          `[bot:discord] Registered ${commands.length} slash commands for guild ${guildId}`
+        );
       } else {
         await rest.put(Routes.applicationCommands(client.user!.id), { body: commands });
         console.error(`[bot:discord] Registered ${commands.length} global slash commands`);
@@ -713,10 +808,13 @@ When you escalate, your request will be re-run on a more capable model.`;
   client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     if (!allowedUsers.has(interaction.user.id)) {
-      await interaction.reply({ content: '⚠️ You are not authorized to use this bot.', ephemeral: true });
+      await interaction.reply({
+        content: '⚠️ You are not authorized to use this bot.',
+        ephemeral: true,
+      });
       return;
     }
-    
+
     const cmd = interaction.commandName;
     // Create a fake message object with enough properties to work with existing handlers
     const fakeMsg = {
@@ -732,16 +830,20 @@ When you escalate, your request will be re-run on a more capable model.`;
         return await interaction.reply(content);
       },
     } as unknown as Message;
-    
+
     // Defer reply for commands that might take a while
     if (cmd === 'status' || cmd === 'watchdog' || cmd === 'agent' || cmd === 'agents') {
       await interaction.deferReply();
     }
-    
+
     // Resolve agent for this interaction
-    const { agentId, persona } = resolveAgentForMessage(fakeMsg, botConfig.agents, botConfig.routing);
+    const { agentId, persona } = resolveAgentForMessage(
+      fakeMsg,
+      botConfig.agents,
+      botConfig.routing
+    );
     const key = sessionKeyForMessage(fakeMsg, allowGuilds, agentId);
-    
+
     switch (cmd) {
       case 'help': {
         const lines = [
@@ -804,7 +906,9 @@ When you escalate, your request will be re-run on a more capable model.`;
           const lines = [
             `**Current Agent:** ${agentName}`,
             persona.model ? `**Model:** ${persona.model}` : null,
-            persona.system_prompt ? `**System Prompt:** ${persona.system_prompt.slice(0, 100)}...` : null,
+            persona.system_prompt
+              ? `**System Prompt:** ${persona.system_prompt.slice(0, 100)}...`
+              : null,
           ].filter(Boolean);
           await interaction.editReply(lines.join('\n'));
         } else {
@@ -849,15 +953,15 @@ When you escalate, your request will be re-run on a more capable model.`;
           await interaction.reply('❌ No escalation models configured for this agent.');
           break;
         }
-        
+
         const arg = interaction.options.getString('model');
-        
+
         // No arg: show available models and current state
         if (!arg) {
           const currentModel = managed?.config.model || config.model || 'default';
           const lines = [
             `**Current model:** \`${currentModel}\``,
-            `**Escalation models:** ${escalation.models.map(m => `\`${m}\``).join(', ')}`,
+            `**Escalation models:** ${escalation.models.map((m) => `\`${m}\``).join(', ')}`,
             '',
             'Usage: `/escalate model:<name>` or `/escalate model:next`',
           ];
@@ -867,12 +971,12 @@ When you escalate, your request will be re-run on a more capable model.`;
           await interaction.reply(lines.join('\n'));
           break;
         }
-        
+
         if (!managed) {
           await interaction.reply('No active session. Send a message first.');
           break;
         }
-        
+
         // Handle 'next' - escalate to next model in chain
         let targetModel: string;
         if (arg.toLowerCase() === 'next') {
@@ -881,14 +985,18 @@ When you escalate, your request will be re-run on a more capable model.`;
         } else {
           // Specific model requested
           if (!escalation.models.includes(arg)) {
-            await interaction.reply(`❌ Model \`${arg}\` not in escalation chain. Available: ${escalation.models.map(m => `\`${m}\``).join(', ')}`);
+            await interaction.reply(
+              `❌ Model \`${arg}\` not in escalation chain. Available: ${escalation.models.map((m) => `\`${m}\``).join(', ')}`
+            );
             break;
           }
           targetModel = arg;
         }
-        
+
         managed.pendingEscalation = targetModel;
-        await interaction.reply(`⚡ Next message will use \`${targetModel}\`. Send your request now.`);
+        await interaction.reply(
+          `⚡ Next message will use \`${targetModel}\`. Send your request now.`
+        );
         break;
       }
       case 'deescalate': {
@@ -901,11 +1009,11 @@ When you escalate, your request will be re-run on a more capable model.`;
           await interaction.reply('Already using base model.');
           break;
         }
-        
+
         const baseModel = persona?.model || config.model || 'default';
         managed.pendingEscalation = null;
         managed.currentModelIndex = 0;
-        
+
         // Recreate session with base model
         const cfg: IdlehandsConfig = {
           ...managed.config,
@@ -933,11 +1041,14 @@ When you escalate, your request will be re-run on a more capable model.`;
     if (requireMentionChannels.includes(msg.channelId)) {
       const botMention = client.user ? `<@${client.user.id}>` : null;
       const botMentionNick = client.user ? `<@!${client.user.id}>` : null;
-      const isMentioned = botMention && (content.includes(botMention) || (botMentionNick && content.includes(botMentionNick)));
+      const isMentioned =
+        botMention &&
+        (content.includes(botMention) || (botMentionNick && content.includes(botMentionNick)));
       if (!isMentioned) return; // Silently ignore messages without mention
 
       // Strip the bot mention from content so the agent sees clean text
-      if (botMention) content = content.replace(new RegExp(`<@!?${client.user!.id}>`, 'g'), '').trim();
+      if (botMention)
+        content = content.replace(new RegExp(`<@!?${client.user!.id}>`, 'g'), '').trim();
       if (!content) return; // Nothing left after stripping mention
     }
 
@@ -949,13 +1060,18 @@ When you escalate, your request will be re-run on a more capable model.`;
       destroySession(key);
       const agentName = persona?.display_name || agentId;
       const agentMsg = persona ? ` (agent: ${agentName})` : '';
-      await sendUserVisible(msg, `✨ New session started${agentMsg}. Send a message to begin.`).catch(() => {});
+      await sendUserVisible(
+        msg,
+        `✨ New session started${agentMsg}. Send a message to begin.`
+      ).catch(() => {});
       return;
     }
 
     const managed = await getOrCreate(msg);
     if (!managed) {
-      await sendUserVisible(msg, '⚠️ Too many active sessions. Please retry later.').catch(() => {});
+      await sendUserVisible(msg, '⚠️ Too many active sessions. Please retry later.').catch(
+        () => {}
+      );
       return;
     }
 
@@ -966,7 +1082,7 @@ When you escalate, your request will be re-run on a more capable model.`;
     }
 
     if (content === '/start') {
-      const agentLine = managed.agentPersona 
+      const agentLine = managed.agentPersona
         ? `Agent: **${managed.agentPersona.display_name || managed.agentId}**`
         : null;
       const lines = [
@@ -1014,7 +1130,10 @@ When you escalate, your request will be re-run on a more capable model.`;
     }
 
     if (content === '/model') {
-      await sendUserVisible(msg, `Model: \`${managed.session.model}\`\nHarness: \`${managed.session.harness}\``).catch(() => {});
+      await sendUserVisible(
+        msg,
+        `Model: \`${managed.session.model}\`\nHarness: \`${managed.session.harness}\``
+      ).catch(() => {});
       return;
     }
 
@@ -1025,7 +1144,9 @@ When you escalate, your request will be re-run on a more capable model.`;
 
     if (content === '/compact') {
       managed.session.reset();
-      await sendUserVisible(msg, '🗜 Session context compacted (reset to system prompt).').catch(() => {});
+      await sendUserVisible(msg, '🗜 Session context compacted (reset to system prompt).').catch(
+        () => {}
+      );
       return;
     }
 
@@ -1038,7 +1159,12 @@ When you escalate, your request will be re-run on a more capable model.`;
         ];
         if (!managed.dirPinned && managed.repoCandidates.length > 1) {
           lines.push('Action required: run `/dir <repo-root>` before file edits.');
-          lines.push(`Detected repos: ${managed.repoCandidates.slice(0, 5).map((p) => `\`${p}\``).join(', ')}`);
+          lines.push(
+            `Detected repos: ${managed.repoCandidates
+              .slice(0, 5)
+              .map((p) => `\`${p}\``)
+              .join(', ')}`
+          );
         }
         await sendUserVisible(msg, lines.join('\n')).catch(() => {});
         return;
@@ -1046,11 +1172,16 @@ When you escalate, your request will be re-run on a more capable model.`;
 
       const resolvedDir = path.resolve(expandHome(arg));
       if (!isPathAllowed(resolvedDir, managed.allowedDirs)) {
-        await sendUserVisible(msg, `❌ Directory not allowed. Allowed roots: ${managed.allowedDirs.map((d) => `\`${d}\``).join(', ')}`).catch(() => {});
+        await sendUserVisible(
+          msg,
+          `❌ Directory not allowed. Allowed roots: ${managed.allowedDirs.map((d) => `\`${d}\``).join(', ')}`
+        ).catch(() => {});
         return;
       }
 
-      const repoCandidates = await detectRepoCandidates(resolvedDir, managed.allowedDirs).catch(() => managed.repoCandidates);
+      const repoCandidates = await detectRepoCandidates(resolvedDir, managed.allowedDirs).catch(
+        () => managed.repoCandidates
+      );
       const cfg: IdlehandsConfig = {
         ...managed.config,
         dir: resolvedDir,
@@ -1061,7 +1192,9 @@ When you escalate, your request will be re-run on a more capable model.`;
       await recreateSession(managed, cfg);
       managed.dirPinned = true;
       managed.repoCandidates = repoCandidates;
-      await sendUserVisible(msg, `✅ Working directory pinned to \`${resolvedDir}\``).catch(() => {});
+      await sendUserVisible(msg, `✅ Working directory pinned to \`${resolvedDir}\``).catch(
+        () => {}
+      );
       return;
     }
 
@@ -1069,7 +1202,10 @@ When you escalate, your request will be re-run on a more capable model.`;
       const arg = content.slice('/approval'.length).trim().toLowerCase();
       const modes = ['plan', 'default', 'auto-edit', 'yolo'] as const;
       if (!arg) {
-        await sendUserVisible(msg, `Approval mode: \`${managed.config.approval_mode || approvalMode}\`\nOptions: ${modes.join(', ')}`).catch(() => {});
+        await sendUserVisible(
+          msg,
+          `Approval mode: \`${managed.config.approval_mode || approvalMode}\`\nOptions: ${modes.join(', ')}`
+        ).catch(() => {});
         return;
       }
       if (!modes.includes(arg as any)) {
@@ -1104,7 +1240,10 @@ When you escalate, your request will be re-run on a more capable model.`;
       const arg = content.slice('/subagents'.length).trim().toLowerCase();
       const current = managed.config.sub_agents?.enabled !== false;
       if (!arg) {
-        await sendUserVisible(msg, `Sub-agents: \`${current ? 'on' : 'off'}\`\nUsage: /subagents on | off`).catch(() => {});
+        await sendUserVisible(
+          msg,
+          `Sub-agents: \`${current ? 'on' : 'off'}\`\nUsage: /subagents on | off`
+        ).catch(() => {});
         return;
       }
       if (arg !== 'on' && arg !== 'off') {
@@ -1113,14 +1252,19 @@ When you escalate, your request will be re-run on a more capable model.`;
       }
       const enabled = arg === 'on';
       managed.config.sub_agents = { ...(managed.config.sub_agents ?? {}), enabled };
-      await sendUserVisible(msg, `✅ Sub-agents \`${enabled ? 'on' : 'off'}\`${!enabled ? ' — spawn_task disabled for this session' : ''}`).catch(() => {});
+      await sendUserVisible(
+        msg,
+        `✅ Sub-agents \`${enabled ? 'on' : 'off'}\`${!enabled ? ' — spawn_task disabled for this session' : ''}`
+      ).catch(() => {});
       return;
     }
 
     if (content === '/changes') {
       const replay = managed.session.replay;
       if (!replay) {
-        await sendUserVisible(msg, 'Replay is disabled. No change tracking available.').catch(() => {});
+        await sendUserVisible(msg, 'Replay is disabled. No change tracking available.').catch(
+          () => {}
+        );
         return;
       }
       try {
@@ -1132,10 +1276,13 @@ When you escalate, your request will be re-run on a more capable model.`;
         const byFile = new Map<string, number>();
         for (const cp of checkpoints) byFile.set(cp.filePath, (byFile.get(cp.filePath) ?? 0) + 1);
         const lines = [`Session changes (${byFile.size} files):`];
-        for (const [fp, count] of byFile) lines.push(`✎ \`${fp}\` (${count} edit${count > 1 ? 's' : ''})`);
+        for (const [fp, count] of byFile)
+          lines.push(`✎ \`${fp}\` (${count} edit${count > 1 ? 's' : ''})`);
         await sendUserVisible(msg, lines.join('\n')).catch(() => {});
       } catch (e: any) {
-        await sendUserVisible(msg, `Error listing changes: ${e?.message ?? String(e)}`).catch(() => {});
+        await sendUserVisible(msg, `Error listing changes: ${e?.message ?? String(e)}`).catch(
+          () => {}
+        );
       }
       return;
     }
@@ -1148,7 +1295,10 @@ When you escalate, your request will be re-run on a more capable model.`;
       }
       try {
         const { undo_path } = await import('../tools.js');
-        const result = await undo_path({ cwd: managed.config.dir || defaultDir, noConfirm: true, dryRun: false } as any, { path: lastPath });
+        const result = await undo_path(
+          { cwd: managed.config.dir || defaultDir, noConfirm: true, dryRun: false } as any,
+          { path: lastPath }
+        );
         await sendUserVisible(msg, `✅ ${result}`).catch(() => {});
       } catch (e: any) {
         await sendUserVisible(msg, `❌ Undo failed: ${e?.message ?? String(e)}`).catch(() => {});
@@ -1181,20 +1331,24 @@ When you escalate, your request will be re-run on a more capable model.`;
         }
         await sendUserVisible(msg, lines.join('\n')).catch(() => {});
       } catch (e: any) {
-        await sendUserVisible(msg, `Error searching vault: ${e?.message ?? String(e)}`).catch(() => {});
+        await sendUserVisible(msg, `Error searching vault: ${e?.message ?? String(e)}`).catch(
+          () => {}
+        );
       }
       return;
     }
 
     if (content === '/status') {
       const used = managed.session.usage.prompt + managed.session.usage.completion;
-      const pct = managed.session.contextWindow > 0
-        ? ((used / managed.session.contextWindow) * 100).toFixed(1)
-        : '?';
-      const agentLine = managed.agentPersona 
+      const pct =
+        managed.session.contextWindow > 0
+          ? ((used / managed.session.contextWindow) * 100).toFixed(1)
+          : '?';
+      const agentLine = managed.agentPersona
         ? `Agent: ${managed.agentPersona.display_name || managed.agentId}`
         : null;
-      await sendUserVisible(msg, 
+      await sendUserVisible(
+        msg,
         [
           ...(agentLine ? [agentLine] : []),
           `Mode: ${managed.config.mode ?? 'code'}`,
@@ -1206,7 +1360,7 @@ When you escalate, your request will be re-run on a more capable model.`;
           `Context: ~${used}/${managed.session.contextWindow} (${pct}%)`,
           `State: ${managed.state}`,
           `Queue: ${managed.pendingQueue.length}/${maxQueue}`,
-        ].join('\n'),
+        ].join('\n')
       ).catch(() => {});
       return;
     }
@@ -1234,7 +1388,9 @@ When you escalate, your request will be re-run on a more capable model.`;
         ...(p.endpoint ? [`Endpoint: \`${p.endpoint}\``] : []),
         ...(p.approval_mode ? [`Approval: \`${p.approval_mode}\``] : []),
         ...(p.default_dir ? [`Default dir: \`${p.default_dir}\``] : []),
-        ...(p.allowed_dirs?.length ? [`Allowed dirs: ${p.allowed_dirs.map(d => `\`${d}\``).join(', ')}`] : []),
+        ...(p.allowed_dirs?.length
+          ? [`Allowed dirs: ${p.allowed_dirs.map((d) => `\`${d}\``).join(', ')}`]
+          : []),
       ];
       await sendUserVisible(msg, lines.join('\n')).catch(() => {});
       return;
@@ -1253,23 +1409,35 @@ When you escalate, your request will be re-run on a more capable model.`;
         const model = p.model ? ` (${p.model})` : '';
         lines.push(`• **${p.display_name || id}** (\`${id}\`)${model}${current}`);
       }
-      
+
       // Show routing rules
       const routing = botConfig.routing;
       if (routing) {
         lines.push('', '**Routing:**');
         if (routing.default) lines.push(`Default: \`${routing.default}\``);
         if (routing.users && Object.keys(routing.users).length > 0) {
-          lines.push(`Users: ${Object.entries(routing.users).map(([u, a]) => `${u}→${a}`).join(', ')}`);
+          lines.push(
+            `Users: ${Object.entries(routing.users)
+              .map(([u, a]) => `${u}→${a}`)
+              .join(', ')}`
+          );
         }
         if (routing.channels && Object.keys(routing.channels).length > 0) {
-          lines.push(`Channels: ${Object.entries(routing.channels).map(([c, a]) => `${c}→${a}`).join(', ')}`);
+          lines.push(
+            `Channels: ${Object.entries(routing.channels)
+              .map(([c, a]) => `${c}→${a}`)
+              .join(', ')}`
+          );
         }
         if (routing.guilds && Object.keys(routing.guilds).length > 0) {
-          lines.push(`Guilds: ${Object.entries(routing.guilds).map(([g, a]) => `${g}→${a}`).join(', ')}`);
+          lines.push(
+            `Guilds: ${Object.entries(routing.guilds)
+              .map(([g, a]) => `${g}→${a}`)
+              .join(', ')}`
+          );
         }
       }
-      
+
       await sendUserVisible(msg, lines.join('\n')).catch(() => {});
       return;
     }
@@ -1278,24 +1446,29 @@ When you escalate, your request will be re-run on a more capable model.`;
     if (content === '/escalate' || content.startsWith('/escalate ')) {
       const escalation = managed.agentPersona?.escalation;
       if (!escalation || !escalation.models?.length) {
-        await sendUserVisible(msg, '❌ No escalation models configured for this agent.').catch(() => {});
+        await sendUserVisible(msg, '❌ No escalation models configured for this agent.').catch(
+          () => {}
+        );
         return;
       }
 
       const arg = content.slice('/escalate'.length).trim();
-      
+
       // No arg: show available models and current state
       if (!arg) {
         const currentModel = managed.config.model || config.model || 'default';
         const lines = [
           `**Current model:** \`${currentModel}\``,
-          `**Escalation models:** ${escalation.models.map(m => `\`${m}\``).join(', ')}`,
+          `**Escalation models:** ${escalation.models.map((m) => `\`${m}\``).join(', ')}`,
           '',
           'Usage: `/escalate <model>` or `/escalate next`',
           'Then send your message - it will use the escalated model.',
         ];
         if (managed.pendingEscalation) {
-          lines.push('', `⚡ **Pending escalation:** \`${managed.pendingEscalation}\` (next message will use this)`);
+          lines.push(
+            '',
+            `⚡ **Pending escalation:** \`${managed.pendingEscalation}\` (next message will use this)`
+          );
         }
         await sendUserVisible(msg, lines.join('\n')).catch(() => {});
         return;
@@ -1309,14 +1482,20 @@ When you escalate, your request will be re-run on a more capable model.`;
       } else {
         // Specific model requested
         if (!escalation.models.includes(arg)) {
-          await sendUserVisible(msg, `❌ Model \`${arg}\` not in escalation chain. Available: ${escalation.models.map(m => `\`${m}\``).join(', ')}`).catch(() => {});
+          await sendUserVisible(
+            msg,
+            `❌ Model \`${arg}\` not in escalation chain. Available: ${escalation.models.map((m) => `\`${m}\``).join(', ')}`
+          ).catch(() => {});
           return;
         }
         targetModel = arg;
       }
 
       managed.pendingEscalation = targetModel;
-      await sendUserVisible(msg, `⚡ Next message will use \`${targetModel}\`. Send your request now.`).catch(() => {});
+      await sendUserVisible(
+        msg,
+        `⚡ Next message will use \`${targetModel}\`. Send your request now.`
+      ).catch(() => {});
       return;
     }
 
@@ -1326,11 +1505,11 @@ When you escalate, your request will be re-run on a more capable model.`;
         await sendUserVisible(msg, 'Already using base model.').catch(() => {});
         return;
       }
-      
+
       const baseModel = managed.agentPersona?.model || config.model || 'default';
       managed.pendingEscalation = null;
       managed.currentModelIndex = 0;
-      
+
       // Recreate session with base model
       const cfg: IdlehandsConfig = {
         ...managed.config,
@@ -1347,12 +1526,16 @@ When you escalate, your request will be re-run on a more capable model.`;
         const config = await loadRuntimes();
         const redacted = redactConfig(config);
         if (!redacted.hosts.length) {
-          await sendUserVisible(msg, 'No hosts configured. Use `idlehands hosts add` in CLI.').catch(() => {});
+          await sendUserVisible(
+            msg,
+            'No hosts configured. Use `idlehands hosts add` in CLI.'
+          ).catch(() => {});
           return;
         }
 
-        const lines = redacted.hosts.map((h) =>
-          `${h.enabled ? '🟢' : '🔴'} ${h.display_name} (\`${h.id}\`)\n  Transport: ${h.transport}`,
+        const lines = redacted.hosts.map(
+          (h) =>
+            `${h.enabled ? '🟢' : '🔴'} ${h.display_name} (\`${h.id}\`)\n  Transport: ${h.transport}`
         );
 
         const chunks = splitDiscord(lines.join('\n\n'));
@@ -1361,7 +1544,9 @@ When you escalate, your request will be re-run on a more capable model.`;
           else await (msg.channel as any).send(chunk).catch(() => {});
         }
       } catch (e: any) {
-        await sendUserVisible(msg, `❌ Failed to load hosts: ${e?.message ?? String(e)}`).catch(() => {});
+        await sendUserVisible(msg, `❌ Failed to load hosts: ${e?.message ?? String(e)}`).catch(
+          () => {}
+        );
       }
       return;
     }
@@ -1372,12 +1557,15 @@ When you escalate, your request will be re-run on a more capable model.`;
         const config = await loadRuntimes();
         const redacted = redactConfig(config);
         if (!redacted.backends.length) {
-          await sendUserVisible(msg, 'No backends configured. Use `idlehands backends add` in CLI.').catch(() => {});
+          await sendUserVisible(
+            msg,
+            'No backends configured. Use `idlehands backends add` in CLI.'
+          ).catch(() => {});
           return;
         }
 
-        const lines = redacted.backends.map((b) =>
-          `${b.enabled ? '🟢' : '🔴'} ${b.display_name} (\`${b.id}\`)\n  Type: ${b.type}`,
+        const lines = redacted.backends.map(
+          (b) => `${b.enabled ? '🟢' : '🔴'} ${b.display_name} (\`${b.id}\`)\n  Type: ${b.type}`
         );
 
         const chunks = splitDiscord(lines.join('\n\n'));
@@ -1386,7 +1574,9 @@ When you escalate, your request will be re-run on a more capable model.`;
           else await (msg.channel as any).send(chunk).catch(() => {});
         }
       } catch (e: any) {
-        await sendUserVisible(msg, `❌ Failed to load backends: ${e?.message ?? String(e)}`).catch(() => {});
+        await sendUserVisible(msg, `❌ Failed to load backends: ${e?.message ?? String(e)}`).catch(
+          () => {}
+        );
       }
       return;
     }
@@ -1400,8 +1590,9 @@ When you escalate, your request will be re-run on a more capable model.`;
           return;
         }
 
-        const lines = config.models.map((m) =>
-          `${m.enabled ? '🟢' : '🔴'} ${m.display_name} (\`${m.id}\`)\n  Source: \`${m.source}\``,
+        const lines = config.models.map(
+          (m) =>
+            `${m.enabled ? '🟢' : '🔴'} ${m.display_name} (\`${m.id}\`)\n  Source: \`${m.source}\``
         );
 
         const chunks = splitDiscord(lines.join('\n\n'));
@@ -1410,7 +1601,10 @@ When you escalate, your request will be re-run on a more capable model.`;
           else await (msg.channel as any).send(chunk).catch(() => {});
         }
       } catch (e: any) {
-        await sendUserVisible(msg, `❌ Failed to load runtime models: ${e?.message ?? String(e)}`).catch(() => {});
+        await sendUserVisible(
+          msg,
+          `❌ Failed to load runtime models: ${e?.message ?? String(e)}`
+        ).catch(() => {});
       }
       return;
     }
@@ -1440,7 +1634,10 @@ When you escalate, your request will be re-run on a more capable model.`;
           else await (msg.channel as any).send(chunk).catch(() => {});
         }
       } catch (e: any) {
-        await sendUserVisible(msg, `❌ Failed to read runtime status: ${e?.message ?? String(e)}`).catch(() => {});
+        await sendUserVisible(
+          msg,
+          `❌ Failed to read runtime status: ${e?.message ?? String(e)}`
+        ).catch(() => {});
       }
       return;
     }
@@ -1471,7 +1668,10 @@ When you escalate, your request will be re-run on a more capable model.`;
           return;
         }
 
-        const statusMsg = await sendUserVisible(msg, `⏳ Switching to \`${result.model.display_name}\`...`).catch(() => null);
+        const statusMsg = await sendUserVisible(
+          msg,
+          `⏳ Switching to \`${result.model.display_name}\`...`
+        ).catch(() => null);
 
         const execResult = await execute(result, {
           onStep: async (step, status) => {
@@ -1480,7 +1680,9 @@ When you escalate, your request will be re-run on a more capable model.`;
             }
           },
           confirm: async (prompt) => {
-            await sendUserVisible(msg, `⚠️ ${prompt}\nAuto-approving for bot context.`).catch(() => {});
+            await sendUserVisible(msg, `⚠️ ${prompt}\nAuto-approving for bot context.`).catch(
+              () => {}
+            );
             return true;
           },
         });
@@ -1489,7 +1691,9 @@ When you escalate, your request will be re-run on a more capable model.`;
           if (statusMsg) {
             await statusMsg.edit(`✅ Switched to \`${result.model.display_name}\``).catch(() => {});
           } else {
-            await sendUserVisible(msg, `✅ Switched to \`${result.model.display_name}\``).catch(() => {});
+            await sendUserVisible(msg, `✅ Switched to \`${result.model.display_name}\``).catch(
+              () => {}
+            );
           }
         } else {
           const err = `❌ Switch failed: ${execResult.error || 'unknown error'}`;
@@ -1513,7 +1717,10 @@ When you escalate, your request will be re-run on a more capable model.`;
 
     if (managed.inFlight) {
       if (managed.pendingQueue.length >= maxQueue) {
-        await sendUserVisible(msg, `⏳ Queue full (${managed.pendingQueue.length}/${maxQueue}). Use /cancel.`).catch(() => {});
+        await sendUserVisible(
+          msg,
+          `⏳ Queue full (${managed.pendingQueue.length}/${maxQueue}). Use /cancel.`
+        ).catch(() => {});
         return;
       }
       managed.pendingQueue.push(msg);
@@ -1521,7 +1728,9 @@ When you escalate, your request will be re-run on a more capable model.`;
       return;
     }
 
-    console.error(`[bot:discord] ${msg.author.id}: ${content.slice(0, 50)}${content.length > 50 ? '…' : ''}`);
+    console.error(
+      `[bot:discord] ${msg.author.id}: ${content.slice(0, 50)}${content.length > 50 ? '…' : ''}`
+    );
 
     // Do not await long-running turns here.
     // Keeping the message handler non-blocking ensures control commands like /cancel
@@ -1529,13 +1738,20 @@ When you escalate, your request will be re-run on a more capable model.`;
     void processMessage(managed, msg).catch(async (e: any) => {
       const errMsg = e?.message ?? String(e);
       console.error(`[bot:discord] processMessage failed for ${msg.author.id}: ${errMsg}`);
-      await sendUserVisible(msg, `⚠️ Bot error: ${errMsg.length > 300 ? errMsg.slice(0, 297) + '...' : errMsg}`).catch(() => {});
+      await sendUserVisible(
+        msg,
+        `⚠️ Bot error: ${errMsg.length > 300 ? errMsg.slice(0, 297) + '...' : errMsg}`
+      ).catch(() => {});
     });
   });
 
   const DISCORD_RATE_LIMIT_MS = 15_000;
 
-  async function handleDiscordAnton(managed: ManagedSession, msg: Message, content: string): Promise<void> {
+  async function handleDiscordAnton(
+    managed: ManagedSession,
+    msg: Message,
+    content: string
+  ): Promise<void> {
     const args = content.replace(/^\/anton\s*/, '').trim();
     const sub = firstToken(args);
 
@@ -1543,7 +1759,10 @@ When you escalate, your request will be re-run on a more capable model.`;
       if (!managed.antonActive) {
         await sendUserVisible(msg, 'No Anton run in progress.').catch(() => {});
       } else if (managed.antonAbortSignal?.aborted) {
-        await sendUserVisible(msg, '🛑 Anton is stopping. Please wait for the current attempt to unwind.').catch(() => {});
+        await sendUserVisible(
+          msg,
+          '🛑 Anton is stopping. Please wait for the current attempt to unwind.'
+        ).catch(() => {});
       } else if (managed.antonProgress) {
         await sendUserVisible(msg, formatProgressBar(managed.antonProgress)).catch(() => {});
       } else {
@@ -1574,7 +1793,10 @@ When you escalate, your request will be re-run on a more capable model.`;
 
     const filePart = sub === 'run' ? args.replace(/^\S+\s*/, '').trim() : args;
     if (!filePart) {
-      await sendUserVisible(msg, '/anton <file> — start | /anton status | /anton stop | /anton last').catch(() => {});
+      await sendUserVisible(
+        msg,
+        '/anton <file> — start | /anton status | /anton stop | /anton last'
+      ).catch(() => {});
       return;
     }
 
@@ -1584,7 +1806,10 @@ When you escalate, your request will be re-run on a more capable model.`;
         managed.antonActive = false;
         managed.antonAbortSignal = null;
         managed.antonProgress = null;
-        await sendUserVisible(msg, '♻️ Recovered stale Anton run state. Starting a fresh run...').catch(() => {});
+        await sendUserVisible(
+          msg,
+          '♻️ Recovered stale Anton run state. Starting a fresh run...'
+        ).catch(() => {});
       } else {
         const runningMsg = managed.antonAbortSignal?.aborted
           ? '🛑 Anton is still stopping. Please wait a moment, then try again.'
@@ -1597,14 +1822,17 @@ When you escalate, your request will be re-run on a more capable model.`;
     const cwd = managed.config.dir || process.cwd();
     const filePath = path.resolve(cwd, filePart);
 
-    try { await fs.stat(filePath); } catch {
+    try {
+      await fs.stat(filePath);
+    } catch {
       await sendUserVisible(msg, `File not found: ${filePath}`).catch(() => {});
       return;
     }
 
     const defaults = (managed.config as any).anton || {};
     const runConfig: AntonRunConfig = {
-      taskFile: filePath, projectDir: cwd,
+      taskFile: filePath,
+      projectDir: cwd,
       maxRetriesPerTask: defaults.max_retries ?? 3,
       maxIterations: defaults.max_iterations ?? 200,
       taskTimeoutSec: defaults.task_timeout_sec ?? 600,
@@ -1612,17 +1840,21 @@ When you escalate, your request will be re-run on a more capable model.`;
       maxTotalTokens: defaults.max_total_tokens ?? Infinity,
       maxPromptTokensPerAttempt: defaults.max_prompt_tokens_per_attempt ?? 128_000,
       autoCommit: defaults.auto_commit ?? true,
-      branch: false, allowDirty: false,
+      branch: false,
+      allowDirty: false,
       aggressiveCleanOnFail: false,
       verifyAi: defaults.verify_ai ?? true,
       verifyModel: undefined,
       decompose: defaults.decompose ?? true,
       maxDecomposeDepth: defaults.max_decompose_depth ?? 2,
       maxTotalTasks: defaults.max_total_tasks ?? 500,
-      buildCommand: undefined, testCommand: undefined, lintCommand: undefined,
+      buildCommand: undefined,
+      testCommand: undefined,
+      lintCommand: undefined,
       skipOnFail: defaults.skip_on_fail ?? true,
       approvalMode: (defaults.approval_mode ?? 'yolo') as AntonRunConfig['approvalMode'],
-      verbose: false, dryRun: false,
+      verbose: false,
+      dryRun: false,
     };
 
     const abortSignal = { aborted: false };
@@ -1670,9 +1902,15 @@ When you escalate, your request will be re-run on a more capable model.`;
     };
 
     let pendingCount = 0;
-    try { const tf = await parseTaskFile(filePath); pendingCount = tf.pending.length; } catch {}
+    try {
+      const tf = await parseTaskFile(filePath);
+      pendingCount = tf.pending.length;
+    } catch {}
 
-    await sendUserVisible(msg, `🤖 Anton started on ${filePart} (${pendingCount} tasks pending)`).catch(() => {});
+    await sendUserVisible(
+      msg,
+      `🤖 Anton started on ${filePart} (${pendingCount} tasks pending)`
+    ).catch(() => {});
 
     runAnton({
       config: runConfig,
@@ -1697,8 +1935,12 @@ When you escalate, your request will be re-run on a more capable model.`;
     process.exit(0);
   };
 
-  process.on('SIGINT', () => { void shutdown(); });
-  process.on('SIGTERM', () => { void shutdown(); });
+  process.on('SIGINT', () => {
+    void shutdown();
+  });
+  process.on('SIGTERM', () => {
+    void shutdown();
+  });
 
   await client.login(token);
 }

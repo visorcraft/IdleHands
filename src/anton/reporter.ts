@@ -4,13 +4,13 @@
  * The controller NEVER builds display strings itself. All formatting happens here.
  */
 
-import type { 
-  AntonRunResult, 
-  AntonProgress, 
-  AntonTask, 
-  AntonAttempt, 
-  AntonTaskFile, 
-  DetectedCommands 
+import type {
+  AntonRunResult,
+  AntonProgress,
+  AntonTask,
+  AntonAttempt,
+  AntonTaskFile,
+  DetectedCommands,
 } from './types.js';
 
 /**
@@ -20,13 +20,13 @@ import type {
 function formatDuration(ms: number): string {
   const sec = Math.round(ms / 1000);
   if (sec < 60) return `${sec}s`;
-  
+
   const min = Math.floor(sec / 60);
   const remainSec = sec % 60;
   if (min < 60) {
     return remainSec > 0 ? `${min}m ${remainSec}s` : `${min}m`;
   }
-  
+
   const hr = Math.floor(min / 60);
   const remainMin = min % 60;
   if (remainMin > 0) {
@@ -70,11 +70,11 @@ export function formatProgressBar(progress: AntonProgress): string {
   const completed = progress.completedSoFar;
   const total = progress.totalPending;
   const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
-  
+
   const filled = Math.round((completed / total) * 20);
   const empty = 20 - filled;
   const bar = '█'.repeat(filled) + '░'.repeat(empty);
-  
+
   return `[${bar}] ${completed}/${total} (${percent}%)`;
 }
 
@@ -90,7 +90,11 @@ export function formatTaskStart(task: AntonTask, attempt: number, progress: Anto
 /**
  * Format task end message.
  */
-export function formatTaskEnd(task: AntonTask, result: AntonAttempt, _progress: AntonProgress): string {
+export function formatTaskEnd(
+  task: AntonTask,
+  result: AntonAttempt,
+  _progress: AntonProgress
+): string {
   const emoji = result.status === 'passed' ? '✅' : '❌';
   const duration = formatDuration(result.durationMs);
   const tokens = formatTokens(result.tokensUsed);
@@ -114,7 +118,7 @@ export function formatDryRunPlan(taskFile: AntonTaskFile, commands: DetectedComm
     `  ⏳ ${taskFile.pending.length} pending tasks`,
     `  ✅ ${taskFile.completed.length} already completed`,
   ];
-  
+
   if (commands.build) {
     lines.push(`  🔨 Build: ${commands.build}`);
   }
@@ -124,18 +128,18 @@ export function formatDryRunPlan(taskFile: AntonTaskFile, commands: DetectedComm
   if (commands.lint) {
     lines.push(`  🔍 Lint: ${commands.lint}`);
   }
-  
+
   lines.push('');
   lines.push('Pending tasks:');
-  
+
   for (const task of taskFile.pending.slice(0, 10)) {
     const indent = '  '.repeat(task.depth + 1);
     lines.push(`${indent}• ${task.text}`);
   }
-  
+
   if (taskFile.pending.length > 10) {
     lines.push(`  ... and ${taskFile.pending.length - 10} more tasks`);
   }
-  
+
   return lines.join('\n');
 }

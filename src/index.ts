@@ -1,74 +1,106 @@
 #!/usr/bin/env node
 
-import readline from 'node:readline/promises';
-import * as rlBase from 'node:readline';
-import { stdin as input, stdout as output } from 'node:process';
-import path from 'node:path';
-import os from 'node:os';
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
-import { loadConfig, defaultConfigPath, applyRuntimeEndpoint } from './config.js';
-import { runSetup, guidedRuntimeOnboarding } from './cli/setup.js';
-import { projectDir } from './utils.js';
+import os from 'node:os';
+import path from 'node:path';
+import { stdin as input, stdout as output } from 'node:process';
+import * as rlBase from 'node:readline';
+import readline from 'node:readline/promises';
+
 import { createSession } from './agent.js';
-import { unifiedDiffFromBuffers } from './replay_cli.js';
-import { makeStyler, resolveColorMode, colorizeUnifiedDiff, warn as warnFmt, err as errFmt } from './term.js';
-import { resolveTheme } from './themes.js';
-import { createVimState, handleVimKeypress } from './vim.js';
-import { loadCustomCommands } from './commands.js';
-import { performUpgrade, performRollback, dailyUpdateCheck, detectInstallSource, type InstallSource } from './upgrade.js';
-import { setLockdown, setSafetyLogging, loadSafetyConfig } from './safety.js';
-import { loadGitStartupSummary } from './git.js';
 
 // ── Extracted CLI modules ────────────────────────────────────────────
+import { runAgentTurnWithSpinner } from './cli/agent-turn.js';
 import {
-  parseArgs, asNum, asBool, friendlyError, loadMcpServerConfigFile,
+  parseArgs,
+  asNum,
+  asBool,
+  friendlyError,
+  loadMcpServerConfigFile,
   printHelp,
 } from './cli/args.js';
+import { printBotHelp, runBotSubcommand } from './cli/bot.js';
+import { buildReplContext } from './cli/build-repl-context.js';
+import { registerAll, allCommandNames } from './cli/command-registry.js';
+import { antonCommands } from './cli/commands/anton.js';
+import { editingCommands } from './cli/commands/editing.js';
+import { modelCommands } from './cli/commands/model.js';
+import { projectCommands } from './cli/commands/project.js';
+import { runtimeCommands } from './cli/commands/runtime.js';
+import { secretsCommands } from './cli/commands/secrets.js';
+import { sessionCommands } from './cli/commands/session.js';
+import { toolCommands } from './cli/commands/tools.js';
+import { trifectaCommands } from './cli/commands/trifecta.js';
+import { runTui } from './cli/commands/tui.js';
+import { generateInitContext, formatInitSummary } from './cli/init.js';
 import {
-  readUserInput, readStdinIfPiped,
-  reverseSearchHistory, isPathCompletionContext,
-  expandAtFileRefs, expandPromptImages,
+  readUserInput,
+  readStdinIfPiped,
+  reverseSearchHistory,
+  isPathCompletionContext,
+  expandAtFileRefs,
+  expandPromptImages,
 } from './cli/input.js';
-import {
-  lastSessionPath, namedSessionPath, projectSessionPath,
-  loadPromptTemplates, loadHistory, appendHistoryLine, rotateHistoryIfNeeded,
-} from './cli/session-state.js';
+import { runOneShot } from './cli/oneshot.js';
 import { runReplPreTurn } from './cli/repl-dispatch.js';
+import {
+  runHostsSubcommand,
+  runBackendsSubcommand,
+  runModelsSubcommand,
+  runSelectSubcommand,
+  runHealthSubcommand,
+} from './cli/runtime-cmds.js';
+import {
+  lastSessionPath,
+  namedSessionPath,
+  projectSessionPath,
+  loadPromptTemplates,
+  loadHistory,
+  appendHistoryLine,
+  rotateHistoryIfNeeded,
+} from './cli/session-state.js';
+import { runSetup, guidedRuntimeOnboarding } from './cli/setup.js';
 import {
   replayCaptureFile,
   formatStatusLine,
   renderStartupBanner,
-  formatCount, endpointLooksLocal,
+  formatCount,
+  endpointLooksLocal,
 } from './cli/status.js';
+import { loadCustomCommands } from './commands.js';
+import { loadConfig, defaultConfigPath, applyRuntimeEndpoint } from './config.js';
+import { loadGitStartupSummary } from './git.js';
+import { unifiedDiffFromBuffers } from './replay_cli.js';
+import { setLockdown, setSafetyLogging, loadSafetyConfig } from './safety.js';
 import {
-  generateInitContext, formatInitSummary,
-} from './cli/init.js';
-import { buildReplContext } from './cli/build-repl-context.js';
-import { runAgentTurnWithSpinner } from './cli/agent-turn.js';
-import { printBotHelp, runBotSubcommand } from './cli/bot.js';
-import { runHostsSubcommand, runBackendsSubcommand, runModelsSubcommand, runSelectSubcommand, runHealthSubcommand } from './cli/runtime-cmds.js';
-import { runOneShot } from './cli/oneshot.js';
-import { registerAll, allCommandNames } from './cli/command-registry.js';
-import { sessionCommands } from './cli/commands/session.js';
-import { runtimeCommands } from './cli/commands/runtime.js';
-import { modelCommands } from './cli/commands/model.js';
-import { editingCommands } from './cli/commands/editing.js';
-import { projectCommands } from './cli/commands/project.js';
-import { trifectaCommands } from './cli/commands/trifecta.js';
-import { toolCommands } from './cli/commands/tools.js';
-import { antonCommands } from './cli/commands/anton.js';
-import { runTui } from './cli/commands/tui.js';
+  makeStyler,
+  resolveColorMode,
+  colorizeUnifiedDiff,
+  warn as warnFmt,
+  err as errFmt,
+} from './term.js';
+import { resolveTheme } from './themes.js';
+import {
+  performUpgrade,
+  performRollback,
+  dailyUpdateCheck,
+  detectInstallSource,
+  type InstallSource,
+} from './upgrade.js';
+import { projectDir } from './utils.js';
+import { createVimState, handleVimKeypress } from './vim.js';
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
-  const { version } = JSON.parse(await fs.readFile(new URL("../package.json", import.meta.url), "utf8"));
+  const { version } = JSON.parse(
+    await fs.readFile(new URL('../package.json', import.meta.url), 'utf8')
+  );
 
   if (args.version || args.v) {
     console.log(version);
     process.exit(0);
   }
-
 
   // ── Run-as user switching ──────────────────────────────────────
   // Must happen before any config loading. Re-execs the entire process
@@ -97,10 +129,15 @@ async function main() {
         // Kill any existing idlehands processes under the CURRENT user
         // (we're switching away from current user to effectiveRunAs)
         try {
-          const staleOwn = execSync(`pgrep -u ${currentUser} -f 'node.*idlehands' | grep -vE '^(${process.pid}|${process.ppid})$' || true`, { encoding: 'utf8' }).trim();
+          const staleOwn = execSync(
+            `pgrep -u ${currentUser} -f 'node.*idlehands' | grep -vE '^(${process.pid}|${process.ppid})$' || true`,
+            { encoding: 'utf8' }
+          ).trim();
           if (staleOwn) {
             const pids = staleOwn.split('\n').filter(Boolean);
-            console.log(`\x1b[2m  Killing ${pids.length} stale idlehands process(es) under ${currentUser}: ${pids.join(', ')}\x1b[0m`);
+            console.log(
+              `\x1b[2m  Killing ${pids.length} stale idlehands process(es) under ${currentUser}: ${pids.join(', ')}\x1b[0m`
+            );
             execSync(`echo "${staleOwn}" | xargs -r kill 2>/dev/null || true`, { stdio: 'ignore' });
           }
         } catch {}
@@ -108,16 +145,26 @@ async function main() {
         // Also kill any stale idlehands processes under the TARGET user
         // (clean slate for the new run)
         try {
-          const staleTarget = execSync(`sudo -n -u ${effectiveRunAs} bash -c "pgrep -f 'node.*idlehands' || true" 2>/dev/null`, { encoding: 'utf8' }).trim();
+          const staleTarget = execSync(
+            `sudo -n -u ${effectiveRunAs} bash -c "pgrep -f 'node.*idlehands' || true" 2>/dev/null`,
+            { encoding: 'utf8' }
+          ).trim();
           if (staleTarget) {
             const pids = staleTarget.split('\n').filter(Boolean);
-            console.log(`\x1b[2m  Killing ${pids.length} stale idlehands process(es) under ${effectiveRunAs}: ${pids.join(', ')}\x1b[0m`);
-            execSync(`sudo -n -u ${effectiveRunAs} bash -c "pgrep -f 'node.*idlehands' | xargs -r kill" 2>/dev/null || true`, { stdio: 'ignore' });
+            console.log(
+              `\x1b[2m  Killing ${pids.length} stale idlehands process(es) under ${effectiveRunAs}: ${pids.join(', ')}\x1b[0m`
+            );
+            execSync(
+              `sudo -n -u ${effectiveRunAs} bash -c "pgrep -f 'node.*idlehands' | xargs -r kill" 2>/dev/null || true`,
+              { stdio: 'ignore' }
+            );
           }
         } catch {}
 
         // Small delay to let processes die
-        try { execSync('sleep 0.5', { stdio: 'ignore' }); } catch {}
+        try {
+          execSync('sleep 0.5', { stdio: 'ignore' });
+        } catch {}
 
         // Re-exec as target user, passing through all args except --run-as
         const filteredArgs = process.argv.slice(2).filter((a, i, arr) => {
@@ -135,12 +182,24 @@ async function main() {
         // that the target user can't access (common with npm install -g creating symlinks)
         try {
           const scriptDir = path.dirname(fsSync.realpathSync(scriptPath));
-          const testResult = spawnSync('sudo', ['-n', '-u', effectiveRunAs, 'test', '-r', scriptPath], { stdio: 'ignore' });
+          const testResult = spawnSync(
+            'sudo',
+            ['-n', '-u', effectiveRunAs, 'test', '-r', scriptPath],
+            { stdio: 'ignore' }
+          );
           if (testResult.status !== 0) {
-            console.error(`\x1b[31m[run-as] Error: user '${effectiveRunAs}' cannot read ${scriptPath}\x1b[0m`);
-            console.error(`\x1b[31m  The global install may be a symlink to a private directory.\x1b[0m`);
-            console.error(`\x1b[33m  Fix: sudo cp -aL $(dirname ${scriptDir}) /usr/local/lib/node_modules/@visorcraft/idlehands\x1b[0m`);
-            console.error(`\x1b[33m       sudo chmod -R a+rX /usr/local/lib/node_modules/@visorcraft/idlehands\x1b[0m`);
+            console.error(
+              `\x1b[31m[run-as] Error: user '${effectiveRunAs}' cannot read ${scriptPath}\x1b[0m`
+            );
+            console.error(
+              `\x1b[31m  The global install may be a symlink to a private directory.\x1b[0m`
+            );
+            console.error(
+              `\x1b[33m  Fix: sudo cp -aL $(dirname ${scriptDir}) /usr/local/lib/node_modules/@visorcraft/idlehands\x1b[0m`
+            );
+            console.error(
+              `\x1b[33m       sudo chmod -R a+rX /usr/local/lib/node_modules/@visorcraft/idlehands\x1b[0m`
+            );
             process.exit(1);
           }
         } catch {}
@@ -148,13 +207,12 @@ async function main() {
         console.log(`\x1b[2m  Switching to user: ${effectiveRunAs}\x1b[0m`);
         const result = spawnSync('sudo', ['-u', effectiveRunAs, execPath, ...cmdArgs], {
           stdio: 'inherit',
-          env: { ...process.env, HOME: '' },  // let sudo set HOME
+          env: { ...process.env, HOME: '' }, // let sudo set HOME
         });
         process.exit(result.status ?? 1);
       }
     }
   }
-
 
   if (args._[0] === 'upgrade' || args.upgrade) {
     const configPath = typeof args.config === 'string' ? args.config : defaultConfigPath();
@@ -195,12 +253,22 @@ async function main() {
   // First-run detection: no config file + no CLI endpoint = offer setup
   if (process.stdin.isTTY && process.stdout.isTTY) {
     let hasConfig = false;
-    try { await fs.access(configPath); hasConfig = true; } catch {}
+    try {
+      await fs.access(configPath);
+      hasConfig = true;
+    } catch {}
     const hasEndpointArg = typeof args.endpoint === 'string';
-    const isSubcommand = args._[0] === 'bot' || args._[0] === 'hosts' || args._[0] === 'backends'
-      || args._[0] === 'models' || args._[0] === 'select' || args._[0] === 'health'
-      || args._[0] === 'upgrade' || args._[0] === 'rollback' || args._[0] === 'init'
-      || args._[0] === 'service';
+    const isSubcommand =
+      args._[0] === 'bot' ||
+      args._[0] === 'hosts' ||
+      args._[0] === 'backends' ||
+      args._[0] === 'models' ||
+      args._[0] === 'select' ||
+      args._[0] === 'health' ||
+      args._[0] === 'upgrade' ||
+      args._[0] === 'rollback' ||
+      args._[0] === 'init' ||
+      args._[0] === 'service';
     if (!hasConfig && !hasEndpointArg && !isSubcommand) {
       console.log('\n  No config file found. Running interactive setup...');
       console.log('  (To skip, pass --endpoint <url>)\n');
@@ -220,14 +288,22 @@ async function main() {
     timeout: asNum(args.timeout),
     response_timeout: asNum(args['response-timeout'] ?? args.response_timeout),
     connection_timeout: asNum(args['connection-timeout'] ?? args.connection_timeout),
-    initial_connection_check: asBool(args['initial-connection-check'] ?? args.initial_connection_check),
-    initial_connection_timeout: asNum(args['initial-connection-timeout'] ?? args.initial_connection_timeout),
+    initial_connection_check: asBool(
+      args['initial-connection-check'] ?? args.initial_connection_check
+    ),
+    initial_connection_timeout: asNum(
+      args['initial-connection-timeout'] ?? args.initial_connection_timeout
+    ),
     max_iterations: asNum(args['max-iterations'] ?? args.max_iterations),
     context_window: asNum(args['context-window'] ?? args.context_window),
-    approval_mode: typeof args['approval-mode'] === 'string'
-      ? args['approval-mode']
-      : asBool(args['non-interactive'] ?? args.non_interactive) ? 'reject'
-      : asBool(args.plan) ? 'plan' : undefined,
+    approval_mode:
+      typeof args['approval-mode'] === 'string'
+        ? args['approval-mode']
+        : asBool(args['non-interactive'] ?? args.non_interactive)
+          ? 'reject'
+          : asBool(args.plan)
+            ? 'plan'
+            : undefined,
     verbose: asBool(args.verbose),
     quiet: asBool(args.quiet),
     dry_run: asBool(args['dry-run'] ?? args.dry_run),
@@ -235,7 +311,7 @@ async function main() {
     fail_on_error: asBool(args['fail-on-error'] ?? args.fail_on_error),
     diff_only: asBool(args['diff-only'] ?? args.diff_only),
     no_confirm: asBool(args['no-confirm'] ?? args.no_confirm ?? args.yolo),
-    mode: asBool(args.sys) ? 'sys' as const : undefined,
+    mode: asBool(args.sys) ? ('sys' as const) : undefined,
     sys_eager: asBool(args['sys-eager'] ?? args.sys_eager) || undefined,
     i_know_what_im_doing: asBool(args['i-know-what-im-doing'] ?? args.i_know_what_im_doing),
     theme: typeof args.theme === 'string' ? args.theme : undefined,
@@ -246,38 +322,46 @@ async function main() {
     context_max_tokens: asNum(args['context-max-tokens'] ?? args.context_max_tokens),
     compact_at: asNum(args['compact-at'] ?? args.compact_at),
     step_mode: asBool(args.step),
-    auto_detect_model_change: asBool(args['auto-detect-model-change'] ?? args.auto_detect_model_change),
-    show_server_metrics: asBool(args['show-server-metrics']) !== undefined
-      ? asBool(args['show-server-metrics'])
-      : (asBool(args['no-server-metrics']) === undefined ? undefined : !asBool(args['no-server-metrics'])),
+    auto_detect_model_change: asBool(
+      args['auto-detect-model-change'] ?? args.auto_detect_model_change
+    ),
+    show_server_metrics:
+      asBool(args['show-server-metrics']) !== undefined
+        ? asBool(args['show-server-metrics'])
+        : asBool(args['no-server-metrics']) === undefined
+          ? undefined
+          : !asBool(args['no-server-metrics']),
     slow_tg_tps_threshold: asNum(args['slow-tg-tps-threshold'] ?? args.slow_tg_tps_threshold),
     mcp_tool_budget: asNum(args['mcp-tool-budget'] ?? args.mcp_tool_budget),
     mcp_call_timeout_sec: asNum(args['mcp-call-timeout-sec'] ?? args.mcp_call_timeout_sec),
     color: typeof args.color === 'string' ? args.color : undefined,
-    auto_update_check: asBool(args['no-update-check']) === undefined ? undefined : !asBool(args['no-update-check']),
+    auto_update_check:
+      asBool(args['no-update-check']) === undefined ? undefined : !asBool(args['no-update-check']),
     offline: asBool(args.offline),
     sub_agents: {
-      enabled: asBool(args['no-sub-agents']) === undefined ? undefined : !asBool(args['no-sub-agents']),
+      enabled:
+        asBool(args['no-sub-agents']) === undefined ? undefined : !asBool(args['no-sub-agents']),
     },
     trifecta: {
       enabled: asBool(args['no-trifecta']) === undefined ? undefined : !asBool(args['no-trifecta']),
       vault: {
         enabled: asBool(args['no-vault']) === undefined ? undefined : !asBool(args['no-vault']),
         mode: (() => {
-          const raw = typeof args['vault-mode'] === 'string' ? args['vault-mode'].toLowerCase() : undefined;
+          const raw =
+            typeof args['vault-mode'] === 'string' ? args['vault-mode'].toLowerCase() : undefined;
           if (!raw) return undefined;
           if (raw === 'active' || raw === 'passive' || raw === 'off') return raw;
           console.error(`Invalid --vault-mode: ${raw} (expected active|passive|off)`);
           return undefined;
-        })()
+        })(),
       },
       lens: {
-        enabled: asBool(args['no-lens']) === undefined ? undefined : !asBool(args['no-lens'])
+        enabled: asBool(args['no-lens']) === undefined ? undefined : !asBool(args['no-lens']),
       },
       replay: {
-        enabled: asBool(args['no-replay']) === undefined ? undefined : !asBool(args['no-replay'])
-      }
-    }
+        enabled: asBool(args['no-replay']) === undefined ? undefined : !asBool(args['no-replay']),
+      },
+    },
   };
 
   const { config } = await loadConfig({
@@ -298,7 +382,9 @@ async function main() {
     const existing = Array.isArray(config.mcp?.servers) ? config.mcp!.servers : [];
     config.mcp = config.mcp ?? { servers: [] };
     config.mcp.servers = [...existing, ...extraServers];
-    console.log(`[mcp] loaded ${extraServers.length} ad-hoc server(s) from ${path.resolve(args.mcp.trim())}`);
+    console.log(
+      `[mcp] loaded ${extraServers.length} ad-hoc server(s) from ${path.resolve(args.mcp.trim())}`
+    );
   }
 
   if (typeof args.replay === 'string' && args.replay.trim()) {
@@ -325,8 +411,17 @@ async function main() {
 
   // --- Bot subcommand ---
   if (args._[0] === 'bot') {
-    if (args.help) { printBotHelp(); return; }
-    await runBotSubcommand({ botTarget: args._[1] || 'telegram', config, configPath, cliCfg, all: Boolean(args.all) });
+    if (args.help) {
+      printBotHelp();
+      return;
+    }
+    await runBotSubcommand({
+      botTarget: args._[1] || 'telegram',
+      config,
+      configPath,
+      cliCfg,
+      all: Boolean(args.all),
+    });
     return;
   }
   // Runtime subcommands — catch Ctrl+C cleanly
@@ -338,9 +433,12 @@ async function main() {
     ['health', runHealthSubcommand],
   ] as const) {
     if (args._[0] === name) {
-      try { await (handler as any)(args, config); } catch (e: any) {
-        if (e?.code === 'ABORT_ERR' || e?.name === 'AbortError') { process.stdout.write('\n'); }
-        else throw e;
+      try {
+        await (handler as any)(args, config);
+      } catch (e: any) {
+        if (e?.code === 'ABORT_ERR' || e?.name === 'AbortError') {
+          process.stdout.write('\n');
+        } else throw e;
       }
       return;
     }
@@ -362,12 +460,13 @@ async function main() {
   const themeFns = await resolveTheme(config.theme ?? 'default');
   let S = makeStyler(enabled, themeFns);
 
-  const positionalInstruction = args._.filter((a: string) =>
-    a !== 'bot' && a !== 'setup' && a !== 'init'
-  ).join(' ').trim();
-  const promptFlag = typeof args.prompt === 'string'
-    ? args.prompt
-    : (typeof args.p === 'string' ? args.p : '');
+  const positionalInstruction = args._.filter(
+    (a: string) => a !== 'bot' && a !== 'setup' && a !== 'init'
+  )
+    .join(' ')
+    .trim();
+  const promptFlag =
+    typeof args.prompt === 'string' ? args.prompt : typeof args.p === 'string' ? args.p : '';
   const pipedInput = await readStdinIfPiped();
 
   let instruction = (promptFlag || positionalInstruction || '').trim();
@@ -398,11 +497,19 @@ async function main() {
         }
       }
       const rlInit = readline.createInterface({ input, output });
-      const ans = (await rlInit.question(`Generated .idlehands.md (~${summary.tokenEstimate} tokens). Write? [Y/n] `)).trim().toLowerCase();
+      const ans = (
+        await rlInit.question(
+          `Generated .idlehands.md (~${summary.tokenEstimate} tokens). Write? [Y/n] `
+        )
+      )
+        .trim()
+        .toLowerCase();
       rlInit.close();
       shouldWrite = !ans || ans === 'y' || ans === 'yes';
     } else {
-      console.error('Refusing to write .idlehands.md non-interactively. Re-run with a TTY to confirm.');
+      console.error(
+        'Refusing to write .idlehands.md non-interactively. Re-run with a TTY to confirm.'
+      );
       process.exit(2);
     }
 
@@ -418,7 +525,9 @@ async function main() {
 
   if (isOneShot) {
     if (!instruction) {
-      console.error('Usage: idlehands --one-shot "your instruction" (or -p/--prompt, or piped stdin)');
+      console.error(
+        'Usage: idlehands --one-shot "your instruction" (or -p/--prompt, or piped stdin)'
+      );
       process.exit(2);
     }
     await runOneShot({ instruction, config, S });
@@ -440,6 +549,7 @@ async function main() {
     ...trifectaCommands,
     ...toolCommands,
     ...antonCommands,
+    ...secretsCommands,
   ]);
 
   let customCommands = await loadCustomCommands(projectDir(config));
@@ -455,7 +565,7 @@ async function main() {
 
     if (trimmed.startsWith('/')) {
       const slashCommands = getSlashCommands();
-      const hits = slashCommands.filter(c => c.startsWith(trimmed));
+      const hits = slashCommands.filter((c) => c.startsWith(trimmed));
       return [hits.length ? hits : slashCommands, trimmed];
     }
 
@@ -464,11 +574,21 @@ async function main() {
     const isAtRef = token.startsWith('@');
     const tokenPath = isAtRef ? token.slice(1) : token;
     const allowBarePath = isPathCompletionContext(line);
-    if (tokenPath && (isAtRef || allowBarePath || tokenPath.includes('/') || tokenPath.startsWith('.') || tokenPath.startsWith('~'))) {
+    if (
+      tokenPath &&
+      (isAtRef ||
+        allowBarePath ||
+        tokenPath.includes('/') ||
+        tokenPath.startsWith('.') ||
+        tokenPath.startsWith('~'))
+    ) {
       const base = tokenPath.startsWith('~')
         ? path.resolve(os.homedir(), tokenPath.slice(1))
         : path.resolve(projectDir(config), tokenPath || '.');
-      const dir = tokenPath && tokenPath.includes('/') ? path.dirname(base) : path.resolve(projectDir(config));
+      const dir =
+        tokenPath && tokenPath.includes('/')
+          ? path.dirname(base)
+          : path.resolve(projectDir(config));
       const prefix = tokenPath && tokenPath.includes('/') ? path.basename(base) : tokenPath;
       try {
         const entries = fsSync.readdirSync(dir, { withFileTypes: true }) as any[];
@@ -503,7 +623,8 @@ async function main() {
         if (consumed) {
           const vimTag = vimState.mode === 'normal' ? S.dim('[N] ') : S.dim('[I] ');
           const runModeTag = config.mode === 'sys' ? S.dim('[sys] ') : '';
-          const approvalTag = config.approval_mode !== 'auto-edit' ? S.dim(`[${config.approval_mode}] `) : '';
+          const approvalTag =
+            config.approval_mode !== 'auto-edit' ? S.dim(`[${config.approval_mode}] `) : '';
           rl.setPrompt(vimTag + runModeTag + approvalTag + S.bold(S.cyan('> ')));
           rl.prompt(true);
           return;
@@ -515,7 +636,8 @@ async function main() {
         config.approval_mode = approvalModes[(idx + 1) % approvalModes.length];
         process.stderr.write(`\r\x1b[K${S.dim(`[approval: ${config.approval_mode}]`)}\n`);
         const runModeTag = config.mode === 'sys' ? S.dim('[sys] ') : '';
-        const approvalTag = config.approval_mode !== 'auto-edit' ? S.dim(`[${config.approval_mode}] `) : '';
+        const approvalTag =
+          config.approval_mode !== 'auto-edit' ? S.dim(`[${config.approval_mode}] `) : '';
         rl.setPrompt(runModeTag + approvalTag + S.bold(S.cyan('> ')));
         rl.prompt(true);
         return;
@@ -545,13 +667,14 @@ async function main() {
   const { HeadlessConfirmProvider } = await import('./confirm/headless.js');
   const { AutoApproveProvider } = await import('./confirm/auto.js');
 
-  const confirmProvider = config.approval_mode === 'yolo'
-    ? new AutoApproveProvider()
-    : config.approval_mode === 'reject'
-      ? new HeadlessConfirmProvider('reject')
-      : process.stdin.isTTY
-        ? new TerminalConfirmProvider(rl)
-        : new HeadlessConfirmProvider(config.approval_mode);
+  const confirmProvider =
+    config.approval_mode === 'yolo'
+      ? new AutoApproveProvider()
+      : config.approval_mode === 'reject'
+        ? new HeadlessConfirmProvider('reject')
+        : process.stdin.isTTY
+          ? new TerminalConfirmProvider(rl)
+          : new HeadlessConfirmProvider(config.approval_mode);
 
   let session;
   try {
@@ -572,16 +695,19 @@ async function main() {
     }
   }
 
-  const sessionName = typeof args.session === 'string' && args.session.trim() ? args.session.trim() : '';
+  const sessionName =
+    typeof args.session === 'string' && args.session.trim() ? args.session.trim() : '';
   const resumeArg = args.resume;
   const continueFlag = !!asBool(args['continue']);
   const resumeNamed = typeof resumeArg === 'string' && resumeArg.trim() ? resumeArg.trim() : '';
 
   const resumeFile = continueFlag
     ? projectSessionPath(projectDir(config))
-    : (resumeNamed
+    : resumeNamed
       ? namedSessionPath(resumeNamed)
-      : (sessionName ? namedSessionPath(sessionName) : lastSessionPath()));
+      : sessionName
+        ? namedSessionPath(sessionName)
+        : lastSessionPath();
 
   const shouldFresh = !!asBool(args.fresh);
   const shouldResume = continueFlag || !!asBool(resumeArg) || !!resumeNamed;
@@ -597,14 +723,24 @@ async function main() {
           if (!shouldResume && process.stdin.isTTY) {
             const modelLabel = parsed?.model ? `model: ${parsed.model}, ` : '';
             const turns = Math.max(0, msgs.filter((m: any) => m.role !== 'system').length);
-            const savedAt = parsed?.savedAt ? new Date(parsed.savedAt).toLocaleString() : 'unknown time';
-            const ans = (await rl.question(`Resume previous session? (${modelLabel}${turns} turns, saved ${savedAt}) [Y/n] `)).trim().toLowerCase();
+            const savedAt = parsed?.savedAt
+              ? new Date(parsed.savedAt).toLocaleString()
+              : 'unknown time';
+            const ans = (
+              await rl.question(
+                `Resume previous session? (${modelLabel}${turns} turns, saved ${savedAt}) [Y/n] `
+              )
+            )
+              .trim()
+              .toLowerCase();
             ok = !ans || ans === 'y' || ans === 'yes';
           }
           if (ok) {
             session.restore(msgs as any);
             if (parsed?.model) {
-              try { session.setModel(String(parsed.model)); } catch {}
+              try {
+                session.setModel(String(parsed.model));
+              } catch {}
             }
             console.log(S.dim(`[resume] restored session from ${resumeFile}`));
           }
@@ -617,17 +753,28 @@ async function main() {
 
   // ── Build ReplContext ──
   const ctx = buildReplContext({
-    session, config, rl, S, version,
-    vimState, customCommands, enabled, confirm,
-    sessionName, resumeFile,
-    warnFmt, errFmt,
+    session,
+    config,
+    rl,
+    S,
+    version,
+    vimState,
+    customCommands,
+    enabled,
+    confirm,
+    sessionName,
+    resumeFile,
+    warnFmt,
+    errFmt,
   });
 
   // ── Signal handlers ──
   let sigintCount = 0;
   process.on('SIGINT', () => {
     if (ctx.activeShellProc) {
-      try { ctx.activeShellProc.kill('SIGKILL'); } catch {}
+      try {
+        ctx.activeShellProc.kill('SIGKILL');
+      } catch {}
       process.stdout.write('\n');
       ctx.activeShellProc = null;
       return;
@@ -638,11 +785,18 @@ async function main() {
       return;
     }
     sigintCount++;
-    if (sigintCount >= 2) { void ctx.shutdown(130); return; }
+    if (sigintCount >= 2) {
+      void ctx.shutdown(130);
+      return;
+    }
     session.cancel();
-    setTimeout(() => { sigintCount = 0; }, 1500).unref();
+    setTimeout(() => {
+      sigintCount = 0;
+    }, 1500).unref();
   });
-  process.on('SIGTERM', () => { void ctx.shutdown(143); });
+  process.on('SIGTERM', () => {
+    void ctx.shutdown(143);
+  });
 
   // ── Startup ──
   const startupGitSummary = await loadGitStartupSummary(projectDir(config)).catch(() => '');
@@ -661,7 +815,9 @@ async function main() {
         `status: ${startupHealth.statusText || 'ok'}`,
         startupHealth.model ? `model: ${startupHealth.model}` : undefined,
         startupHealth.contextSize ? `ctx: ${formatCount(startupHealth.contextSize)}` : undefined,
-        startupHealth.slotCount !== undefined ? `slots: ${formatCount(startupHealth.slotCount)}` : undefined,
+        startupHealth.slotCount !== undefined
+          ? `slots: ${formatCount(startupHealth.slotCount)}`
+          : undefined,
       ].filter(Boolean);
       if (startupBits.length) console.log(S.dim(`[server] ${startupBits.join(' | ')}`));
     }
@@ -674,8 +830,14 @@ async function main() {
       const src: InstallSource = config.install_source || detectInstallSource();
       void dailyUpdateCheck(version, src, { timeoutMs: 3000, offline: !!config.offline })
         .then((updateInfo) => {
-          if (updateInfo) console.log(S.yellow(`\n  Update available: ${updateInfo.current} → ${updateInfo.latest} (run: idlehands upgrade)\n`));
-        }).catch(() => {});
+          if (updateInfo)
+            console.log(
+              S.yellow(
+                `\n  Update available: ${updateInfo.current} → ${updateInfo.latest} (run: idlehands upgrade)\n`
+              )
+            );
+        })
+        .catch(() => {});
     }
   } catch {}
 
@@ -683,14 +845,17 @@ async function main() {
   while (true) {
     let raw: string;
     const runModeTag = config.mode === 'sys' ? S.dim('[sys] ') : '';
-    const approvalTag = config.approval_mode !== 'auto-edit' ? S.dim(`[${config.approval_mode}] `) : '';
+    const approvalTag =
+      config.approval_mode !== 'auto-edit' ? S.dim(`[${config.approval_mode}] `) : '';
     const prompt = ctx.shellMode
       ? S.bold(S.yellow('$ '))
       : runModeTag + approvalTag + S.bold(S.cyan('> '));
     try {
       if (ctx.statusBarEnabled) ctx.statusBar.render(ctx.lastStatusLine);
       raw = await readUserInput(rl, prompt);
-    } catch { break; }
+    } catch {
+      break;
+    }
     let line = raw.trim();
     if (!line) continue;
 
@@ -702,7 +867,11 @@ async function main() {
     // Shell mode toggle
     if (line === '!') {
       ctx.shellMode = !ctx.shellMode;
-      console.log(ctx.shellMode ? S.dim('[shell] direct shell mode ON (use ! or /exit-shell to leave)') : S.dim('[shell] direct shell mode OFF'));
+      console.log(
+        ctx.shellMode
+          ? S.dim('[shell] direct shell mode ON (use ! or /exit-shell to leave)')
+          : S.dim('[shell] direct shell mode OFF')
+      );
       continue;
     }
     if (line === '/exit-shell') {
@@ -716,7 +885,9 @@ async function main() {
       const isShell = (ctx.shellMode && !line.startsWith('/')) || /^!{1,2}\s*\S/.test(line);
       const isAgentTurn = !line.startsWith('/');
       if (isShell || isAgentTurn) {
-        console.log('⚠️  Anton is running. File changes may conflict. Use /anton stop first, or proceed at your own risk.');
+        console.log(
+          '⚠️  Anton is running. File changes may conflict. Use /anton stop first, or proceed at your own risk.'
+        );
       }
     }
 
@@ -733,11 +904,21 @@ async function main() {
 
     // ── Agent turn ──
     try {
-      const expandedRes = await expandAtFileRefs(line, projectDir(config), config.context_max_tokens ?? 8192);
+      const expandedRes = await expandAtFileRefs(
+        line,
+        projectDir(config),
+        config.context_max_tokens ?? 8192
+      );
       for (const w of expandedRes.warnings) console.log(S.dim(w));
-      const promptText = ctx.pendingTemplate ? `${ctx.pendingTemplate}\n\n${expandedRes.text}` : expandedRes.text;
+      const promptText = ctx.pendingTemplate
+        ? `${ctx.pendingTemplate}\n\n${expandedRes.text}`
+        : expandedRes.text;
       ctx.pendingTemplate = null;
-      const imageExpanded = await expandPromptImages(promptText, projectDir(config), session.supportsVision);
+      const imageExpanded = await expandPromptImages(
+        promptText,
+        projectDir(config),
+        session.supportsVision
+      );
       for (const w of imageExpanded.warnings) console.log(S.dim(w));
       ctx.lastRunnableInput = imageExpanded.content;
       const res = await runAgentTurnWithSpinner(ctx, imageExpanded.content);
@@ -759,7 +940,6 @@ async function main() {
   rl.close();
 }
 
-
 main().catch((e) => {
   if (e?.code === 'ABORT_ERR' || e?.name === 'AbortError') {
     process.stdout.write('\n');
@@ -769,7 +949,9 @@ main().catch((e) => {
   if (msg.includes('No models found')) {
     console.error(`\n  ${msg}`);
     console.error(`\n  To set up runtime orchestration, run: idlehands setup`);
-    console.error(`  Or configure manually: idlehands hosts add → idlehands backends add → idlehands models add\n`);
+    console.error(
+      `  Or configure manually: idlehands hosts add → idlehands backends add → idlehands models add\n`
+    );
   } else {
     console.error(msg);
   }

@@ -1,4 +1,5 @@
 import pc from 'picocolors';
+
 import type { ThemeFns } from './themes.js';
 
 type ColorMode = 'auto' | 'always' | 'never';
@@ -44,7 +45,7 @@ export function makeStyler(enabled: boolean, theme?: ThemeFns): Styler {
     green: wrap(t?.green ?? pc.green),
     cyan: wrap(t?.cyan ?? pc.cyan),
     magenta: wrap(t?.magenta ?? pc.magenta),
-    blue: wrap(t?.blue ?? pc.blue)
+    blue: wrap(t?.blue ?? pc.blue),
   };
 }
 

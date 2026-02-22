@@ -4,8 +4,11 @@ export type ProbeStatus = 'ready' | 'loading' | 'down' | 'unknown';
 
 export type HostRunner = (
   command: string,
-  host: { transport: string; connection: { host?: string; port?: number; user?: string; key_path?: string } },
-  timeoutMs?: number,
+  host: {
+    transport: string;
+    connection: { host?: string; port?: number; user?: string; key_path?: string };
+  },
+  timeoutMs?: number
 ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
 
 export interface ModelsProbeResult {
@@ -37,7 +40,7 @@ export async function probeModelsEndpoint(
   runOnHost: HostRunner,
   host: RuntimeHost,
   port: number,
-  timeoutMs = 5000,
+  timeoutMs = 5000
 ): Promise<ModelsProbeResult> {
   const modelsCmd = `curl -sS -m 4 -o - -w "\\n__HTTP__:%{http_code}" http://127.0.0.1:${port}/v1/models`;
   const modelsRes = await runOnHost(modelsCmd, host, timeoutMs);
@@ -87,7 +90,7 @@ export async function waitForModelsReady(
   runOnHost: HostRunner,
   host: RuntimeHost,
   port: number,
-  opts: { timeoutMs?: number; intervalMs?: number; expectedModelId?: string } = {},
+  opts: { timeoutMs?: number; intervalMs?: number; expectedModelId?: string } = {}
 ): Promise<{ ok: boolean; attempts: number; last: ModelsProbeResult; reason?: string }> {
   const timeoutMs = Math.max(1000, opts.timeoutMs ?? 60_000);
   const intervalMs = Math.max(250, opts.intervalMs ?? 1500);

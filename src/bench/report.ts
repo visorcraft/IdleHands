@@ -32,7 +32,9 @@ function median(sorted: number[]) {
 async function main() {
   const resultsDir = path.join(process.cwd(), 'bench', 'results');
   const ents = await fs.readdir(resultsDir, { withFileTypes: true }).catch(() => []);
-  const files = ents.filter((e) => e.isFile() && e.name.endsWith('.jsonl')).map((e) => path.join(resultsDir, e.name));
+  const files = ents
+    .filter((e) => e.isFile() && e.name.endsWith('.jsonl'))
+    .map((e) => path.join(resultsDir, e.name));
 
   const rows: Row[] = [];
   for (const f of files) {
@@ -66,7 +68,10 @@ async function main() {
     const oks = arr.filter((r) => r.ok);
     const failCount = arr.length - oks.length;
 
-    const ttc = oks.map((r) => r.ttc_ms).filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
+    const ttc = oks
+      .map((r) => r.ttc_ms)
+      .filter((n) => Number.isFinite(n))
+      .sort((a, b) => a - b);
     const ttfr = oks
       .map((r: any) => r.ttfr_ms)
       .filter((n: any): n is number => typeof n === 'number' && Number.isFinite(n))
@@ -88,7 +93,9 @@ async function main() {
       .sort((a, b) => a - b);
 
     if (init.length) {
-      lines.push(`- INIT median: ${median(init).toFixed(1)} ms (session init: model pick + warmup)`);
+      lines.push(
+        `- INIT median: ${median(init).toFixed(1)} ms (session init: model pick + warmup)`
+      );
       lines.push(`- INIT p95:    ${percentile(init, 0.95).toFixed(1)} ms`);
     }
 
@@ -113,10 +120,16 @@ async function main() {
     const warmup = oks.find((r: any) => r.iter === 1);
     const steady = oks.filter((r: any) => r.iter !== 1);
     if (warmup && steady.length >= 2) {
-      const steadyTtc = steady.map((r) => r.ttc_ms).filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
+      const steadyTtc = steady
+        .map((r) => r.ttc_ms)
+        .filter((n) => Number.isFinite(n))
+        .sort((a, b) => a - b);
       if (steadyTtc.length) {
-        const warmupPct = warmup.ttc_ms > 0 ? ((warmup.ttc_ms / median(steadyTtc) - 1) * 100).toFixed(0) : '?';
-        lines.push(`- Warmup: iter=1 TTC ${warmup.ttc_ms.toFixed(1)} ms (+${warmupPct}% vs steady median ${median(steadyTtc).toFixed(1)} ms)`);
+        const warmupPct =
+          warmup.ttc_ms > 0 ? ((warmup.ttc_ms / median(steadyTtc) - 1) * 100).toFixed(0) : '?';
+        lines.push(
+          `- Warmup: iter=1 TTC ${warmup.ttc_ms.toFixed(1)} ms (+${warmupPct}% vs steady median ${median(steadyTtc).toFixed(1)} ms)`
+        );
       }
     }
 

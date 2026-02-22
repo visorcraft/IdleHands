@@ -122,7 +122,12 @@ export interface ResolvedModel {
   runtime_defaults?: ModelRuntimeDefaults;
 }
 
-export type PlanStepKind = 'stop_model' | 'apply_backend' | 'verify_backend' | 'start_model' | 'probe_health';
+export type PlanStepKind =
+  | 'stop_model'
+  | 'apply_backend'
+  | 'verify_backend'
+  | 'start_model'
+  | 'probe_health';
 
 export interface PlanStep {
   kind: PlanStepKind;
