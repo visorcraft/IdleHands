@@ -2824,6 +2824,7 @@ export async function createSession(opts: {
           const repeatedReadFileSigs = new Set<string>();
 
           let shouldForceToollessRecovery = false;
+          const criticalLoopSigs = new Set<string>();
           for (const tc of toolCallsArr) {
             const callId = resolveCallId(tc);
             const args = parsedArgsByCallId.get(callId) ?? {};
@@ -2847,11 +2848,9 @@ export async function createSession(opts: {
               }
             }
 
-            if (
-              toolLoopGuard.shouldDisableToolsNextTurn(detected) &&
-              isReadOnlyToolDynamic(tc.function.name)
-            ) {
+            if (toolLoopGuard.shouldDisableToolsNextTurn(detected)) {
               shouldForceToollessRecovery = true;
+              criticalLoopSigs.add(detected.signature);
             }
           }
 
@@ -2862,6 +2861,13 @@ export async function createSession(opts: {
             sigCounts.set(sig, (sigCounts.get(sig) ?? 0) + 1);
             const sigMeta = sigMetaBySig.get(sig);
             const toolName = sigMeta?.toolName ?? sig.split(':')[0];
+
+            if (criticalLoopSigs.has(sig)) {
+              // Critical detector already fired for this signature; recover next turn
+              // with tools disabled instead of throwing in per-tool hard-break logic.
+              shouldForceToollessRecovery = true;
+              continue;
+            }
 
             // For exec loops, only break if nothing changed since last identical exec.
             if (toolName === 'exec') {
