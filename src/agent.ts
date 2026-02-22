@@ -77,6 +77,12 @@ function looksLikeReadOnlyExecCommand(command: string): boolean {
   if (/^\s*(?:grep|rg|ag|ack|find|ls|cat|head|tail|wc|stat)\b/.test(cmd)) return true;
   if (/\|\s*(?:grep|rg|ag|ack)\b/.test(cmd)) return true;
 
+  // Additional read-only commands: file info, path lookup, system/user info
+  if (/^\s*(?:file|which|type|uname|env|printenv|id|whoami|pwd)\b/.test(cmd)) return true;
+
+  // Git read-only subcommands that aren't covered above
+  if (/\bgit\b[^\n|;&]*\b(?:blame|remote|config\s+--(?:get|list|global|local|system))\b/.test(cmd)) return true;
+
   return false;
 }
 
