@@ -358,6 +358,8 @@ export async function undo_path(ctx: ToolContext, args: any) {
   }
   if (ctx.dryRun) return `dry-run: would restore latest backup for ${redactedPath}`;
   return await restoreLatestBackup(p, ctx);
+}
+
 export async function read_file(ctx: ToolContext, args: any) {
   const p = resolvePath(ctx, args?.path);
   const absCwd = path.resolve(ctx.cwd);
@@ -578,6 +580,9 @@ export async function write_file(ctx: ToolContext, args: any) {
   const afterBuf = Buffer.from(content, 'utf8');
   const replayNote = await checkpointReplay(ctx, { op: 'write_file', filePath: p, before: beforeBuf, after: afterBuf });
 
+  return `wrote ${redactedPath} (${Buffer.byteLength(content, 'utf8')} bytes)${replayNote}${cwdWarning}`;
+}
+
 export async function insert_file(ctx: ToolContext, args: any) {
   const p = resolvePath(ctx, args?.path);
   const absCwd = path.resolve(ctx.cwd);
@@ -670,6 +675,8 @@ export async function insert_file(ctx: ToolContext, args: any) {
 
   const cwdWarning = checkCwdWarning('insert_file', p, ctx);
   return `inserted into ${redactedPath} at ${idx}${replayNote}${cwdWarning}`;
+}
+
 export async function edit_file(ctx: ToolContext, args: any) {
   const p = resolvePath(ctx, args?.path);
   const absCwd = path.resolve(ctx.cwd);
@@ -774,6 +781,15 @@ export async function edit_file(ctx: ToolContext, args: any) {
   const cwdWarning = checkCwdWarning('edit_file', p, ctx);
   return `edited ${redactedPath} (replace_all=${replaceAll})${replayNote}${cwdWarning}`;
 }
+
+type PatchTouchInfo = {
+  paths: string[]; // normalized relative paths
+  created: Set<string>;
+  deleted: Set<string>;
+};
+
+function normalizePatchPath(p: string): string {
+  let s = String(p ?? '').trim();
   if (!s || s === '/dev/null') return '';
 
   // Strip quotes some generators add
@@ -912,23 +928,23 @@ async function runCommandWithStdin(
 
 export async function edit_range(ctx: ToolContext, args: any) {
   const p = resolvePath(ctx, args?.path);
-  const absCwd = path.resolve(ctx.cwd);
-  const redactedPath = redactPath(p, absCwd);
   const startLine = Number(args?.start_line);
   const endLine = Number(args?.end_line);
   const rawReplacement = args?.replacement;
   const replacement = typeof rawReplacement === 'string' ? rawReplacement
     : (rawReplacement != null && typeof rawReplacement === 'object' ? JSON.stringify(rawReplacement, null, 2) : undefined);
+
   if (!p) throw new Error('edit_range: missing path');
   if (!Number.isFinite(startLine) || startLine < 1) throw new Error('edit_range: missing/invalid start_line');
   if (!Number.isFinite(endLine) || endLine < startLine) throw new Error('edit_range: missing/invalid end_line');
   if (replacement == null) throw new Error('edit_range: missing replacement (got ' + typeof rawReplacement + ')');
 
-  // Detect double-escaped newlines (common when the model passes a string with literal \\n)
-  if (replacement.includes('\\\\n')) {
+  const hasLiteralEscapedNewlines = replacement.includes('\\n');
+  const hasRealNewlines = replacement.includes('\n') || replacement.includes('\r');
+  if (hasLiteralEscapedNewlines && !hasRealNewlines) {
     throw new Error(
       'edit_range: replacement appears double-escaped (contains literal "\\n" sequences). ' +
-      'Remove the extra backslashes. For example, use "\\n" instead of "\\\\n".'
+      'Resend replacement with REAL newline characters (multi-line string), not escaped backslash-n text.'
     );
   }
 
@@ -942,7 +958,7 @@ export async function edit_range(ctx: ToolContext, args: any) {
   if (pathVerdict.tier === 'cautious' && !ctx.noConfirm) {
     if (ctx.confirm) {
       const ok = await ctx.confirm(
-        pathVerdict.prompt || `Edit ${redactedPath} lines ${startLine}-${endLine}?`,
+        pathVerdict.prompt || `Edit range in ${p}?`,
         { tool: 'edit_range', args: { path: p, start_line: startLine, end_line: endLine } }
       );
       if (!ok) throw new Error(`edit_range: cancelled by user (${pathVerdict.reason})`);
@@ -951,13 +967,20 @@ export async function edit_range(ctx: ToolContext, args: any) {
     }
   }
 
-  if (ctx.dryRun) return `dry-run: would edit_range ${redactedPath} lines ${startLine}-${endLine} (${Buffer.byteLength(replacement, 'utf8')} bytes)`;
+  if (ctx.dryRun) return `dry-run: would edit_range ${p} lines ${startLine}-${endLine} (${Buffer.byteLength(replacement, 'utf8')} bytes)`;
 
-  const cur = await fs.readFile(p, 'utf8').catch((e: any) => {
-    throw new Error(`edit_range: cannot read ${redactedPath}: ${e?.message ?? String(e)}`);
+  // Phase 9d: snapshot /etc/ files before editing
+  if (ctx.mode === 'sys' && ctx.vault) {
+    await snapshotBeforeEdit(ctx.vault, p).catch(() => {});
+  }
+
+  const beforeText = await fs.readFile(p, 'utf8').catch((e: any) => {
+    throw new Error(`edit_range: cannot read ${p}: ${e?.message ?? String(e)}`);
   });
 
-  const lines = cur.split(/\r?\n/);
+  const eol = beforeText.includes('\r\n') ? '\r\n' : '\n';
+  const lines = beforeText.split(/\r?\n/);
+
   if (startLine > lines.length) {
     throw new Error(`edit_range: start_line ${startLine} out of range (file has ${lines.length} lines)`);
   }
@@ -965,30 +988,42 @@ export async function edit_range(ctx: ToolContext, args: any) {
     throw new Error(`edit_range: end_line ${endLine} out of range (file has ${lines.length} lines)`);
   }
 
-  const beforeLines = lines.slice(startLine - 1, endLine);
-  const beforeText = beforeLines.join('\n');
-  const afterText = replacement;
+  const startIdx = startLine - 1;
+  const deleteCount = endLine - startLine + 1;
 
-  // Detect original newline style
-  const eol = cur.includes('\r\n') ? '\r\n' : '\n';
+  // For deletion, allow empty replacement to remove the range without leaving a blank line.
+  const replacementLines = replacement === '' ? [] : replacement.split(/\r?\n/);
+  lines.splice(startIdx, deleteCount, ...replacementLines);
 
-  const nextLines = [...lines.slice(0, startLine - 1), afterText, ...lines.slice(endLine)];
-  const next = nextLines.join(eol);
+  const out = lines.join(eol);
 
   await backupFile(p, ctx);
-  await atomicWrite(p, next);
+  await atomicWrite(p, out);
   ctx.onMutation?.(p);
 
   const replayNote = await checkpointReplay(ctx, {
     op: 'edit_range',
     filePath: p,
     before: Buffer.from(beforeText, 'utf8'),
-    after: Buffer.from(afterText, 'utf8')
+    after: Buffer.from(out, 'utf8')
   });
 
   const cwdWarning = checkCwdWarning('edit_range', p, ctx);
-  return `edited ${redactedPath} lines ${startLine}-${endLine}${replayNote}${cwdWarning}`;
+  return `edited ${p} lines ${startLine}-${endLine}${replayNote}${cwdWarning}`;
 }
+
+export async function apply_patch(ctx: ToolContext, args: any) {
+  const rawPatch = args?.patch;
+  const patchText = typeof rawPatch === 'string' ? rawPatch
+    : (rawPatch != null && typeof rawPatch === 'object' ? JSON.stringify(rawPatch, null, 2) : undefined);
+
+  const rawFiles = Array.isArray(args?.files) ? args.files : [];
+  const files = rawFiles
+    .map((f: any) => (typeof f === 'string' ? f.trim() : ''))
+    .filter(Boolean);
+
+  const stripRaw = Number(args?.strip);
+  const strip = Number.isFinite(stripRaw) ? Math.max(0, Math.min(5, Math.floor(stripRaw))) : 0;
 
   if (!patchText) throw new Error('apply_patch: missing patch');
   if (!files.length) throw new Error('apply_patch: missing files[]');
@@ -1017,17 +1052,17 @@ export async function edit_range(ctx: ToolContext, args: any) {
   }
 
   const cautious = verdicts.filter(({ v }) => v.tier === 'cautious');
-      after
-    });
-    replayNotes += replayNote;
-
-    cwdWarnings += checkCwdWarning('apply_patch', abs, ctx);
-  }
-
-  // Redact paths in the output for security
-  const redactedPaths = touched.paths.map(p => redactPath(resolvePath(ctx, p), path.resolve(ctx.cwd)));
-  return `applied patch (${touched.paths.length} files): ${redactedPaths.join(', ')}${replayNotes}${cwdWarnings}`;
-}
+  if (cautious.length && !ctx.noConfirm) {
+    if (ctx.confirm) {
+      const preview = patchText.length > 4000 ? patchText.slice(0, 4000) + '\n[truncated]' : patchText;
+      const ok = await ctx.confirm(
+        `Apply patch touching ${touched.paths.length} file(s)?\n- ${touched.paths.join('\n- ')}\n\nProceed? (y/N) `,
+        { tool: 'apply_patch', args: { files: touched.paths, strip }, diff: preview }
+      );
+      if (!ok) throw new Error('apply_patch: cancelled by user');
+    } else {
+      throw new Error('apply_patch: blocked (cautious paths) without --no-confirm/--yolo');
+    }
   }
 
   const maxToolBytes = ctx.maxExecBytes ?? DEFAULT_MAX_EXEC_BYTES;
@@ -1043,7 +1078,8 @@ export async function edit_range(ctx: ToolContext, args: any) {
       const chk = await runCommandWithStdin('patch', [stripArg, '--dry-run', '--batch'], patchText, ctx.cwd, maxToolBytes);
       if (chk.rc !== 0) throw new Error(`apply_patch: patch --dry-run failed:\n${chk.err || chk.out}`);
     }
-    return `dry-run: patch would apply cleanly (${touched.paths.length} files): ${touched.paths.join(', ')}`;
+    const redactedPaths = touched.paths.map((rel) => redactPath(resolvePath(ctx, rel), path.resolve(ctx.cwd)));
+    return `dry-run: patch would apply cleanly (${touched.paths.length} files): ${redactedPaths.join(', ')}`;
   }
 
   // Snapshot + backup before applying
@@ -1093,7 +1129,8 @@ export async function edit_range(ctx: ToolContext, args: any) {
     cwdWarnings += checkCwdWarning('apply_patch', abs, ctx);
   }
 
-  return `applied patch (${touched.paths.length} files): ${touched.paths.join(', ')}${replayNotes}${cwdWarnings}`;
+  const redactedPaths = touched.paths.map((rel) => redactPath(resolvePath(ctx, rel), path.resolve(ctx.cwd)));
+  return `applied patch (${touched.paths.length} files): ${redactedPaths.join(', ')}${replayNotes}${cwdWarnings}`;
 }
 
 export async function list_dir(ctx: ToolContext, args: any) {
@@ -1223,10 +1260,6 @@ export async function search_files(ctx: ToolContext, args: any) {
   if (out.length >= maxResults) out.push(`[truncated after ${maxResults} results]`);
   if (!out.length) return `No matches for pattern \"${pattern}\" in ${redactPath(root, absCwd)}.`;
   return out.join('\\n');
-}
-  const result = out.join('\n');
-  if (!result) return `No matches for pattern "${pattern}" in ${root}. STOP — do NOT read files individually to search. Try a broader regex pattern, different keywords, or use exec: grep -rn "keyword" ${root}`;
-  return result;
 }
 
 function stripSimpleQuotedSegments(s: string): string {
@@ -1745,11 +1778,6 @@ export async function vault_search(ctx: ToolContext, args: any) {
 /** Phase 9: sys_context tool (mode-gated in agent schema). */
 export async function sys_context(ctx: ToolContext, args: any) {
   return sysContextTool(ctx, args);
-}
-
-function resolvePath(ctx: ToolContext, p: any): string {
-  if (typeof p !== 'string' || !p.trim()) throw new Error('missing path');
-  return path.resolve(ctx.cwd, p);
 }
 
 /**
