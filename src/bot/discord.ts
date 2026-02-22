@@ -747,7 +747,6 @@ When you escalate, your request will be re-run on a more capable model.`;
           '**IdleHands Commands**',
           '',
           '/help — This message',
-        '/version — Show version',
           '/version — Show version',
           '/new — Start fresh session',
           '/status — Session stats',
