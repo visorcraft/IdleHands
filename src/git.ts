@@ -145,6 +145,19 @@ export function cleanUntracked(cwd: string): void {
   }
 }
 
+export function getUntrackedFiles(cwd: string): string[] {
+  const res = runGit(cwd, ['ls-files', '--others', '--exclude-standard'], 30000);
+  return res.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+}
+
+export function removeUntrackedFiles(cwd: string, files: string[]): void {
+  if (files.length === 0) return;
+  const res = runGit(cwd, ['clean', '-f', '--', ...files], 30000);
+  if (res.status !== 0) {
+    throw new Error(`git clean files failed: ${res.stderr || res.stdout || 'unknown error'}`);
+  }
+}
+
 export function createBranch(cwd: string, name: string): void {
   const res = runGit(cwd, ['checkout', '-b', name], 30000);
   if (res.status !== 0) {

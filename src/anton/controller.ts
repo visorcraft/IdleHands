@@ -13,6 +13,8 @@ import {
   restoreTrackedChanges,
   cleanUntracked,
   createBranch,
+  getUntrackedFiles,
+  removeUntrackedFiles,
 } from '../git.js';
 import type { LensStore } from '../lens.js';
 import { execute, loadActiveRuntime, runOnHost } from '../runtime/executor.js';
@@ -226,7 +228,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
       void touchAntonLock();
       try {
         progress.onHeartbeat?.();
-      } catch {}
+      } catch { }
     }, 5000);
 
     // 2. Parse task file
@@ -381,7 +383,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           controller.abort();
           try {
             session?.cancel();
-          } catch {}
+          } catch { }
         };
 
         const timeoutHandle = setTimeout(() => {
@@ -393,6 +395,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             cancelCurrentAttempt();
           }
         }, 250);
+
+        const initialUntrackedFiles = new Set(getUntrackedFiles(config.projectDir));
 
         try {
           const taskStartMs = Date.now();
@@ -489,16 +493,16 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               diff,
               createVerifySession: config.verifyAi
                 ? async () => {
-                    const verifyConfig = buildVerifyConfig(idlehandsConfig, config);
-                    const session = await createSessionFn(verifyConfig, apiKey);
-                    return {
-                      ask: async (prompt: string) => {
-                        const result = await session.ask(prompt);
-                        return result.text;
-                      },
-                      close: () => session.close(),
-                    };
-                  }
+                  const verifyConfig = buildVerifyConfig(idlehandsConfig, config);
+                  const session = await createSessionFn(verifyConfig, apiKey);
+                  return {
+                    ask: async (prompt: string) => {
+                      const result = await session.ask(prompt);
+                      return result.text;
+                    },
+                    close: () => session.close(),
+                  };
+                }
                 : undefined,
             });
 
@@ -524,6 +528,12 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
 
               if (config.aggressiveCleanOnFail) {
                 await cleanUntracked(config.projectDir);
+              } else {
+                const currentUntracked = getUntrackedFiles(config.projectDir);
+                const newlyCreated = currentUntracked.filter((f) => !initialUntrackedFiles.has(f));
+                if (newlyCreated.length > 0) {
+                  removeUntrackedFiles(config.projectDir, newlyCreated);
+                }
               }
             }
           }
@@ -557,6 +567,22 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           };
 
           totalTokens += attempt.tokensUsed;
+
+          try {
+            await restoreTrackedChanges(config.projectDir);
+
+            if (config.aggressiveCleanOnFail) {
+              await cleanUntracked(config.projectDir);
+            } else {
+              const currentUntracked = getUntrackedFiles(config.projectDir);
+              const newlyCreated = currentUntracked.filter((f) => !initialUntrackedFiles.has(f));
+              if (newlyCreated.length > 0) {
+                removeUntrackedFiles(config.projectDir, newlyCreated);
+              }
+            }
+          } catch (rollbackErr) {
+            // best effort
+          }
         } finally {
           clearTimeout(timeoutHandle);
           clearInterval(abortPoll);
