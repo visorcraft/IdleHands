@@ -9,6 +9,7 @@ All notable changes to Idle Hands are documented in this file.
 - **Read loop threshold increased**: `read_file`, `read_files`, `list_dir` now allow up to 6 consecutive identical calls (up from 4) before hard break.
 - **Stronger 4x warning**: At 4th consecutive call, model receives "DO NOT make another identical call for this file, it HAS NOT CHANGED. Move on to the NEXT step NOW."
 - **Read cache reuse**: From 2nd call onward, cached output is reused to avoid context bloat while still allowing the model to continue.
+- **Git operations cwd fix**: Git functions now call `git` directly via `spawnSync` instead of spawning `bash -c`, fixing cwd issues under Node test runner where login shell would reset working directory to process.cwd().
 
 ## [1.1.16] - 2026-02-22
 
