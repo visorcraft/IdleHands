@@ -1642,9 +1642,9 @@ export async function createSession(opts: {
 
   const runCompactionWithLock = async (reason: string, runner: () => Promise<CompactionOutcome>): Promise<CompactionOutcome> => {
     const prev = compactionLockTail;
-    let release: (() => void) | null = null;
+    let release: () => void = () => {};
     compactionLockTail = new Promise<void>((resolve) => {
-      release = resolve;
+      release = () => resolve();
     });
 
     await prev;
@@ -1689,7 +1689,7 @@ export async function createSession(opts: {
       };
       throw e;
     } finally {
-      release?.();
+      release();
     }
   };
 
