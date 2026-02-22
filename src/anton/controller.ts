@@ -205,13 +205,26 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         const sessionConfig = buildSessionConfig(idlehandsConfig, config);
         session = await createSessionFn(sessionConfig, apiKey);
         
-        // Set up timeout
+        // Set up timeout + stop propagation for the currently running attempt.
+        // /anton stop flips abortSignal.aborted; we poll that and cancel session.ask immediately
+        // instead of waiting for the task attempt to naturally finish.
         const controller = new AbortController();
-        const timeoutHandle = setTimeout(() => {
+        const cancelCurrentAttempt = () => {
+          if (controller.signal.aborted) return;
           controller.abort();
-          session?.cancel();
+          try { session?.cancel(); } catch {}
+        };
+
+        const timeoutHandle = setTimeout(() => {
+          cancelCurrentAttempt();
         }, config.taskTimeoutSec * 1000);
-        
+
+        const abortPoll = setInterval(() => {
+          if (abortSignal.aborted) {
+            cancelCurrentAttempt();
+          }
+        }, 250);
+
         try {
           const taskStartMs = Date.now();
           
@@ -227,9 +240,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             lens,
             maxContextTokens: idlehandsConfig.context_max_tokens || 8000,
           });
-          const result = await session.ask(prompt);
-          
-          clearTimeout(timeoutHandle);
+          const result = await session.ask(prompt, { signal: controller.signal } as any);
           
           const taskEndMs = Date.now();
           const durationMs = taskEndMs - taskStartMs;
@@ -323,8 +334,6 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           iterationsUsed++;
           
         } catch (error) {
-          clearTimeout(timeoutHandle);
-          
           const isTimeout = controller.signal.aborted;
           attempt = {
             taskKey: currentTask.key,
@@ -339,6 +348,9 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           };
           
           totalTokens += attempt.tokensUsed;
+        } finally {
+          clearTimeout(timeoutHandle);
+          clearInterval(abortPoll);
         }
         
       } finally {

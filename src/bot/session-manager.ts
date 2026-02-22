@@ -310,6 +310,10 @@ When you escalate, your request will be re-run on a more capable model.`;
 
     managed.state = 'resetting';
     managed.pendingQueue = [];
+    if (managed.antonAbortSignal) managed.antonAbortSignal.aborted = true;
+    managed.antonActive = false;
+    managed.antonAbortSignal = null;
+    managed.antonProgress = null;
     try { managed.activeAbortController?.abort(); } catch {}
     try { managed.session.cancel(); } catch {}
 
@@ -329,6 +333,10 @@ When you escalate, your request will be re-run on a more capable model.`;
     if (!managed) return false;
     managed.state = 'resetting';
     managed.pendingQueue = [];
+    if (managed.antonAbortSignal) managed.antonAbortSignal.aborted = true;
+    managed.antonActive = false;
+    managed.antonAbortSignal = null;
+    managed.antonProgress = null;
     try { managed.activeAbortController?.abort(); } catch {}
     try { managed.session.cancel(); } catch {}
     this.sessions.delete(chatId);
@@ -441,7 +449,7 @@ When you escalate, your request will be re-run on a more capable model.`;
     const now = Date.now();
     const expired: number[] = [];
     for (const [chatId, managed] of this.sessions) {
-      if (now - managed.lastActivity > this.sessionTimeoutMs && !managed.inFlight) {
+      if (now - managed.lastActivity > this.sessionTimeoutMs && !managed.inFlight && !managed.antonActive) {
         this.destroy(chatId);
         expired.push(chatId);
       }

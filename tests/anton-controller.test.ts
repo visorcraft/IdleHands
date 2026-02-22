@@ -322,6 +322,63 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.equal(result.stopReason, 'abort');
   });
 
+  test('4b. Abort signal cancels an in-flight attempt', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, [
+      '# Test Tasks',
+      '',
+      '- [ ] Long Task',
+    ].join('\n'));
+
+    const config = createTestConfig({
+      taskFile,
+      projectDir: tmpDir,
+      taskTimeoutSec: 120,
+      totalTimeoutSec: 120,
+    });
+    const progress = createMockProgressCallback();
+    const abortSignal = { aborted: false };
+
+    const createSession = async (): Promise<AgentSession> => {
+      const base = createMockSession(['<anton-result>status: done</anton-result>']);
+      return {
+        ...base,
+        async ask(_prompt: any, hooks?: any): Promise<AgentResult> {
+          return await new Promise<AgentResult>((resolve, reject) => {
+            const sig: AbortSignal | undefined = hooks?.signal;
+            if (!sig) {
+              reject(new Error('missing abort signal'));
+              return;
+            }
+            const onAbort = () => reject(new Error('aborted'));
+            sig.addEventListener('abort', onAbort, { once: true });
+            // Simulate a very long task that should be interrupted by /anton stop.
+            setTimeout(() => {
+              sig.removeEventListener('abort', onAbort);
+              resolve({ text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 });
+            }, 60_000);
+          });
+        },
+      };
+    };
+
+    const started = Date.now();
+    setTimeout(() => {
+      abortSignal.aborted = true;
+    }, 200);
+
+    const result = await runAnton({
+      config,
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress,
+      abortSignal,
+      createSession,
+    });
+
+    assert.equal(result.stopReason, 'abort');
+    assert.ok(Date.now() - started < 10_000, 'abort should stop run promptly');
+  });
+
   test('5. Max iterations → stopReason=\'max_iterations\'', async () => {
     const tmpDir = await createTempGitRepo();
     const taskFile = await createTaskFile(tmpDir, [

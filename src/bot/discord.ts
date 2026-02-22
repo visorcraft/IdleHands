@@ -247,6 +247,10 @@ When you escalate, your request will be re-run on a more capable model.`;
     if (!s) return;
     s.state = 'resetting';
     s.pendingQueue = [];
+    if (s.antonAbortSignal) s.antonAbortSignal.aborted = true;
+    s.antonActive = false;
+    s.antonAbortSignal = null;
+    s.antonProgress = null;
     try { s.activeAbortController?.abort(); } catch {}
     try { s.session.cancel(); } catch {}
     sessions.delete(key);
@@ -255,7 +259,7 @@ When you escalate, your request will be re-run on a more capable model.`;
   const cleanupTimer = setInterval(() => {
     const now = Date.now();
     for (const [key, s] of sessions) {
-      if (!s.inFlight && now - s.lastActivity > sessionTimeoutMs) {
+      if (!s.inFlight && !s.antonActive && now - s.lastActivity > sessionTimeoutMs) {
         destroySession(key);
       }
     }
@@ -1481,6 +1485,8 @@ When you escalate, your request will be re-run on a more capable model.`;
     if (!sub || sub === 'status') {
       if (!managed.antonActive) {
         await sendUserVisible(msg, 'No Anton run in progress.').catch(() => {});
+      } else if (managed.antonAbortSignal?.aborted) {
+        await sendUserVisible(msg, '🛑 Anton is stopping. Please wait for the current attempt to unwind.').catch(() => {});
       } else if (managed.antonProgress) {
         await sendUserVisible(msg, formatProgressBar(managed.antonProgress)).catch(() => {});
       } else {
@@ -1494,6 +1500,7 @@ When you escalate, your request will be re-run on a more capable model.`;
         await sendUserVisible(msg, 'No Anton run in progress.').catch(() => {});
         return;
       }
+      managed.lastActivity = Date.now();
       managed.antonAbortSignal.aborted = true;
       await sendUserVisible(msg, '🛑 Anton stop requested.').catch(() => {});
       return;
@@ -1515,7 +1522,10 @@ When you escalate, your request will be re-run on a more capable model.`;
     }
 
     if (managed.antonActive) {
-      await sendUserVisible(msg, '⚠️ Anton is already running. Use /anton stop first.').catch(() => {});
+      const runningMsg = managed.antonAbortSignal?.aborted
+        ? '🛑 Anton is still stopping. Please wait a moment, then try again.'
+        : '⚠️ Anton is already running. Use /anton stop first.';
+      await sendUserVisible(msg, runningMsg).catch(() => {});
       return;
     }
 
@@ -1560,6 +1570,7 @@ When you escalate, your request will be re-run on a more capable model.`;
     const progress: AntonProgressCallback = {
       onTaskStart(task, attempt, prog) {
         managed.antonProgress = prog;
+        managed.lastActivity = Date.now();
         const now = Date.now();
         if (now - lastProgressAt >= DISCORD_RATE_LIMIT_MS) {
           lastProgressAt = now;
@@ -1568,6 +1579,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       },
       onTaskEnd(task, result, prog) {
         managed.antonProgress = prog;
+        managed.lastActivity = Date.now();
         const now = Date.now();
         if (now - lastProgressAt >= DISCORD_RATE_LIMIT_MS) {
           lastProgressAt = now;
@@ -1575,9 +1587,11 @@ When you escalate, your request will be re-run on a more capable model.`;
         }
       },
       onTaskSkip(task, reason) {
+        managed.lastActivity = Date.now();
         channel.send(formatTaskSkip(task, reason)).catch(() => {});
       },
       onRunComplete(result) {
+        managed.lastActivity = Date.now();
         managed.antonLastResult = result;
         managed.antonActive = false;
         managed.antonAbortSignal = null;
@@ -1599,6 +1613,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       vault: managed.session.vault,
       lens: managed.session.lens,
     }).catch((err: Error) => {
+      managed.lastActivity = Date.now();
       managed.antonActive = false;
       managed.antonAbortSignal = null;
       managed.antonProgress = null;

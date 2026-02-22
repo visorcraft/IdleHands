@@ -424,6 +424,10 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
       await ctx.reply('No Anton run in progress.');
       return;
     }
+    if (managed.antonAbortSignal?.aborted) {
+      await ctx.reply('🛑 Anton is stopping. Please wait for the current attempt to unwind.');
+      return;
+    }
     if (managed.antonProgress) {
       await ctx.reply(formatProgressBar(managed.antonProgress));
     } else {
@@ -438,6 +442,7 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
       await ctx.reply('No Anton run in progress.');
       return;
     }
+    managed.lastActivity = Date.now();
     managed.antonAbortSignal.aborted = true;
     await ctx.reply('🛑 Anton stop requested. Run will halt after the current task.');
     return;
@@ -475,7 +480,10 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
   }
 
   if (session.antonActive) {
-    await ctx.reply('⚠️ Anton is already running. Use /anton stop first.');
+    const msg = session.antonAbortSignal?.aborted
+      ? '🛑 Anton is still stopping. Please wait a moment, then try again.'
+      : '⚠️ Anton is already running. Use /anton stop first.';
+    await ctx.reply(msg);
     return;
   }
 
@@ -526,6 +534,7 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
   const progress: AntonProgressCallback = {
     onTaskStart(task, attempt, prog) {
       session.antonProgress = prog;
+      session.lastActivity = Date.now();
       const now = Date.now();
       if (now - lastProgressAt >= ANTON_RATE_LIMIT_MS) {
         lastProgressAt = now;
@@ -534,6 +543,7 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
     },
     onTaskEnd(task, result, prog) {
       session.antonProgress = prog;
+      session.lastActivity = Date.now();
       const now = Date.now();
       if (now - lastProgressAt >= ANTON_RATE_LIMIT_MS) {
         lastProgressAt = now;
@@ -541,9 +551,11 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
       }
     },
     onTaskSkip(task, reason) {
+      session.lastActivity = Date.now();
       ctx.reply(formatTaskSkip(task, reason)).catch(() => {});
     },
     onRunComplete(result) {
+      session.lastActivity = Date.now();
       session.antonLastResult = result;
       session.antonActive = false;
       session.antonAbortSignal = null;
@@ -568,6 +580,7 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
     vault: session.session.vault,
     lens: session.session.lens,
   }).catch((err: Error) => {
+    session.lastActivity = Date.now();
     session.antonActive = false;
     session.antonAbortSignal = null;
     session.antonProgress = null;
