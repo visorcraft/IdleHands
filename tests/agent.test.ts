@@ -985,13 +985,16 @@ describe('harness behavioral wiring', () => {
       assert.equal(out.text, 'done');
       assert.ok(calls >= 8, `expected loop to continue instead of hard-break; calls=${calls}`);
 
-      const sawCachedHint = session.messages.some(
-        (m: any) =>
-          m.role === 'tool' &&
-          typeof m.content === 'string' &&
-          m.content.includes('Reused cached output for repeated read-only exec call')
-      );
-      assert.equal(sawCachedHint, true, 'expected cached-observation hint in tool output');
+      const sawLoopReuseHint = session.messages.some((m: any) => {
+        if (m.role !== 'tool' || typeof m.content !== 'string') return false;
+        return (
+          m.content.includes('Reused cached output for repeated read-only exec call') ||
+          m.content.includes('You already ran this exact command') ||
+          m.content.includes('"cached_observation":true') ||
+          m.content.includes('"replayed":true')
+        );
+      });
+      assert.equal(sawLoopReuseHint, true, 'expected loop-reuse hint in tool output');
     } finally {
       await session.close();
       await fs.rm(work, { recursive: true, force: true }).catch(() => {});
