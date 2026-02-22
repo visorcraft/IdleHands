@@ -2853,8 +2853,10 @@ export async function createSession(opts: {
                 consecutiveCounts.set(sig, 1);
               }
               const consec = consecutiveCounts.get(sig) ?? 1;
+              const isReadFileTool = READ_FILE_CACHE_TOOLS.has(toolName);
+              const hardBreakAt = isReadFileTool ? 6 : 4;
 
-              // At 3x, inject vault context and a strong warning before the hard break at 4x.
+              // At 3x, inject vault context and first warning
               if (consec >= 3) {
                 await injectVaultContext().catch(() => {});
 
@@ -2876,13 +2878,29 @@ export async function createSession(opts: {
                   }
                 }
               }
-              // At 4x, serve from cache if available instead of hard-breaking
-              if (consec >= 4 && READ_FILE_CACHE_TOOLS.has(toolName) && readFileCacheBySig.has(sig)) {
-                repeatedReadFileSigs.add(sig);
-                continue;
+
+              // At 2x, serve from cache if available AND inject final warning
+              if (consec >= 2 && isReadFileTool) {
+                if (consec === 4) {
+                  let resourceType = 'resource';
+                  if (toolName === 'read_file') resourceType = 'file';
+                  else if (toolName === 'read_files') resourceType = 'files';
+                  else if (toolName === 'list_dir') resourceType = 'directory';
+
+                  messages.push({
+                    role: 'system',
+                    content: `CRITICAL: DO NOT make another identical call for this ${resourceType}. It HAS NOT CHANGED. You already have the content. Move on to the NEXT step NOW.`,
+                  } as ChatMessage);
+                }
+
+                if (readFileCacheBySig.has(sig)) {
+                  repeatedReadFileSigs.add(sig);
+                  continue;
+                }
               }
-              // Hard-break: after 4 consecutive identical reads with no cache, stop the session
-              if (consec >= 4) {
+
+              // Hard-break at threshold
+              if (consec >= hardBreakAt) {
                 throw new Error(
                   `tool ${toolName}: identical read repeated ${consec}x consecutively; breaking loop. ` +
                   `The resource content has not changed between reads.`

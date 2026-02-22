@@ -921,7 +921,8 @@ describe('harness behavioral wiring', () => {
       async warmup() {},
       async chatStream() {
         calls++;
-        if (calls <= 7) {
+        // With threshold of 6 for read_file, we need 9+ calls to see caching behavior
+        if (calls <= 9) {
           return {
             id: `fake-${calls}`,
             choices: [{
@@ -948,13 +949,14 @@ describe('harness behavioral wiring', () => {
       }
     };
 
-    const config = baseConfig(work, { max_iterations: 12, context_window: 8192 });
+    const config = baseConfig(work, { max_iterations: 15, context_window: 8192 });
     const session = await createSession({ config, runtime: { client: fakeClient } });
 
     try {
       const out = await session.ask('read repeat file');
       assert.equal(out.text, 'done');
-      assert.ok(calls >= 8, `expected loop to continue instead of hard-break; calls=${calls}`);
+      // With threshold of 6, we expect the loop to continue via cache reuse
+      assert.ok(calls >= 10, `expected loop to continue via cache reuse; calls=${calls}`);
 
       const sawCachedHint = session.messages.some((m: any) =>
         m.role === 'tool' && typeof m.content === 'string' && m.content.includes('Reused cached output for repeated identical read call')
