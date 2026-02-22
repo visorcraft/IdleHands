@@ -135,6 +135,11 @@ describe('runtime store', () => {
       await saveRuntimes(baseConfig(), file);
       const before = await fs.readFile(file, 'utf8');
 
+      // Permission-based failure simulation is unreliable as root (chmod may not block writes).
+      if (typeof process.getuid === 'function' && process.getuid() === 0) {
+        return;
+      }
+
       await fs.chmod(dir, 0o500);
       try {
         await assert.rejects(() => saveRuntimes(baseConfig(), file));

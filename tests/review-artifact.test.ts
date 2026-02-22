@@ -102,12 +102,27 @@ async function withTmpDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 }
 
 function git(cwd: string, command: string): string {
-  const res = spawnSync('bash', ['-lc', command], { cwd, encoding: 'utf8' });
-  if (res.status !== 0) {
-    const msg = `${String(res.stdout || '')}${String(res.stderr || '')}`.trim();
-    throw new Error(`git command failed (${command}): ${msg}`);
+  // Execute each command segment with git directly to avoid shell cwd quirks.
+  const segments = command
+    .split('&&')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  let lastOut = '';
+  for (const seg of segments) {
+    if (!seg.startsWith('git ')) {
+      throw new Error(`git helper only supports git commands, got: ${seg}`);
+    }
+    const args = seg.slice(4).match(/(?:"[^"]*"|'[^']*'|\S+)/g)?.map((t) => t.replace(/^['"]|['"]$/g, '')) ?? [];
+    const res = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    if (res.status !== 0) {
+      const msg = `${String(res.stdout || '')}${String(res.stderr || '')}`.trim();
+      throw new Error(`git command failed (${seg}): ${msg}`);
+    }
+    lastOut = String(res.stdout || '').trim();
   }
-  return String(res.stdout || '').trim();
+
+  return lastOut;
 }
 
 describe('review artifact hardening matrix', () => {

@@ -78,8 +78,11 @@ export class MessageEditScheduler {
       const classified = this.opts.classifyError(e);
 
       if (classified.kind === 'retry' && classified.retryAfterMs) {
-        const jitter = Math.floor(Math.random() * (this.opts.jitterMs ?? 500));
-        this.backoffMs = Math.min(classified.retryAfterMs + jitter, this.opts.maxBackoffMs ?? 30_000);
+        const baseRetry = Math.max(0, classified.retryAfterMs);
+        // Keep jitter proportional so very small retry windows stay small in tests/runtime.
+        const jitterCap = Math.min(this.opts.jitterMs ?? 500, Math.max(0, Math.floor(baseRetry / 2)));
+        const jitter = jitterCap > 0 ? Math.floor(Math.random() * (jitterCap + 1)) : 0;
+        this.backoffMs = Math.min(baseRetry + jitter, this.opts.maxBackoffMs ?? 30_000);
       } else if (classified.kind === 'fatal') {
         console.error(`[scheduler] fatal edit error: ${classified.message ?? String(e)}`);
         this.stop();
@@ -108,7 +111,8 @@ export function classifyTelegramEditError(e: unknown): ClassifiedError {
     return { kind: 'fatal', message: desc };
   }
 
-  return { kind: 'ignore', message: desc };
+  // Unknown Telegram edit errors are usually transient/provider-side; retry conservatively.
+  return { kind: 'retry', retryAfterMs: 3000, message: desc };
 }
 
 export function classifyDiscordEditError(e: unknown): ClassifiedError {

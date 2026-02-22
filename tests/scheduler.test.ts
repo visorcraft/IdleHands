@@ -47,6 +47,10 @@ describe('MessageEditScheduler', () => {
     classifyErrorCalls = 0;
   });
 
+  afterEach(() => {
+    scheduler?.stop();
+  });
+
   it('should start and stop the scheduler', () => {
     scheduler = createScheduler({});
     scheduler.start();
@@ -109,15 +113,19 @@ describe('MessageEditScheduler', () => {
     let errorCount = 0;
     scheduler = createScheduler({
       intervalMs: 10,
+      jitterMs: 0,
+      apply: async () => {
+        throw new Error('retryable failure');
+      },
       classifyError: () => {
         errorCount++;
-        return { kind: 'retry', retryAfterMs: 50 };
+        return { kind: 'retry', retryAfterMs: 20 };
       },
     });
     scheduler.start();
 
     // Wait for multiple ticks
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 120));
     scheduler.stop();
 
     // Should have classified errors
@@ -127,6 +135,9 @@ describe('MessageEditScheduler', () => {
   it('should stop on fatal error', async () => {
     scheduler = createScheduler({
       intervalMs: 10,
+      apply: async () => {
+        throw new Error('fatal apply failure');
+      },
       classifyError: () => ({ kind: 'fatal', message: 'test fatal error' }),
     });
 
@@ -140,7 +151,7 @@ describe('MessageEditScheduler', () => {
     scheduler.start();
 
     // Wait for a tick
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
     scheduler.stop();
 
     // Restore console.error
@@ -174,11 +185,11 @@ describe('MessageEditScheduler', () => {
     scheduler.start();
 
     // Wait for first tick
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
-    // Change render value to same value
+    // Keep render value unchanged
     renderValue = 'initial';
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
     scheduler.stop();
 
     // Apply should only be called once (first time)
@@ -240,6 +251,10 @@ describe('MessageEditScheduler in-flight lock', () => {
     applyCalls = 0;
   });
 
+  afterEach(() => {
+    scheduler?.stop();
+  });
+
   it('should prevent overlapping edits when apply is slow', async () => {
     applyDelayMs = 50;
     scheduler = createSchedulerWithDelay(applyDelayMs);
@@ -271,6 +286,7 @@ describe('MessageEditScheduler in-flight lock', () => {
     let failCount = 0;
     scheduler = new MessageEditScheduler({
       intervalMs: 5,
+      jitterMs: 0,
       render: () => `rendered-${Date.now()}`,
       apply: async () => {
         failCount++;
@@ -285,7 +301,7 @@ describe('MessageEditScheduler in-flight lock', () => {
     scheduler.start();
 
     // Wait for multiple ticks with failures
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 90));
     scheduler.stop();
 
     // inFlight should be reset after each failure
