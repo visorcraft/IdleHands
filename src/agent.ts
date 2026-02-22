@@ -213,6 +213,9 @@ Rules:
 - Use read_file with search=... to jump to relevant code; avoid reading whole files.
 - Never call read_file/read_files/list_dir twice in a row with identical arguments (same path/options). Reuse the previous result instead.
 - Prefer apply_patch or edit_range for code edits (token-efficient). Use edit_file only when exact old_text replacement is necessary.
+- Tool-call arguments MUST be strict JSON (double-quoted keys/strings, no comments, no trailing commas).
+- edit_range example: {"path":"src/foo.ts","start_line":10,"end_line":14,"replacement":"line A\nline B"}
+- apply_patch example: {"patch":"--- a/src/foo.ts\n+++ b/src/foo.ts\n@@ -10,2 +10,2 @@\n-old\n+new","files":["src/foo.ts"]}
 - write_file is for new files or explicit full rewrites only. Existing non-empty files require overwrite=true/force=true.
 - Use insert_file for insertions (prepend/append/line).
 - Use exec to run commands, tests, builds; check results before reporting success.
@@ -429,7 +432,7 @@ function buildToolsSchema(opts?: {
       type: 'function',
       function: {
         name: 'apply_patch',
-        description: 'Apply unified diff patch (multi-file).\n\nUSAGE EXAMPLE:\n  apply_patch({\n    patch: "--- a/src/file.ts\\n+++ b/src/file.ts\\n@@ -1,5 +1,5 @@\\n-old text\\n+new text\\n",\n    files: ["src/file.ts"]\n  })\n\nThe patch must be a valid unified diff format. Use strip=1 if paths include directory prefixes.\nFiles listed must match the paths in the diff.',
+        description: 'Apply unified diff patch (multi-file).\n\nUSAGE EXAMPLE:\n  apply_patch({\n    patch: "--- a/src/file.ts\\n+++ b/src/file.ts\\n@@ -1,5 +1,5 @@\\n-old text\\n+new text\\n",\n    files: ["src/file.ts"]\n  })\n\nThe patch must be valid unified diff text. Tool-call arguments must be valid JSON. Use strip=1 if paths include directory prefixes.\nFiles listed must match the paths in the diff.',
         parameters: obj(
           {
             patch: str(),
@@ -444,7 +447,7 @@ function buildToolsSchema(opts?: {
       type: 'function',
       function: {
         name: 'edit_range',
-        description: 'Replace a line range in a file.\n\nUSAGE EXAMPLE:\n  edit_range({\n    path: "src/file.ts",\n    start_line: 10,\n    end_line: 15,\n    replacement: "new content\\nmore content"\n  })\n\n- start_line and end_line are 1-indexed (first line is 1, not 0)\n- To delete lines, set replacement to empty string ""\n- To insert at a position, set start_line and end_line to the same value\n- The replacement text replaces the entire range inclusive',
+        description: 'Replace a line range in a file.\n\nUSAGE EXAMPLE:\n  edit_range({\n    path: "src/file.ts",\n    start_line: 10,\n    end_line: 15,\n    replacement: "new content\\nmore content"\n  })\n\n- start_line and end_line are 1-indexed (first line is 1, not 0)\n- To delete lines, set replacement to empty string ""\n- To insert at a position, set start_line and end_line to the same value\n- Tool-call arguments must be valid JSON (double quotes, no trailing commas/comments)\n- The replacement text replaces the entire range inclusive',
         parameters: obj(
           {
             path: str(),
@@ -2470,6 +2473,9 @@ export async function createSession(opts: {
     // Recover once/twice from server-side context-overflow 400/413s by forcing compaction and retrying.
     let overflowCompactionAttempts = 0;
     const MAX_OVERFLOW_COMPACTION_ATTEMPTS = 2;
+    // Track consecutive read_file/read_files failures (any file) to provide fallback hints.
+    let consecutiveReadFileFailures = 0;
+    let readFileFailureHintIssuedForStreak = false;
 
     const archiveToolOutputForVault = async (msg: ChatMessage) => {
       if (!lens || !vault || msg.role !== 'tool' || typeof msg.content !== 'string') return msg;
@@ -3790,6 +3796,34 @@ export async function createSession(opts: {
           for (const r of results) {
             const compactToolMsg = await compactToolMessageForHistory(r.id, r.content);
             messages.push(compactToolMsg as any);
+
+            // Track consecutive read_file/read_files failures (any file) and inject fallback hint.
+            const tcForResult = toolCallsArr.find((tc) => resolveCallId(tc) === r.id);
+            const toolNameForResult = tcForResult?.function?.name;
+            const isReadFileLike = toolNameForResult === 'read_file' || toolNameForResult === 'read_files';
+
+            if (isReadFileLike && typeof r.content === 'string' && r.content.startsWith('ERROR:')) {
+              consecutiveReadFileFailures++;
+              if (consecutiveReadFileFailures >= 2 && !readFileFailureHintIssuedForStreak) {
+                readFileFailureHintIssuedForStreak = true;
+                messages.push({
+                  role: 'user' as const,
+                  content:
+                    '[system] read_file failed twice consecutively. Try this fallback path: ' +
+                    '1) Use exec+sed to inspect exact line ranges (example: sed -n "10,80p" path/to/file). ' +
+                    '2) Use edit_range for targeted line edits. ' +
+                    '3) If edit_range still fails, write full corrected contents to a temporary file, then remove the original file and rename the temp file into place to bypass edit_file failures.',
+                });
+              }
+            } else if (isReadFileLike) {
+              // Successful read_file/read_files resets consecutive failure streak.
+              consecutiveReadFileFailures = 0;
+              readFileFailureHintIssuedForStreak = false;
+            } else {
+              // Any non-read_file tool result breaks the consecutive read_file-failure streak.
+              consecutiveReadFileFailures = 0;
+              readFileFailureHintIssuedForStreak = false;
+            }
           }
 
           if (readOnlyExecTurnHints.length) {
