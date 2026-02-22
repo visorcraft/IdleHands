@@ -1,5 +1,91 @@
 # IdleHands UX Improvement Program (Discord + Telegram)
 
+## Clarifications & Execution Notes
+
+### Clean Slate Implementation
+
+This roadmap is treated as a **clean slate implementation**. Do not assume any prior work has been completed. All tasks should be implemented fresh according to the phases defined below, regardless of any existing partial implementations.
+
+---
+
+### Strict RFC-First Approach
+
+**Phase 0 is blocking**. The full RFC must be completed before any implementation work begins:
+
+1. `docs/ux/ux-program-rfc.md` with complete:
+   - Scope, goals, non-goals, glossary
+   - Hard UX SLAs (acknowledgment ≤1.5s, progress ≤5s, etc.)
+   - Reliability SLAs (runtime readiness, cancel latency, stale-run recovery)
+   - Token/latency guardrail policy
+   - Backward compatibility contract
+   - Full feature flag strategy (see below)
+
+**No parallel implementation**. Start Phase 1 only after Phase 0 RFC is merged.
+
+---
+
+### Full Feature Flag System
+
+Implement a **complete feature flag system** in Phase 0, not simple boolean toggles:
+
+```typescript
+interface FeatureFlags {
+  ux_v2_enabled: FeatureFlag;
+  auto_route_enabled: FeatureFlag;
+  chat_actions_enabled: FeatureFlag;
+  anton_preflight_enabled: FeatureFlag;
+}
+
+interface FeatureFlag {
+  enabled: boolean;
+  rollout_percentage?: number;  // 0-100 for gradual rollout
+  allowed_users?: string[];     // user IDs for canary testing
+  allowed_chats?: string[];     // chat IDs for canary testing
+  created_at: string;
+  updated_at: string;
+}
+```
+
+**Storage**: Feature flags should be persisted in config and support runtime updates without restart.
+
+**Rollout stages**:
+- Canary (allowed_users/allowed_chats only)
+- Partial (rollout_percentage)
+- Full (enabled=true, no restrictions)
+
+---
+
+### Backward Compatibility Contract
+
+Existing commands that **must not break**:
+- `/status` — show session/runtime status
+- `/health` — health check endpoint
+- `/anton` — Anton workflow trigger
+- `/select` — runtime selection
+- `/cancel` — abort current operation
+
+New behavior must be additive:
+- `/health discover` for port scanning (new)
+- `/mode fast|heavy|auto` for routing (new)
+- `/anton doctor` for preflight diagnostics (new)
+
+---
+
+### Session Persistence Modes
+
+Phase 6 mentions `default|sticky|ephemeral` modes:
+
+- **default**: Session timeout after inactivity (current behavior)
+- **sticky**: Session persists until explicit `/reset`
+- **ephemeral**: No persistence, each message is isolated
+
+Implementation uses existing `session_timeout_min` config with new enum:
+```typescript
+session_persistence?: 'default' | 'sticky' | 'ephemeral';
+```
+
+---
+
 ## Phase 0 — Scope Lock, Architecture, and Non-Functional Requirements
 
 - [ ] Create `docs/ux/ux-program-rfc.md` defining scope, goals, non-goals, and glossary (Fast lane, Heavy lane, preflight, readiness, retries, stale-run).
@@ -16,7 +102,7 @@
   - [ ] Per-attempt prompt token max default: 128k.
   - [ ] User-visible warning threshold for expensive operations.
 - [ ] Define backward compatibility contract for existing commands (`/status`, `/health`, `/anton`, `/select`).
-- [ ] Define feature-flag strategy in RFC (`ux_v2_enabled`, `auto_route_enabled`, `chat_actions_enabled`, `anton_preflight_enabled`).
+- [ ] Define full feature-flag system in RFC (see Clarifications section for schema).
 
 ## Phase 1 — Shared UX Core (No Duplication, Maximum Reuse)
 
@@ -160,18 +246,12 @@
   - [ ] Partial.
   - [ ] Full.
 - [ ] Add rollback runbook per phase: `docs/runbooks/ux-rollback.md`.
-- [ ] Add observability dashboard definitions:
-  - [ ] p50/p95 reply latency.
-  - [ ] Cancel latency.
-  - [ ] Anton preflight failure rate.
-  - [ ] Infra recovery success rate.
-  - [ ] Stale-run recoveries.
 - [ ] Add post-release validation checklist for both Discord and Telegram.
 - [ ] Run synthetic E2E scenarios in CI for both platforms.
 
 ### Phase 7 Definition of Done
 
-- [ ] Full rollout complete with monitored SLA adherence and no regression in command compatibility.
+- [ ] Full rollout complete with no regression in command compatibility.
 
 ## Cross-Phase Engineering Standards (Mandatory)
 
