@@ -1192,7 +1192,7 @@ export async function search_files(ctx: ToolContext, args: any) {
       } else {
         const rgOutput = parsed.out ?? '';
         if (rgOutput) {
-          const lines = rgOutput.split(/\\r?\\n/).filter(Boolean).slice(0, maxResults);
+          const lines = rgOutput.split(/\r?\n/).filter(Boolean).slice(0, maxResults);
           if (lines.length >= maxResults) lines.push(`[truncated after ${maxResults} results]`);
           // Redact paths in rg output
           const redactedLines = lines.map(line => {
@@ -1202,7 +1202,7 @@ export async function search_files(ctx: ToolContext, args: any) {
             const rest = line.substring(colonIdx + 1);
             return redactPath(filePath, absCwd) + ':' + rest;
           });
-          return redactedLines.join('\\n');
+          return redactedLines.join('\n');
         }
       }
     } catch {
@@ -1246,7 +1246,7 @@ export async function search_files(ctx: ToolContext, args: any) {
       }
       if (isBinary) continue;
       const buf: string | null = rawBuf.toString('utf8');
-      const lines = buf.split(/\\r?\\n/);
+      const lines = buf.split(/\r?\n/);
       for (let i = 0; i < lines.length; i++) {
         if (re.test(lines[i])) {
           out.push(`${redactPath(full, absCwd)}:${i + 1}:${lines[i]}`);
@@ -1259,7 +1259,7 @@ export async function search_files(ctx: ToolContext, args: any) {
   await walk(root, 0);
   if (out.length >= maxResults) out.push(`[truncated after ${maxResults} results]`);
   if (!out.length) return `No matches for pattern \"${pattern}\" in ${redactPath(root, absCwd)}.`;
-  return out.join('\\n');
+  return out.join('\n');
 }
 
 function stripSimpleQuotedSegments(s: string): string {

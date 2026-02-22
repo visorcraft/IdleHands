@@ -12,6 +12,7 @@ import {
   bootstrapRuntimes,
   interpolateTemplate,
 } from '../runtime/store.js';
+import { HostCommandRunner } from '../runtime/host-runner.js';
 import type { RuntimeBackend, RuntimeHost, RuntimeModel } from '../runtime/types.js';
 import { configDir, shellEscape } from '../utils.js';
 
@@ -52,20 +53,14 @@ function runLocalCommand(
   };
 }
 
-function runHostCommand(
+const hostCommandRunner = new HostCommandRunner();
+
+async function runHostCommand(
   host: RuntimeHost,
   command: string,
   timeoutSec = 5
-): { ok: boolean; code: number | null; stdout: string; stderr: string } {
-  if (host.transport === 'local') return runLocalCommand(command, timeoutSec);
-
-  const target = `${host.connection.user ? `${host.connection.user}@` : ''}${host.connection.host ?? ''}`;
-  const sshParts = ['ssh', '-o', 'BatchMode=yes', '-o', `ConnectTimeout=${timeoutSec}`];
-  if (host.connection.port) sshParts.push('-p', String(host.connection.port));
-  if (host.connection.key_path) sshParts.push('-i', shellEscape(host.connection.key_path));
-  sshParts.push(shellEscape(target), '--', 'bash', '-lc', shellEscape(command));
-
-  return runLocalCommand(sshParts.join(' '), timeoutSec + 1);
+): Promise<{ ok: boolean; code: number | null; stdout: string; stderr: string }> {
+  return await hostCommandRunner.runOnHost(host, command, timeoutSec);
 }
 
 function usage(kind: 'hosts' | 'backends' | 'models'): void {
@@ -224,7 +219,7 @@ export async function runHostsSubcommand(args: any, _config: any): Promise<void>
       source: '',
       port: '',
     });
-    const res = runHostCommand(host, command, host.health.timeout_sec ?? 5);
+    const res = await runHostCommand(host, command, host.health.timeout_sec ?? 5);
     console.log(`[${host.id}] ${res.ok ? 'OK' : 'FAIL'} (exit=${res.code ?? -1})`);
     if (res.stdout.trim()) console.log(res.stdout.trim());
     if (res.stderr.trim()) console.error(res.stderr.trim());
@@ -241,7 +236,7 @@ export async function runHostsSubcommand(args: any, _config: any): Promise<void>
           problems.push(`[${host.id}] ssh host is missing`);
           continue;
         }
-        const ping = runHostCommand(host, 'echo ok', 5);
+        const ping = await runHostCommand(host, 'echo ok', 5);
         if (!ping.ok) problems.push(`[${host.id}] ssh unreachable (${ping.code ?? -1})`);
       }
 
@@ -681,7 +676,7 @@ export async function runModelsSubcommand(args: any, _config: any): Promise<void
       host_id: host.id,
     });
 
-    const res = runHostCommand(host, cmdText, model.launch.probe_timeout_sec ?? 60);
+    const res = await runHostCommand(host, cmdText, model.launch.probe_timeout_sec ?? 60);
     console.log(`[${model.id}] host=${host.id} ${res.ok ? 'OK' : 'FAIL'} (exit=${res.code ?? -1})`);
     if (res.stdout.trim()) console.log(res.stdout.trim());
     if (res.stderr.trim()) console.error(res.stderr.trim());
