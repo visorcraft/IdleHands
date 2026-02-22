@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.14 (2026-02-21)
+
+### Test fix
+
+- Added `upsertNote` to test vault mocks to match new vault API.
+
 ## 1.1.13 (2026-02-21)
 
 ### Bug fix

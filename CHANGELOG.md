@@ -2,6 +2,12 @@
 
 All notable changes to Idle Hands are documented in this file.
 
+## [1.1.14] - 2026-02-21
+
+### Fixed
+
+- **Test fix**: Added `upsertNote` to test vault mocks to match new vault API.
+
 ## [1.1.13] - 2026-02-21
 
 ### Fixed
