@@ -129,18 +129,55 @@ function readOnlyExecCacheable(content: string): boolean {
   }
 }
 
-function withCachedReadObservationHint(content: string): string {
-  if (!content) return CACHED_READ_OBSERVATION_HINT;
-  if (content.includes(CACHED_READ_OBSERVATION_HINT)) return content;
+function withCachedReadObservationHint(content: string, toolName?: string): string {
+  if (!content) return `[CACHE HIT] Resource unchanged. Use the content you already have.`;
+  if (content.includes('[CACHE HIT]')) return content;
 
-  // Keep cached read replay lightweight to avoid re-inflating context.
-  const lines = String(content).split(/\r?\n/);
-  const previewLines = lines.slice(0, 12);
-  const omitted = Math.max(0, lines.length - previewLines.length);
-  const trailer = omitted > 0 ? `\n# ... (${omitted} more lines omitted; use previous identical read result)` : '';
+  // Return minimal hint - no file preview to maximize context savings
+  const resourceType = toolName === 'read_file' ? 'file' 
+    : toolName === 'read_files' ? 'files' 
+    : toolName === 'list_dir' ? 'directory' 
+    : 'resource';
 
-  return `${CACHED_READ_OBSERVATION_HINT}\n${previewLines.join('\n')}${trailer}`;
+  return `[CACHE HIT] ${resourceType.charAt(0).toUpperCase() + resourceType.slice(1)} unchanged since previous read. Use the content you already have.`;
 }
+
+// Helper to get mtime for cache invalidation. Returns 0 if unavailable.
+async function getMtimeForPath(p: string): Promise<number> {
+  try {
+    const st = await fs.stat(p);
+    return st.mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+// Helper to extract resolved paths from read tool args for mtime checking.
+function extractPathsFromReadArgs(toolName: string, args: Record<string, unknown>, baseCwd: string): string[] {
+  const resolve = (p: string) => path.resolve(baseCwd, p);
+
+  if (toolName === 'read_file' || toolName === 'list_dir') {
+    if (typeof args?.path === 'string' && args.path.trim()) {
+      return [resolve(args.path)];
+    }
+    return [];
+  }
+
+  if (toolName === 'read_files') {
+    // read_files expects requests: [{ path, ... }, ...]
+    const reqs = (args as any)?.requests;
+    if (!Array.isArray(reqs)) return [];
+    const out: string[] = [];
+    for (const r of reqs) {
+      const p = typeof (r as any)?.path === 'string' ? String((r as any).path).trim() : '';
+      if (p) out.push(resolve(p));
+    }
+    return out;
+  }
+
+  return [];
+}
+
 
 function ensureInformativeAssistantText(text: string, ctx: { toolCalls: number; turns: number }): string {
   if (String(text ?? '').trim()) return text;
@@ -2264,8 +2301,8 @@ export async function createSession(opts: {
     const blockedExecAttemptsBySig = new Map<string, number>();
     // Cache successful read-only exec observations by exact signature.
     const execObservationCacheBySig = new Map<string, string>();
-    // Cache successful read_file/read_files/list_dir results by exact signature.
-    const readFileCacheBySig = new Map<string, string>();
+    // Cache successful read_file/read_files/list_dir results by signature + mtime for invalidation.
+    const readFileCacheBySig = new Map<string, { content: string; paths: string[]; mtimes: number[] }>();
     const READ_FILE_CACHE_TOOLS = new Set(['read_file', 'read_files', 'list_dir']);
     // Prevent repeating the same "stop rerunning" reminder every turn.
     const readOnlyExecHintedSigs = new Set<string>();
@@ -2894,8 +2931,20 @@ export async function createSession(opts: {
                 }
 
                 if (readFileCacheBySig.has(sig)) {
-                  repeatedReadFileSigs.add(sig);
-                  continue;
+                  // Verify all tracked mtimes still match before serving from cache
+                  const cachedEntry = readFileCacheBySig.get(sig);
+                  if (cachedEntry && cachedEntry.paths.length > 0) {
+                    const currentMtimes = await Promise.all(cachedEntry.paths.map((p) => getMtimeForPath(p)));
+                    const valid =
+                      currentMtimes.length === cachedEntry.mtimes.length &&
+                      currentMtimes.every((m, i) => m !== 0 && m === cachedEntry.mtimes[i]);
+                    if (valid) {
+                      repeatedReadFileSigs.add(sig);
+                      continue;
+                    }
+                  }
+                  // mtime changed or cache malformed - invalidate and proceed normally
+                  readFileCacheBySig.delete(sig);
                 }
               }
 
@@ -3094,7 +3143,7 @@ export async function createSession(opts: {
             if (READ_FILE_CACHE_TOOLS.has(name) && repeatedReadFileSigs.has(sig)) {
               const cached = readFileCacheBySig.get(sig);
               if (cached) {
-                content = withCachedReadObservationHint(cached);
+                content = withCachedReadObservationHint(cached.content, name);
                 reusedCachedReadTool = true;
               }
             }
@@ -3113,7 +3162,20 @@ export async function createSession(opts: {
                 content = typeof value === 'string' ? value : JSON.stringify(value);
 
                 if (READ_FILE_CACHE_TOOLS.has(name) && typeof content === 'string' && !content.startsWith('ERROR:')) {
-                  readFileCacheBySig.set(sig, content);
+                  const baseCwd = typeof (args as any)?.cwd === 'string' ? String((args as any).cwd) : ctx.cwd;
+                  const paths = extractPathsFromReadArgs(name, args as Record<string, unknown>, baseCwd);
+                  if (paths.length > 0) {
+                    const mtimes = await Promise.all(paths.map((p) => getMtimeForPath(p)));
+                    const allValid = mtimes.length === paths.length && mtimes.every((m) => m !== 0);
+                    if (allValid) {
+                      readFileCacheBySig.set(sig, { content, paths, mtimes });
+                    } else {
+                      // If we can't stat every path reliably, don't cache to avoid stale reuse.
+                      readFileCacheBySig.delete(sig);
+                    }
+                  } else {
+                    readFileCacheBySig.delete(sig);
+                  }
                 }
 
                 if (name === 'exec') {

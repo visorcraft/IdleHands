@@ -959,7 +959,7 @@ describe('harness behavioral wiring', () => {
       assert.ok(calls >= 10, `expected loop to continue via cache reuse; calls=${calls}`);
 
       const sawCachedHint = session.messages.some((m: any) =>
-        m.role === 'tool' && typeof m.content === 'string' && m.content.includes('Reused cached output for repeated identical read call')
+        m.role === 'tool' && typeof m.content === 'string' && m.content.includes('[CACHE HIT] File unchanged since previous read.')
       );
       assert.equal(sawCachedHint, true, 'expected cached read hint in tool output');
     } finally {
