@@ -55,6 +55,7 @@ function createTestConfig(overrides: Partial<AntonRunConfig> = {}): AntonRunConf
     taskTimeoutSec: 300,
     totalTimeoutSec: 3600,
     maxTotalTokens: 100000,
+    maxPromptTokensPerAttempt: 128000,
     autoCommit: true,
     branch: false,
     allowDirty: false,

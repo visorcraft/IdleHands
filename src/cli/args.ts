@@ -175,8 +175,8 @@ Commands:
   setup                      Interactive first-run configuration wizard
   bot <telegram|discord>     Start a chat bot frontend
   hosts|backends|models      Runtime orchestration management
-  select --model <id>        Switch active runtime model
-  health                     Probe all enabled hosts and models
+  select --model <id>        Switch active runtime model (use --restart --wait-ready)
+  health                     Probe configured + discovered runtime servers
   init                       Generate .idlehands.md from current project
   upgrade                    Self-update from GitHub or npm
   rollback                   Restore previous version from backup
@@ -230,6 +230,11 @@ Options:
   --vim                      (start with vi-mode editing)
   --no-tui                   (force classic CLI instead of fullscreen TUI)
   --color auto|always|never
+  --restart                (for /select: force restart instead of reuse)
+  --wait-ready             (for /select: wait until /v1/models is ready)
+  --wait-timeout N         (seconds for --wait-ready)
+  --scan-ports RANGE       (for health: discovery range, e.g. 8080-8100)
+  --json                   (machine-readable output for select/health/status)
   --dry-run
   --quiet
   --verbose

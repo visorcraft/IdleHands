@@ -87,7 +87,7 @@ function defaultConfig(overrides: Partial<AntonRunConfig> = {}): AntonRunConfig 
     taskFile: '', projectDir: '',
     maxRetriesPerTask: 2, maxIterations: 20,
     taskTimeoutSec: 30, totalTimeoutSec: 120,
-    maxTotalTokens: Infinity, autoCommit: true,
+    maxTotalTokens: Infinity, maxPromptTokensPerAttempt: 128000, autoCommit: true,
     branch: false, allowDirty: true,
     aggressiveCleanOnFail: false, verifyAi: false,
     verifyModel: undefined, decompose: true,

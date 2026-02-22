@@ -64,6 +64,8 @@ export interface AntonRunConfig {
   totalTimeoutSec: number;
   /** Total token budget. Infinity = unlimited. */
   maxTotalTokens: number;
+  /** Hard ceiling on estimated prompt tokens per attempt. */
+  maxPromptTokensPerAttempt: number;
   /** Git commit after each successful task. */
   autoCommit: boolean;
   /** Create branch before starting. */
@@ -226,6 +228,7 @@ export interface AntonProgressCallback {
   onTaskSkip(task: AntonTask, reason: string, progress: AntonProgress): void;
   onRunComplete(result: AntonRunResult): void;
   onAgentToken?(token: string): void;
+  onHeartbeat?(): void;
 }
 
 // ─── Structured agent result ────────────────────────────────────

@@ -240,6 +240,7 @@ export type IdlehandsConfig = {
     task_timeout_sec?: number;
     total_timeout_sec?: number;
     max_total_tokens?: number;
+    max_prompt_tokens_per_attempt?: number;
     verify_ai?: boolean;
     verify_model?: string;
     decompose?: boolean;
