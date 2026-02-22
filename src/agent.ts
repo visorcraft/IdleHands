@@ -2724,7 +2724,7 @@ export async function createSession(opts: {
 
             // Read-only tools: only count consecutive identical calls (back-to-back turns
             // with no other tool calls in between). A read → edit → read cycle is normal
-            // and resets the counter. After 4 consecutive identical reads, inject a hint.
+            // and resets the counter.
             if (isReadOnlyTool(toolName)) {
               // Check if this sig was also in the previous turn's set
               if (lastTurnSigs.has(sig)) {
@@ -2736,8 +2736,8 @@ export async function createSession(opts: {
               if (consec >= 3) {
                 await injectVaultContext().catch(() => {});
               }
-              // Hard-break: after 6 consecutive identical reads, stop the session
-              if (consec >= 6) {
+              // Hard-break: after 4 consecutive identical reads, stop the session
+              if (consec >= 4) {
                 throw new Error(
                   `tool ${toolName}: identical read repeated ${consec}x consecutively; breaking loop. ` +
                   `The resource content has not changed between reads.`
@@ -3011,6 +3011,15 @@ export async function createSession(opts: {
                   ? args as Record<string, unknown>
                   : {};
                 content = await mcpManager.callTool(name, callArgs);
+              }
+            }
+
+            // Append a hint when a read-only tool is called consecutively with
+            // identical arguments — the model may not realize the content hasn't changed.
+            if (isReadOnlyToolDynamic(name)) {
+              const consec = consecutiveCounts.get(sig) ?? 0;
+              if (consec >= 2) {
+                content += `\n\n[WARNING: You have read this exact same resource ${consec}x consecutively with identical arguments. The content has NOT changed. Do NOT read it again. Use the information above and move on to the next step.]`;
               }
             }
 
