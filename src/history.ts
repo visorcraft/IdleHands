@@ -118,6 +118,9 @@ export function enforceContextBudget(opts: {
     const groupIdx = findOldestToolCallGroup(msgs, sysStart, msgs.length - minTail, protectedIdx);
     if (groupIdx === -1) break;
     // Remove the group (assistant + following tool results) in one splice.
+    // The group may extend past the minTail search boundary — that's correct:
+    // we must drop the entire group (assistant + tool results) to keep the
+    // protocol valid, and minTail only bounds where we *search* for groups.
     const groupEnd = findGroupEnd(msgs, groupIdx);
     // Adjust protectedIdx if dropping before it
     if (protectedIdx > groupIdx) protectedIdx -= groupEnd - groupIdx;

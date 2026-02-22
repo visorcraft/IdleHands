@@ -54,7 +54,11 @@ function makeAbortController() {
 const CACHED_EXEC_OBSERVATION_HINT = '[idlehands hint] Reused cached output for repeated read-only exec call (unchanged observation).';
 
 function looksLikeReadOnlyExecCommand(command: string): boolean {
-  const cmd = String(command || '').trim().toLowerCase();
+  // Strip leading `cd <path> &&` / `cd <path>;` prefixes — cd is read-only
+  // navigation, the actual command that matters comes after.
+  let cmd = String(command || '').trim().toLowerCase();
+  if (!cmd) return false;
+  cmd = cmd.replace(/^(\s*cd\s+[^;&|]+\s*(?:&&|;)\s*)+/i, '').trim();
   if (!cmd) return false;
 
   // Shell redirects are likely writes.
@@ -116,6 +120,23 @@ function withCachedExecObservationHint(content: string): string {
   } catch {
     if (content.includes(CACHED_EXEC_OBSERVATION_HINT)) return content;
     return `${content}\n${CACHED_EXEC_OBSERVATION_HINT}`;
+  }
+}
+
+const REPLAYED_EXEC_HINT = '[idlehands hint] You already ran this exact command. This is the replayed result from your previous execution. Do NOT re-run it — use the output below to continue your task.';
+
+function withReplayedExecHint(content: string): string {
+  if (!content) return content;
+  try {
+    const parsed = JSON.parse(content);
+    const out = typeof parsed?.out === 'string' ? parsed.out : '';
+    if (out.includes(REPLAYED_EXEC_HINT)) return content;
+    parsed.out = out ? `${REPLAYED_EXEC_HINT}\n${out}` : REPLAYED_EXEC_HINT;
+    parsed.replayed = true;
+    return JSON.stringify(parsed);
+  } catch {
+    if (content.includes(REPLAYED_EXEC_HINT)) return content;
+    return `${REPLAYED_EXEC_HINT}\n${content}`;
   }
 }
 
@@ -326,6 +347,7 @@ function extractLensBody(projection: string): string {
 
 function buildToolsSchema(opts?: {
   activeVaultTools?: boolean;
+  passiveVault?: boolean;
   sysMode?: boolean;
   mcpTools?: ToolSchema[];
   lspTools?: boolean;
@@ -521,6 +543,12 @@ function buildToolsSchema(opts?: {
     schemas.push(
       { type: 'function', function: { name: 'vault_search', description: 'Search vault.', parameters: obj({ query: str(), limit: int() }, ['query']) } },
       { type: 'function', function: { name: 'vault_note', description: 'Write vault note.', parameters: obj({ key: str(), value: str() }, ['key', 'value']) } }
+    );
+  } else if (opts?.passiveVault) {
+    // In passive mode, expose vault_search (read-only) so the model can recover
+    // compacted context on demand, but don't expose vault_note (write).
+    schemas.push(
+      { type: 'function', function: { name: 'vault_search', description: 'Search vault memory for earlier context that was compacted away. Use sparingly — only when you need to recall specific details from earlier in the conversation.', parameters: obj({ query: str(), limit: int() }, ['query']) } },
     );
   }
 
@@ -967,6 +995,7 @@ export async function createSession(opts: {
 
   const getToolsSchema = () => buildToolsSchema({
     activeVaultTools,
+    passiveVault: !activeVaultTools && vaultEnabled && vaultMode === 'passive',
     sysMode: cfg.mode === 'sys',
     lspTools: lspManager?.hasServers() === true,
     mcpTools: mcpToolsLoaded ? (mcpManager?.getEnabledToolSchemas() ?? []) : [],
@@ -1568,7 +1597,7 @@ export async function createSession(opts: {
       return 'Vault memory is available. Retrieve prior context with vault_search(query="...") when needed.';
     }
     if (vaultMode === 'passive') {
-      return 'Vault memory is in passive mode; relevant entries may be auto-injected when available.';
+      return 'Vault memory is in passive mode; relevant entries may be auto-injected. You can also use vault_search(query="...") to recover specific earlier context if needed.';
     }
     return '';
   };
@@ -2394,6 +2423,11 @@ export async function createSession(opts: {
     const blockedExecAttemptsBySig = new Map<string, number>();
     // Cache successful read-only exec observations by exact signature.
     const execObservationCacheBySig = new Map<string, string>();
+    // Cache ALL successful exec results so repeated identical calls under context
+    // pressure can replay the cached result instead of re-executing.
+    const lastExecResultBySig = new Map<string, string>();
+    // Cache successful read_file/read_files/list_dir results by signature + mtime for invalidation.
+    const readFileCacheBySig = new Map<string, { content: string; paths: string[]; mtimes: number[] }>();
     const READ_FILE_CACHE_TOOLS = new Set(['read_file', 'read_files', 'list_dir']);
 
     const toolLoopGuard = new ToolLoopGuard({
@@ -2976,6 +3010,8 @@ export async function createSession(opts: {
           // Repeated read-only exec calls can be served from cache instead of hard-breaking.
           const repeatedReadOnlyExecSigs = new Set<string>();
           const readOnlyExecTurnHints: string[] = [];
+          // Repeated exec calls (any kind) can replay cached results under pressure.
+          const replayExecSigs = new Set<string>();
           // Repeated read_file/read_files/list_dir calls can be served from cache.
           const repeatedReadFileSigs = new Set<string>();
 
@@ -3037,6 +3073,20 @@ export async function createSession(opts: {
 
               if (!hasMutatedSince) {
                 const count = sigCounts.get(sig) ?? 0;
+
+                // Early replay: if this exact exec was already run (count >= 2) and
+                // we have a cached result, replay it instead of re-executing.  This
+                // prevents the compaction death spiral where tool results get dropped,
+                // the model forgets it ran the command, and re-runs it endlessly.
+                // Skip read-only commands that already have their own observation cache —
+                // those are handled by the dedicated read-only path at loopThreshold.
+                const command = execCommandFromSig(sig);
+                const hasReadOnlyCache = looksLikeReadOnlyExecCommand(command) && execObservationCacheBySig.has(sig);
+                if (count >= 2 && lastExecResultBySig.has(sig) && !hasReadOnlyCache) {
+                  replayExecSigs.add(sig);
+                  continue;
+                }
+
                 let loopThreshold = harness.quirks.loopsOnToolError ? 3 : 6;
                 // If the cached observation already tells the model "no matches found",
                 // break much earlier — the model is ignoring the hint.
@@ -3362,6 +3412,15 @@ export async function createSession(opts: {
               }
             }
 
+            // Replay any exec result (read-only or not) when the loop detector flagged it.
+            if (name === 'exec' && !reusedCachedReadOnlyExec && replayExecSigs.has(sig)) {
+              const cached = lastExecResultBySig.get(sig);
+              if (cached) {
+                content = withReplayedExecHint(cached);
+                reusedCachedReadOnlyExec = true;  // skip re-execution below
+              }
+            }
+
             if (READ_FILE_CACHE_TOOLS.has(name) && repeatedReadFileSigs.has(sig)) {
               const replay = await toolLoopGuard.getReadCacheReplay(name, args as Record<string, unknown>, ctx.cwd);
               if (replay) {
@@ -3391,6 +3450,10 @@ export async function createSession(opts: {
                 if (name === 'exec') {
                   // Successful exec clears blocked-loop counters.
                   blockedExecAttemptsBySig.clear();
+
+                  // Cache every exec result so repeated calls under context pressure
+                  // can replay the result instead of re-executing.
+                  lastExecResultBySig.set(sig, content);
 
                   const cmd = String(args?.command ?? '');
                   if (looksLikeReadOnlyExecCommand(cmd) && readOnlyExecCacheable(content)) {
@@ -3569,7 +3632,8 @@ export async function createSession(opts: {
             // Applies to direct exec attempts and spawn_task delegation attempts.
             if (tc.function.name === 'exec' || tc.function.name === 'spawn_task') {
               const blockedMatch = msg.match(/^exec:\s*blocked\s*\(([^)]+)\)\s*without --no-confirm\/--yolo:\s*(.*)$/i)
-                || msg.match(/^(spawn_task):\s*blocked\s*—\s*(.*)$/i);
+                || msg.match(/^(spawn_task):\s*blocked\s*—\s*(.*)$/i)
+                || msg.match(/^exec:\s*blocked\s+(background command\b[^.]*)\./i);
               if (blockedMatch) {
                 const reason = (blockedMatch[1] || blockedMatch[2] || 'blocked command').trim();
                 let parsedArgs: any = {};
@@ -3578,7 +3642,8 @@ export async function createSession(opts: {
                   ? String(parsedArgs?.command ?? '')
                   : String(parsedArgs?.task ?? '');
                 const normalizedReason = reason.toLowerCase();
-                const aggregateByReason = normalizedReason.includes('package install/remove');
+                const aggregateByReason = normalizedReason.includes('package install/remove')
+                  || normalizedReason.includes('background command');
                 const sig = aggregateByReason
                   ? `${tc.function.name}|${reason}`
                   : `${tc.function.name}|${reason}|${cmd}`;
