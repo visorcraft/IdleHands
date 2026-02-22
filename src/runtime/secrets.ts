@@ -96,8 +96,9 @@ export class SecretsStore {
       throw new Error('Passphrase required to decrypt secrets');
     }
 
-    const salt = Buffer.from(encrypted.salt, 'hex');
-    const key = crypto.pbkdf2Sync(this.passphrase, salt.toString(), 100000, 32, 'sha256');
+    // Salt is stored as hex string; pass directly to match _encrypt() behavior.
+    const salt = encrypted.salt;
+    const key = crypto.pbkdf2Sync(this.passphrase, salt, 100000, 32, 'sha256');
     const iv = Buffer.from(encrypted.iv, 'hex');
     const tag = Buffer.from(encrypted.tag, 'hex');
     const ciphertext = Buffer.from(encrypted.ciphertext, 'hex');

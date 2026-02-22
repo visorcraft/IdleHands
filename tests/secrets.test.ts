@@ -1,174 +1,189 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, it, beforeEach, afterEach, before } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import { strict as assert } from 'node:assert';
 
 import { SecretsStore, resolveSecretRef } from '../dist/runtime/secrets.js';
 
-// Use a temporary directory for tests
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const testDir = path.join(__dirname, '.test-secrets');
-const testStorePath = path.join(testDir, 'secrets.json');
 
-// Override the configDir for testing
-const originalConfigDir = process.env.IDLEHANDS_CONFIG_DIR;
-
-describe('SecretsStore', () => {
-  const testPassphrase = 'test-passphrase-12345';
-  let store: SecretsStore;
-
-  before(async () => {
-    // Clean up test directory once at the beginning
-    try {
-      await fs.rm(testDir, { recursive: true, force: true });
-    } catch {
-      // Ignore if doesn't exist
-    }
-    await fs.mkdir(testDir, { recursive: true });
-  });
-
-  beforeEach(async () => {
-    // Override config dir
-    process.env.IDLEHANDS_CONFIG_DIR = testDir;
-
-    store = new SecretsStore(testPassphrase);
-  });
-
-  afterEach(async () => {
-    // Restore original config dir
+// Helper to create isolated temp directories per-test
+async function withTempDir(fn: (dir: string) => Promise<void>) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'idlehands-secrets-'));
+  const originalConfigDir = process.env.IDLEHANDS_CONFIG_DIR;
+  try {
+    process.env.IDLEHANDS_CONFIG_DIR = dir;
+    await fn(dir);
+  } finally {
     if (originalConfigDir !== undefined) {
       process.env.IDLEHANDS_CONFIG_DIR = originalConfigDir;
     } else {
       delete process.env.IDLEHANDS_CONFIG_DIR;
     }
-  });
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+describe('SecretsStore', () => {
+  const testPassphrase = 'test-passphrase-12345';
 
   it('should create and save a new secrets store', async () => {
-    store.set('test-key', 'test-value');
-    await store.save();
+    await withTempDir(async (dir) => {
+      const storePath = path.join(dir, 'secrets.json');
+      const store = new SecretsStore(testPassphrase);
+      store.set('test-key', 'test-value');
+      await store.save();
 
-    const data = await fs.readFile(testStorePath, 'utf8');
-    const parsed = JSON.parse(data);
+      const data = await fs.readFile(storePath, 'utf8');
+      const parsed = JSON.parse(data);
 
-    // Should have encrypted structure
-    assert.strictEqual(parsed.version, 1);
-    assert.ok(parsed.ciphertext !== undefined);
-    assert.ok(parsed.iv !== undefined);
-    assert.ok(parsed.tag !== undefined);
-    assert.ok(parsed.salt !== undefined);
+      // Should have encrypted structure
+      assert.strictEqual(parsed.version, 1);
+      assert.ok(parsed.ciphertext !== undefined);
+      assert.ok(parsed.iv !== undefined);
+      assert.ok(parsed.tag !== undefined);
+      assert.ok(parsed.salt !== undefined);
 
-    // Plain text should not be in the file
-    assert.ok(!data.includes('test-value'));
+      // Plain text should not be in the file
+      assert.ok(!data.includes('test-value'));
+    });
   });
 
   it('should load and decrypt secrets', async () => {
-    store.set('api-key', 'sample-config-value-123');
-    await store.save();
+    await withTempDir(async () => {
+      const store = new SecretsStore(testPassphrase);
+      store.set('api-key', 'sample-config-value-123');
+      await store.save();
 
-    // Create new store instance and load
-    const newStore = new SecretsStore(testPassphrase);
-    await newStore.load();
+      // Create new store instance and load
+      const newStore = new SecretsStore(testPassphrase);
+      await newStore.load();
 
-    assert.strictEqual(newStore.get('api-key'), 'sample-config-value-123');
+      assert.strictEqual(newStore.get('api-key'), 'sample-config-value-123');
+    });
   });
 
   it('should handle missing store file gracefully', async () => {
-    const newStore = new SecretsStore(testPassphrase);
-    await newStore.load(); // Should not throw
+    await withTempDir(async () => {
+      const newStore = new SecretsStore(testPassphrase);
+      await newStore.load(); // Should not throw
 
-    assert.strictEqual(newStore.store.size, 0);
+      assert.strictEqual(newStore.store.size, 0);
+    });
   });
 
   it('should throw error when loading with wrong passphrase', async () => {
-    store.set('key', 'value');
-    await store.save();
+    await withTempDir(async () => {
+      const store = new SecretsStore(testPassphrase);
+      store.set('key', 'value');
+      await store.save();
 
-    const wrongStore = new SecretsStore('wrong-passphrase');
-    await assert.rejects(() => wrongStore.load());
+      const wrongStore = new SecretsStore('wrong-passphrase');
+      await assert.rejects(() => wrongStore.load());
+    });
   });
 
   it('should verify store integrity', async () => {
-    store.set('key', 'value');
-    await store.save();
+    await withTempDir(async () => {
+      const store = new SecretsStore(testPassphrase);
+      store.set('key', 'value');
+      await store.save();
 
-    const verified = await store.verify();
-    assert.strictEqual(verified, true);
+      const verified = await store.verify();
+      assert.strictEqual(verified, true);
+    });
   });
 
   it('should fail verification with wrong passphrase', async () => {
-    store.set('key', 'value');
-    await store.save();
+    await withTempDir(async () => {
+      const store = new SecretsStore(testPassphrase);
+      store.set('key', 'value');
+      await store.save();
 
-    const wrongStore = new SecretsStore('wrong-passphrase');
-    const verified = await wrongStore.verify();
-    assert.strictEqual(verified, false);
+      const wrongStore = new SecretsStore('wrong-passphrase');
+      const verified = await wrongStore.verify();
+      assert.strictEqual(verified, false);
+    });
   });
 
   it('should delete secrets', async () => {
-    store.set('key1', 'value1');
-    store.set('key2', 'value2');
-    await store.save();
+    await withTempDir(async () => {
+      const store = new SecretsStore(testPassphrase);
+      store.set('key1', 'value1');
+      store.set('key2', 'value2');
+      await store.save();
 
-    store.delete('key1');
-    await store.save();
+      store.delete('key1');
+      await store.save();
 
-    const newStore = new SecretsStore(testPassphrase);
-    await newStore.load();
+      const newStore = new SecretsStore(testPassphrase);
+      await newStore.load();
 
-    assert.strictEqual(newStore.has('key1'), false);
-    assert.strictEqual(newStore.get('key2'), 'value2');
+      assert.strictEqual(newStore.has('key1'), false);
+      assert.strictEqual(newStore.get('key2'), 'value2');
+    });
   });
 
   it('should list all secret keys', async () => {
-    store.set('key1', 'value1');
-    store.set('key2', 'value2');
-    store.set('key3', 'value3');
+    await withTempDir(async () => {
+      const store = new SecretsStore(testPassphrase);
+      store.set('key1', 'value1');
+      store.set('key2', 'value2');
+      store.set('key3', 'value3');
 
-    const keys = [...store.store.keys()];
-    assert.ok(keys.includes('key1'));
-    assert.ok(keys.includes('key2'));
-    assert.ok(keys.includes('key3'));
-    assert.strictEqual(keys.length, 3);
+      const keys = [...store.store.keys()];
+      assert.ok(keys.includes('key1'));
+      assert.ok(keys.includes('key2'));
+      assert.ok(keys.includes('key3'));
+      assert.strictEqual(keys.length, 3);
+    });
   });
 
   it('should handle special characters in keys and values', async () => {
-    const specialKey = 'key-with-special-chars!@#$%^&*()';
-    const specialValue = 'value with spaces and "quotes" and émojis 🎉';
+    await withTempDir(async () => {
+      const specialKey = 'key-with-special-chars!@#$%^&*()';
+      const specialValue = 'value with spaces and "quotes" and émojis 🎉';
 
-    store.set(specialKey, specialValue);
-    await store.save();
+      const store = new SecretsStore(testPassphrase);
+      store.set(specialKey, specialValue);
+      await store.save();
 
-    const newStore = new SecretsStore(testPassphrase);
-    await newStore.load();
+      const newStore = new SecretsStore(testPassphrase);
+      await newStore.load();
 
-    assert.strictEqual(newStore.get(specialKey), specialValue);
+      assert.strictEqual(newStore.get(specialKey), specialValue);
+    });
   });
 
   it('should rotate passphrase correctly', async () => {
-    store.set('key', 'value');
-    await store.save();
+    await withTempDir(async () => {
+      const store = new SecretsStore(testPassphrase);
+      store.set('key', 'value');
+      await store.save();
 
-    // Create new store with new passphrase
-    const newPassphrase = 'new-passphrase-67890';
-    const newStore = new SecretsStore(newPassphrase);
+      // Create new store with new passphrase
+      const newPassphrase = 'new-passphrase-67890';
+      const newStore = new SecretsStore(newPassphrase);
 
-    // Copy all secrets to new store
-    for (const [k, v] of store.store) {
-      newStore.set(k, v);
-    }
-    await newStore.save();
+      // Copy all secrets to new store
+      for (const [k, v] of store.store) {
+        newStore.set(k, v);
+      }
+      await newStore.save();
 
-    // Verify old passphrase no longer works
-    const oldStore = new SecretsStore(testPassphrase);
-    await assert.rejects(() => oldStore.load());
+      // Verify old passphrase no longer works
+      const oldStore = new SecretsStore(testPassphrase);
+      await assert.rejects(() => oldStore.load());
 
-    // Verify new passphrase works
-    const verifiedStore = new SecretsStore(newPassphrase);
-    await verifiedStore.load();
-    assert.strictEqual(verifiedStore.get('key'), 'value');
+      // Verify new passphrase works
+      const verifiedStore = new SecretsStore(newPassphrase);
+      await verifiedStore.load();
+      assert.strictEqual(verifiedStore.get('key'), 'value');
+    });
   });
 });
 
