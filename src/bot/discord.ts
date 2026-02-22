@@ -9,6 +9,8 @@ import {
   type Message,
   type TextBasedChannel,
 } from 'discord.js';
+import path from 'node:path';
+import fs from 'node:fs/promises';
 import { createSession, type AgentSession, type AgentHooks } from '../agent.js';
 import type { ApprovalMode, BotDiscordConfig, IdlehandsConfig, AgentPersona } from '../types.js';
 import { DiscordConfirmProvider } from './confirm-discord.js';
@@ -761,8 +763,8 @@ When you escalate, your request will be re-run on a more capable model.`;
         const lines = [
           `**IdleHands** v${PKG_VERSION}`,
           '',
-          `**Model:** \`${botConfig.model || 'auto'}\``,
-          `**Endpoint:** \`${botConfig.endpoint || '?'}\``,
+          `**Model:** \`${config.model || 'auto'}\``,
+          `**Endpoint:** \`${config.endpoint || '?'}\``,
         ];
         await interaction.reply(lines.join('\n'));
         break;

@@ -23,6 +23,7 @@ type CommandContext = {
   botConfig: {
     model?: string;
     endpoint?: string;
+    version?: string;
     defaultDir?: string;
     telegram?: BotTelegramConfig;
     watchdog?: WatchdogSettings;
