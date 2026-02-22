@@ -326,6 +326,35 @@ class StreamingMessage {
     }
     await this.bot.api.sendMessage(this.chatId, html.slice(0, 4096), { parse_mode: 'HTML' }).catch(() => {});
   }
+
+  /**
+   * Safety net for abandoned turns:
+   * ensure typing/edit loops are stopped and status message is no longer left in
+   * a transient "Writing response" state.
+   */
+  async settleIfUnfinalized(note = '⏹️ Turn ended.'): Promise<void> {
+    if (this.finalized) return;
+    this.finalized = true;
+    this.stopTyping();
+    if (this.scheduler) {
+      this.scheduler.stop();
+      this.scheduler = null;
+    }
+    this.presenter.stop();
+
+    if (!this.messageId) return;
+
+    const snap = this.presenter.snapshot('stop');
+    let html = '';
+    if (snap.toolLines.length) {
+      html += `<pre>${escapeHtml(snap.toolLines.join('\n'))}</pre>\n\n`;
+    }
+    html += `<i>${escapeHtml(note)}</i>`;
+
+    await this.bot.api.editMessageText(this.chatId, this.messageId, html.slice(0, 4096), {
+      parse_mode: 'HTML',
+    }).catch(() => {});
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1155,6 +1184,7 @@ async function processMessage(
       }
     }
   } finally {
+    await streaming.settleIfUnfinalized();
     clearInterval(watchdog);
     const current = sessions.finishTurn(managed.chatId, turnId);
     if (!current) return;
