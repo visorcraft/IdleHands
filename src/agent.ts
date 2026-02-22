@@ -750,6 +750,7 @@ export type AgentSession = {
   supportsVision: boolean;
   messages: ChatMessage[];
   usage: { prompt: number; completion: number };
+  currentContextTokens: number;
   ask: (instruction: UserContent, hooks?: ((t: string) => void) | AgentHooks) => Promise<AgentResult>;
   setModel: (name: string) => void;
   setEndpoint: (endpoint: string, modelName?: string) => Promise<void>;
@@ -947,13 +948,13 @@ export async function createSession(opts: {
 
   const mcpManager = mcpServers.length
     ? new MCPManager({
-        servers: mcpServers,
-        toolBudgetTokens: mcpToolBudget,
-        callTimeoutMs: Math.max(1000, Math.floor(mcpCallTimeoutSec * 1000)),
-        offline: cfg.offline === true,
-        builtInToolNames,
-        enabledTools: mcpEnabledTools,
-      })
+      servers: mcpServers,
+      toolBudgetTokens: mcpToolBudget,
+      callTimeoutMs: Math.max(1000, Math.floor(mcpCallTimeoutSec * 1000)),
+      offline: cfg.offline === true,
+      builtInToolNames,
+      enabledTools: mcpEnabledTools,
+    })
     : null;
 
   if (mcpManager) {
@@ -1007,8 +1008,8 @@ export async function createSession(opts: {
 
   const vault = vaultEnabled
     ? (opts.runtime?.vault ?? new VaultStore({
-        immutableReviewArtifactsPerProject: (cfg as any)?.trifecta?.vault?.immutable_review_artifacts_per_project,
-      }))
+      immutableReviewArtifactsPerProject: (cfg as any)?.trifecta?.vault?.immutable_review_artifacts_per_project,
+    }))
     : undefined;
   if (vault) {
     // Scope vault entries by project directory to prevent cross-project context leaks
@@ -1158,7 +1159,7 @@ export async function createSession(opts: {
           console.error(`\x1b[33m  This model/server may not support tool-call replay correctly.\x1b[0m`);
           console.error(`\x1b[33m  Consider using a different model or updating llama.cpp.\x1b[0m`);
         }
-      } catch {}
+      } catch { }
     }
   }
   if (harness.systemPromptSuffix) {
@@ -1300,25 +1301,25 @@ export async function createSession(opts: {
 
     const defaults = cfg.sub_agents ?? {};
     const taskId = ++subTaskSeq;
-    const emitStatus = options?.emitStatus ?? (() => {});
+    const emitStatus = options?.emitStatus ?? (() => { });
 
     const maxIterations = Number.isFinite(args?.max_iterations)
       ? Math.max(1, Math.floor(Number(args.max_iterations)))
       : (Number.isFinite(defaults.max_iterations)
-          ? Math.max(1, Math.floor(Number(defaults.max_iterations)))
-          : 50);
+        ? Math.max(1, Math.floor(Number(defaults.max_iterations)))
+        : 50);
 
     const timeoutSec = Number.isFinite(args?.timeout_sec)
       ? Math.max(1, Math.floor(Number(args.timeout_sec)))
       : (Number.isFinite(defaults.timeout_sec)
-          ? Math.max(1, Math.floor(Number(defaults.timeout_sec)))
-          : Math.max(60, cfg.timeout));
+        ? Math.max(1, Math.floor(Number(defaults.timeout_sec)))
+        : Math.max(60, cfg.timeout));
 
     const subMaxTokens = Number.isFinite(args?.max_tokens)
       ? Math.max(128, Math.floor(Number(args.max_tokens)))
       : (Number.isFinite(defaults.max_tokens)
-          ? Math.max(128, Math.floor(Number(defaults.max_tokens)))
-          : maxTokens);
+        ? Math.max(128, Math.floor(Number(defaults.max_tokens)))
+        : maxTokens);
 
     const resultTokenCap = Number.isFinite(defaults.result_token_cap)
       ? Math.max(256, Math.floor(Number(defaults.result_token_cap)))
@@ -1342,8 +1343,8 @@ export async function createSession(opts: {
     const requestedSystemPrompt = typeof args?.system_prompt === 'string' && args.system_prompt.trim()
       ? args.system_prompt.trim()
       : (typeof defaults.system_prompt === 'string' && defaults.system_prompt.trim()
-          ? defaults.system_prompt.trim()
-          : DEFAULT_SUB_AGENT_SYSTEM_PROMPT);
+        ? defaults.system_prompt.trim()
+        : DEFAULT_SUB_AGENT_SYSTEM_PROMPT);
 
     const cwd = cfg.dir ?? process.cwd();
     const ctxFiles = await buildSubAgentContextBlock(cwd, args?.context_files);
@@ -1429,7 +1430,7 @@ export async function createSession(opts: {
       } catch (e: any) {
         failedMessage = e?.message ?? String(e);
       } finally {
-        await subSession.close().catch(() => {});
+        await subSession.close().catch(() => { });
       }
 
       const duration = Date.now() - startedAt;
@@ -1476,8 +1477,8 @@ export async function createSession(opts: {
   }) => {
     const defaultConfirmBridge = opts.confirmProvider
       ? async (prompt: string) => opts.confirmProvider!.confirm({
-          tool: '', args: {}, summary: prompt, mode: cfg.approval_mode,
-        })
+        tool: '', args: {}, summary: prompt, mode: cfg.approval_mode,
+      })
       : opts.confirm;
     return {
       cwd: cfg.dir ?? process.cwd(),
@@ -1674,7 +1675,7 @@ export async function createSession(opts: {
 
   const runCompactionWithLock = async (reason: string, runner: () => Promise<CompactionOutcome>): Promise<CompactionOutcome> => {
     const prev = compactionLockTail;
-    let release: () => void = () => {};
+    let release: () => void = () => { };
     compactionLockTail = new Promise<void>((resolve) => {
       release = () => resolve();
     });
@@ -1729,7 +1730,7 @@ export async function createSession(opts: {
     const reason = opts?.reason
       ?? (opts?.hard ? 'manual hard compaction'
         : opts?.force ? 'manual force compaction'
-        : 'manual compaction');
+          : 'manual compaction');
 
     return await runCompactionWithLock(reason, async () => {
       const beforeMessages = messages.length;
@@ -1797,7 +1798,7 @@ export async function createSession(opts: {
         currentContextTokens = estimateTokensFromMessages(compacted);
         if (dropped.length) {
           messages.push({ role: 'system', content: buildCompactionSystemNote('manual', dropped.length) });
-          await injectVaultContext().catch(() => {});
+          await injectVaultContext().catch(() => { });
           if (opts?.reason || opts?.force) {
             injectCompactionReminder(opts?.reason ?? 'history compaction');
           }
@@ -1840,17 +1841,19 @@ export async function createSession(opts: {
       readCacheHitRate: number;
       dedupeRate: number;
     };
-  } = { totalHistory: 0, signatures: [], outcomes: [], telemetry: {
-    callsRegistered: 0,
-    dedupedReplays: 0,
-    readCacheLookups: 0,
-    readCacheHits: 0,
-    warnings: 0,
-    criticals: 0,
-    recoveryRecommended: 0,
-    readCacheHitRate: 0,
-    dedupeRate: 0,
-  } };
+  } = {
+    totalHistory: 0, signatures: [], outcomes: [], telemetry: {
+      callsRegistered: 0,
+      dedupedReplays: 0,
+      readCacheLookups: 0,
+      readCacheHits: 0,
+      warnings: 0,
+      criticals: 0,
+      recoveryRecommended: 0,
+      readCacheHitRate: 0,
+      dedupeRate: 0,
+    }
+  };
   let lastModelsProbeMs = 0;
 
   const capturesDir = path.join(stateDir(), 'captures');
@@ -2121,8 +2124,8 @@ export async function createSession(opts: {
   };
 
   const close = async () => {
-    await mcpManager?.close().catch(() => {});
-    await lspManager?.close().catch(() => {});
+    await mcpManager?.close().catch(() => { });
+    await lspManager?.close().catch(() => { });
     vault?.close();
     lens?.close();
   };
@@ -2169,7 +2172,7 @@ export async function createSession(opts: {
     if (now - lastModelsProbeMs < 30_000) return;
     lastModelsProbeMs = now;
 
-    let fresh: { data: Array<{ id: string; [k: string]: any }> };
+    let fresh: { data: Array<{ id: string;[k: string]: any }> };
     try {
       fresh = normalizeModelsResponse(await client.models());
     } catch {
@@ -2653,7 +2656,7 @@ export async function createSession(opts: {
 
           if (dropped.length) {
             messages.push({ role: 'system', content: buildCompactionSystemNote('auto', dropped.length) } as ChatMessage);
-            await injectVaultContext().catch(() => {});
+            await injectVaultContext().catch(() => { });
             injectCompactionReminder('auto context-budget compaction');
           }
 
@@ -2791,13 +2794,13 @@ export async function createSession(opts: {
 
         const legacyChoice = (resp as any)?.role
           ? {
-              finish_reason: (resp as any)?.finish_reason ?? 'stop',
-              message: {
-                role: (resp as any)?.role ?? 'assistant',
-                content: (resp as any)?.content ?? '',
-                tool_calls: (resp as any)?.tool_calls,
-              },
-            }
+            finish_reason: (resp as any)?.finish_reason ?? 'stop',
+            message: {
+              role: (resp as any)?.role ?? 'assistant',
+              content: (resp as any)?.content ?? '',
+              tool_calls: (resp as any)?.tool_calls,
+            },
+          }
           : undefined;
         const wasToollessRecoveryTurn = forceToollessRecoveryTurn;
         forceToollessRecoveryTurn = false;
@@ -2915,7 +2918,7 @@ export async function createSession(opts: {
             for (const tc of toolCallsArr) {
               const n = tc.function?.name ?? '';
               let argCount = 0;
-              try { argCount = Object.keys(JSON.parse(tc.function?.arguments ?? '{}')).length; } catch {}
+              try { argCount = Object.keys(JSON.parse(tc.function?.arguments ?? '{}')).length; } catch { }
               if (!byName.has(n)) byName.set(n, []);
               byName.get(n)!.push({ tc, argCount });
             }
@@ -2964,9 +2967,9 @@ export async function createSession(opts: {
           // The bridge accepts an optional context object for rich confirm data.
           const confirmBridge = opts.confirmProvider
             ? async (prompt: string, bridgeCtx?: { tool?: string; args?: Record<string, unknown>; diff?: string }) => opts.confirmProvider!.confirm({
-                tool: bridgeCtx?.tool ?? '', args: bridgeCtx?.args ?? {}, summary: prompt,
-                diff: bridgeCtx?.diff, mode: cfg.approval_mode,
-              })
+              tool: bridgeCtx?.tool ?? '', args: bridgeCtx?.args ?? {}, summary: prompt,
+              diff: bridgeCtx?.diff, mode: cfg.approval_mode,
+            })
             : opts.confirm;
 
           const ctx = buildToolCtx({
@@ -2986,9 +2989,9 @@ export async function createSession(opts: {
           if (fileMutationsInTurn >= 3 && isGitDirty(ctx.cwd)) {
             const shouldStash = confirmBridge
               ? await confirmBridge(
-                  `Working tree is dirty and the agent plans ${fileMutationsInTurn} file edits. Stash current changes first? [Y/n]`,
-                  { tool: 'git_stash', args: { fileMutationsInTurn } }
-                )
+                `Working tree is dirty and the agent plans ${fileMutationsInTurn} file edits. Stash current changes first? [Y/n]`,
+                { tool: 'git_stash', args: { fileMutationsInTurn } }
+              )
               : false;
             if (shouldStash) {
               const stashed = stashWorkingTree(ctx.cwd);
@@ -3109,7 +3112,7 @@ export async function createSession(opts: {
                 }
                 // At 3x, inject vault context so the model gets the data it needs
                 if (count >= 3 && count < loopThreshold) {
-                  await injectVaultContext().catch(() => {});
+                  await injectVaultContext().catch(() => { });
                 }
                 if (count >= loopThreshold) {
                   const sigArgs = sigMetaBySig.get(sig)?.args ?? {};
@@ -3131,7 +3134,7 @@ export async function createSession(opts: {
                   const argsPreview = argsPreviewRaw.length > 220 ? argsPreviewRaw.slice(0, 220) + '…' : argsPreviewRaw;
                   throw new Error(
                     `tool ${toolName}: identical call repeated ${loopThreshold}x across turns; breaking loop. ` +
-                      `args=${argsPreview}`
+                    `args=${argsPreview}`
                   );
                 }
               }
@@ -3155,7 +3158,7 @@ export async function createSession(opts: {
 
               // At 3x, inject vault context and first warning
               if (consec >= 3) {
-                await injectVaultContext().catch(() => {});
+                await injectVaultContext().catch(() => { });
 
                 if (consec === 3) {
                   let warningMsg: string | null = null;
@@ -3219,11 +3222,11 @@ export async function createSession(opts: {
               const argsPreview = argsRaw.length > 220 ? argsRaw.slice(0, 220) + '…' : argsRaw;
               throw new Error(
                 `tool ${toolName}: identical call repeated ${loopThreshold}x across turns; breaking loop. ` +
-                  `args=${argsPreview}\n` +
-                  `Hint: you repeated the same tool call ${loopThreshold} times with identical arguments. ` +
-                  `If the call succeeded, move on to the next step. ` +
-                  `If it failed, check that all required parameters are present and correct. ` +
-                  `For write_file/edit_file/apply_patch/edit_range, ensure required args are present (content/old_text/new_text/patch/files/start_line/end_line/replacement).`
+                `args=${argsPreview}\n` +
+                `Hint: you repeated the same tool call ${loopThreshold} times with identical arguments. ` +
+                `If the call succeeded, move on to the next step. ` +
+                `If it failed, check that all required parameters are present and correct. ` +
+                `For write_file/edit_file/apply_patch/edit_range, ensure required args are present (content/old_text/new_text/patch/files/start_line/end_line/replacement).`
               );
             }
           }
@@ -3568,7 +3571,7 @@ export async function createSession(opts: {
                     toolSuccess = false;
                   }
                 }
-              } catch {}
+              } catch { }
             } else if (name === 'search_files') {
               const lines = content.split('\n').filter(Boolean);
               if (lines.length > 0) resultEvent.searchMatches = lines.slice(0, 20);
@@ -3585,7 +3588,7 @@ export async function createSession(opts: {
                     resultEvent.diff = generateMinimalDiff(before, after, cps[0].filePath);
                   }
                 }
-              } catch {}
+              } catch { }
             }
 
             resultEvent.success = toolSuccess;
@@ -3651,7 +3654,7 @@ export async function createSession(opts: {
               if (blockedMatch) {
                 const reason = (blockedMatch[1] || blockedMatch[2] || 'blocked command').trim();
                 let parsedArgs: any = {};
-                try { parsedArgs = JSON.parse(tc.function.arguments ?? '{}'); } catch {}
+                try { parsedArgs = JSON.parse(tc.function.arguments ?? '{}'); } catch { }
                 const cmd = tc.function.name === 'exec'
                   ? String(parsedArgs?.command ?? '')
                   : String(parsedArgs?.task ?? '');
@@ -3952,7 +3955,7 @@ export async function createSession(opts: {
 
         // final assistant message
         messages.push({ role: 'assistant', content: assistantOutput });
-        await persistReviewArtifact(assistantOutput).catch(() => {});
+        await persistReviewArtifact(assistantOutput).catch(() => { });
         await emitTurnEnd({
           turn: turns,
           toolCalls,
@@ -4038,6 +4041,9 @@ export async function createSession(opts: {
     },
     get usage() {
       return { ...cumulativeUsage };
+    },
+    get currentContextTokens() {
+      return currentContextTokens > 0 ? currentContextTokens : estimateTokensFromMessages(messages);
     },
     ask,
     setModel,

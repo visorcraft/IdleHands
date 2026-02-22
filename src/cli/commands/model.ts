@@ -126,10 +126,10 @@ export const modelCommands: SlashCommand[] = [
           ? ctx.session.usage.prompt
           : estimateTokensFromMessages(ctx.session.messages);
       const completionTokens = ctx.session.usage.completion;
-      const totalTokens = promptTokens + completionTokens;
+      const currentContext = ctx.session.currentContextTokens;
       const ctxW = ctx.session.contextWindow || 0;
       const ctxPct = ctxW > 0
-        ? Math.min(100, (totalTokens / ctxW) * 100).toFixed(1)
+        ? Math.min(100, (currentContext / ctxW) * 100).toFixed(1)
         : '?';
 
       const turns = Math.max(0, ctx.session.messages.filter((m: any) => m.role === 'user').length);
@@ -158,7 +158,7 @@ export const modelCommands: SlashCommand[] = [
         `  Tool calls: ${toolCalls}`,
         `  Tokens (prompt): ~${promptTokens.toLocaleString()}`,
         `  Tokens (completion): ~${completionTokens.toLocaleString()}`,
-        `  Context usage: ${totalTokens.toLocaleString()} / ${ctxW.toLocaleString()} (${ctxPct}%)`,
+        `  Context usage: ~${currentContext.toLocaleString()} / ${ctxW.toLocaleString()} (${ctxPct}%)`,
         `  Time: ${elapsedMin}m ${elapsedSec}s`,
         `  Files modified: ${filesModified}`,
         `  Model: ${ctx.session.model}`,
@@ -361,7 +361,7 @@ export const modelCommands: SlashCommand[] = [
         console.log(ctx.S.dim('Current model: ') + ctx.S.cyan(ctx.session.model));
         console.log(
           ctx.S.dim('Current endpoint: ') +
-            String((ctx.session as any).endpoint ?? ctx.config.endpoint)
+          String((ctx.session as any).endpoint ?? ctx.config.endpoint)
         );
         console.log(ctx.S.dim('Current harness: ') + ctx.S.magenta(ctx.session.harness));
         console.log(

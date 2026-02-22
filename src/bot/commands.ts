@@ -124,7 +124,7 @@ export async function handleStatus({ ctx, sessions }: CommandContext): Promise<v
   const s = managed.session;
   const contextPct =
     s.contextWindow > 0
-      ? Math.min(100, ((s.usage.prompt + s.usage.completion) / s.contextWindow) * 100).toFixed(1)
+      ? Math.min(100, (s.currentContextTokens / s.contextWindow) * 100).toFixed(1)
       : '?';
   const lines = [
     '<b>Session Status</b>',
@@ -133,7 +133,7 @@ export async function handleStatus({ ctx, sessions }: CommandContext): Promise<v
     `<b>Harness:</b> <code>${escapeHtml(s.harness)}</code>`,
     `<b>Dir:</b> <code>${escapeHtml(managed.workingDir)}</code>`,
     `<b>Dir pinned:</b> ${managed.dirPinned ? 'yes' : 'no'}`,
-    `<b>Context:</b> ~${(s.usage.prompt + s.usage.completion).toLocaleString()} / ${s.contextWindow.toLocaleString()} (${contextPct}%)`,
+    `<b>Context:</b> ~${s.currentContextTokens.toLocaleString()} / ${s.contextWindow.toLocaleString()} (${contextPct}%)`,
     `<b>Tokens:</b> prompt=${s.usage.prompt.toLocaleString()}, completion=${s.usage.completion.toLocaleString()}`,
     `<b>In-flight:</b> ${managed.inFlight ? 'yes' : 'no'}`,
     `<b>State:</b> ${managed.state}`,
@@ -617,7 +617,7 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
       const now = Date.now();
       if (now - lastProgressAt >= ANTON_RATE_LIMIT_MS) {
         lastProgressAt = now;
-        ctx.reply(formatTaskStart(task, attempt, prog)).catch(() => {});
+        ctx.reply(formatTaskStart(task, attempt, prog)).catch(() => { });
       }
     },
     onTaskEnd(task, result, prog) {
@@ -626,12 +626,12 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
       const now = Date.now();
       if (now - lastProgressAt >= ANTON_RATE_LIMIT_MS) {
         lastProgressAt = now;
-        ctx.reply(formatTaskEnd(task, result, prog)).catch(() => {});
+        ctx.reply(formatTaskEnd(task, result, prog)).catch(() => { });
       }
     },
     onTaskSkip(task, reason) {
       session.lastActivity = Date.now();
-      ctx.reply(formatTaskSkip(task, reason)).catch(() => {});
+      ctx.reply(formatTaskSkip(task, reason)).catch(() => { });
     },
     onRunComplete(result) {
       session.lastActivity = Date.now();
@@ -639,7 +639,7 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
       session.antonActive = false;
       session.antonAbortSignal = null;
       session.antonProgress = null;
-      ctx.reply(formatRunSummary(result)).catch(() => {});
+      ctx.reply(formatRunSummary(result)).catch(() => { });
     },
     onHeartbeat() {
       session.lastActivity = Date.now();
@@ -670,7 +670,7 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
     session.antonActive = false;
     session.antonAbortSignal = null;
     session.antonProgress = null;
-    ctx.reply(`Anton error: ${err.message}`).catch(() => {});
+    ctx.reply(`Anton error: ${err.message}`).catch(() => { });
   });
 }
 
@@ -699,8 +699,8 @@ export async function handleAgent({
     ...(p.default_dir ? [`<b>Default dir:</b> <code>${escapeHtml(p.default_dir)}</code>`] : []),
     ...(p.allowed_dirs?.length
       ? [
-          `<b>Allowed dirs:</b> ${p.allowed_dirs.map((d) => `<code>${escapeHtml(d)}</code>`).join(', ')}`,
-        ]
+        `<b>Allowed dirs:</b> ${p.allowed_dirs.map((d) => `<code>${escapeHtml(d)}</code>`).join(', ')}`,
+      ]
       : []),
   ];
 

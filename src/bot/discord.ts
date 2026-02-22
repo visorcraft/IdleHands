@@ -305,10 +305,10 @@ When you escalate, your request will be re-run on a more capable model.`;
     s.antonProgress = null;
     try {
       s.activeAbortController?.abort();
-    } catch {}
+    } catch { }
     try {
       s.session.cancel();
-    } catch {}
+    } catch { }
     sessions.delete(key);
   }
 
@@ -369,10 +369,10 @@ When you escalate, your request will be re-run on a more capable model.`;
       managed.state = 'canceling';
       try {
         managed.activeAbortController?.abort();
-      } catch {}
+      } catch { }
       try {
         managed.session.cancel();
-      } catch {}
+      } catch { }
     }
 
     managed.lastActivity = Date.now();
@@ -529,7 +529,7 @@ When you escalate, your request will be re-run on a more capable model.`;
           // Cancel current request, compact, and re-send
           try {
             managed.activeAbortController?.abort();
-          } catch {}
+          } catch { }
           managed.session
             .compactHistory({ force: true })
             .then((result) => {
@@ -702,14 +702,14 @@ When you escalate, your request will be re-run on a more capable model.`;
     managed.pendingQueue = [];
     try {
       managed.activeAbortController?.abort();
-    } catch {}
+    } catch { }
 
     // Preserve conversation history before destroying the old session
     const oldMessages = managed.session.messages.slice();
 
     try {
       managed.session.cancel();
-    } catch {}
+    } catch { }
 
     const session = await createSession({
       config: cfg,
@@ -1063,21 +1063,21 @@ When you escalate, your request will be re-run on a more capable model.`;
       await sendUserVisible(
         msg,
         `✨ New session started${agentMsg}. Send a message to begin.`
-      ).catch(() => {});
+      ).catch(() => { });
       return;
     }
 
     const managed = await getOrCreate(msg);
     if (!managed) {
       await sendUserVisible(msg, '⚠️ Too many active sessions. Please retry later.').catch(
-        () => {}
+        () => { }
       );
       return;
     }
 
     if (content === '/cancel') {
       const res = cancelActive(managed);
-      await sendUserVisible(msg, res.message).catch(() => {});
+      await sendUserVisible(msg, res.message).catch(() => { });
       return;
     }
 
@@ -1095,7 +1095,7 @@ When you escalate, your request will be re-run on a more capable model.`;
         '',
         'Send me a coding task, or use /help for commands.',
       ];
-      await sendUserVisible(msg, lines.join('\n')).catch(() => {});
+      await sendUserVisible(msg, lines.join('\n')).catch(() => { });
       return;
     }
 
@@ -1125,7 +1125,7 @@ When you escalate, your request will be re-run on a more capable model.`;
         '/anton <file> — Start autonomous task runner',
         '/anton status | /anton stop | /anton last',
       ];
-      await sendUserVisible(msg, lines.join('\n')).catch(() => {});
+      await sendUserVisible(msg, lines.join('\n')).catch(() => { });
       return;
     }
 
@@ -1133,19 +1133,19 @@ When you escalate, your request will be re-run on a more capable model.`;
       await sendUserVisible(
         msg,
         `Model: \`${managed.session.model}\`\nHarness: \`${managed.session.harness}\``
-      ).catch(() => {});
+      ).catch(() => { });
       return;
     }
 
     if (content === '/version') {
-      await sendUserVisible(msg, `Idle Hands v${PKG_VERSION}`).catch(() => {});
+      await sendUserVisible(msg, `Idle Hands v${PKG_VERSION}`).catch(() => { });
       return;
     }
 
     if (content === '/compact') {
       managed.session.reset();
       await sendUserVisible(msg, '🗜 Session context compacted (reset to system prompt).').catch(
-        () => {}
+        () => { }
       );
       return;
     }
@@ -1166,7 +1166,7 @@ When you escalate, your request will be re-run on a more capable model.`;
               .join(', ')}`
           );
         }
-        await sendUserVisible(msg, lines.join('\n')).catch(() => {});
+        await sendUserVisible(msg, lines.join('\n')).catch(() => { });
         return;
       }
 
@@ -1175,7 +1175,7 @@ When you escalate, your request will be re-run on a more capable model.`;
         await sendUserVisible(
           msg,
           `❌ Directory not allowed. Allowed roots: ${managed.allowedDirs.map((d) => `\`${d}\``).join(', ')}`
-        ).catch(() => {});
+        ).catch(() => { });
         return;
       }
 
@@ -1193,7 +1193,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       managed.dirPinned = true;
       managed.repoCandidates = repoCandidates;
       await sendUserVisible(msg, `✅ Working directory pinned to \`${resolvedDir}\``).catch(
-        () => {}
+        () => { }
       );
       return;
     }
@@ -1205,34 +1205,34 @@ When you escalate, your request will be re-run on a more capable model.`;
         await sendUserVisible(
           msg,
           `Approval mode: \`${managed.config.approval_mode || approvalMode}\`\nOptions: ${modes.join(', ')}`
-        ).catch(() => {});
+        ).catch(() => { });
         return;
       }
       if (!modes.includes(arg as any)) {
-        await sendUserVisible(msg, `Invalid mode. Options: ${modes.join(', ')}`).catch(() => {});
+        await sendUserVisible(msg, `Invalid mode. Options: ${modes.join(', ')}`).catch(() => { });
         return;
       }
       managed.config.approval_mode = arg as any;
       managed.config.no_confirm = arg === 'yolo';
-      await sendUserVisible(msg, `✅ Approval mode set to \`${arg}\``).catch(() => {});
+      await sendUserVisible(msg, `✅ Approval mode set to \`${arg}\``).catch(() => { });
       return;
     }
 
     if (content === '/mode' || content.startsWith('/mode ')) {
       const arg = content.slice('/mode'.length).trim().toLowerCase();
       if (!arg) {
-        await sendUserVisible(msg, `Mode: \`${managed.config.mode || 'code'}\``).catch(() => {});
+        await sendUserVisible(msg, `Mode: \`${managed.config.mode || 'code'}\``).catch(() => { });
         return;
       }
       if (arg !== 'code' && arg !== 'sys') {
-        await sendUserVisible(msg, 'Invalid mode. Options: code, sys').catch(() => {});
+        await sendUserVisible(msg, 'Invalid mode. Options: code, sys').catch(() => { });
         return;
       }
       managed.config.mode = arg as any;
       if (arg === 'sys' && managed.config.approval_mode === 'auto-edit') {
         managed.config.approval_mode = 'default';
       }
-      await sendUserVisible(msg, `✅ Mode set to \`${arg}\``).catch(() => {});
+      await sendUserVisible(msg, `✅ Mode set to \`${arg}\``).catch(() => { });
       return;
     }
 
@@ -1243,11 +1243,11 @@ When you escalate, your request will be re-run on a more capable model.`;
         await sendUserVisible(
           msg,
           `Sub-agents: \`${current ? 'on' : 'off'}\`\nUsage: /subagents on | off`
-        ).catch(() => {});
+        ).catch(() => { });
         return;
       }
       if (arg !== 'on' && arg !== 'off') {
-        await sendUserVisible(msg, 'Invalid value. Usage: /subagents on | off').catch(() => {});
+        await sendUserVisible(msg, 'Invalid value. Usage: /subagents on | off').catch(() => { });
         return;
       }
       const enabled = arg === 'on';
@@ -1255,7 +1255,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       await sendUserVisible(
         msg,
         `✅ Sub-agents \`${enabled ? 'on' : 'off'}\`${!enabled ? ' — spawn_task disabled for this session' : ''}`
-      ).catch(() => {});
+      ).catch(() => { });
       return;
     }
 
@@ -1263,14 +1263,14 @@ When you escalate, your request will be re-run on a more capable model.`;
       const replay = managed.session.replay;
       if (!replay) {
         await sendUserVisible(msg, 'Replay is disabled. No change tracking available.').catch(
-          () => {}
+          () => { }
         );
         return;
       }
       try {
         const checkpoints = await replay.list(50);
         if (!checkpoints.length) {
-          await sendUserVisible(msg, 'No file changes this session.').catch(() => {});
+          await sendUserVisible(msg, 'No file changes this session.').catch(() => { });
           return;
         }
         const byFile = new Map<string, number>();
@@ -1278,10 +1278,10 @@ When you escalate, your request will be re-run on a more capable model.`;
         const lines = [`Session changes (${byFile.size} files):`];
         for (const [fp, count] of byFile)
           lines.push(`✎ \`${fp}\` (${count} edit${count > 1 ? 's' : ''})`);
-        await sendUserVisible(msg, lines.join('\n')).catch(() => {});
+        await sendUserVisible(msg, lines.join('\n')).catch(() => { });
       } catch (e: any) {
         await sendUserVisible(msg, `Error listing changes: ${e?.message ?? String(e)}`).catch(
-          () => {}
+          () => { }
         );
       }
       return;
@@ -1290,7 +1290,7 @@ When you escalate, your request will be re-run on a more capable model.`;
     if (content === '/undo') {
       const lastPath = managed.session.lastEditedPath;
       if (!lastPath) {
-        await sendUserVisible(msg, 'No recent edits to undo.').catch(() => {});
+        await sendUserVisible(msg, 'No recent edits to undo.').catch(() => { });
         return;
       }
       try {
@@ -1299,9 +1299,9 @@ When you escalate, your request will be re-run on a more capable model.`;
           { cwd: managed.config.dir || defaultDir, noConfirm: true, dryRun: false } as any,
           { path: lastPath }
         );
-        await sendUserVisible(msg, `✅ ${result}`).catch(() => {});
+        await sendUserVisible(msg, `✅ ${result}`).catch(() => { });
       } catch (e: any) {
-        await sendUserVisible(msg, `❌ Undo failed: ${e?.message ?? String(e)}`).catch(() => {});
+        await sendUserVisible(msg, `❌ Undo failed: ${e?.message ?? String(e)}`).catch(() => { });
       }
       return;
     }
@@ -1309,18 +1309,18 @@ When you escalate, your request will be re-run on a more capable model.`;
     if (content === '/vault' || content.startsWith('/vault ')) {
       const query = content.slice('/vault'.length).trim();
       if (!query) {
-        await sendUserVisible(msg, 'Usage: /vault <search query>').catch(() => {});
+        await sendUserVisible(msg, 'Usage: /vault <search query>').catch(() => { });
         return;
       }
       const vault = managed.session.vault;
       if (!vault) {
-        await sendUserVisible(msg, 'Vault is disabled.').catch(() => {});
+        await sendUserVisible(msg, 'Vault is disabled.').catch(() => { });
         return;
       }
       try {
         const results = await vault.search(query, 5);
         if (!results.length) {
-          await sendUserVisible(msg, `No vault results for "${query}"`).catch(() => {});
+          await sendUserVisible(msg, `No vault results for "${query}"`).catch(() => { });
           return;
         }
         const lines = [`Vault results for "${query}":`];
@@ -1329,20 +1329,20 @@ When you escalate, your request will be re-run on a more capable model.`;
           const body = (r.value ?? r.snippet ?? r.content ?? '').replace(/\s+/g, ' ').slice(0, 120);
           lines.push(`• ${title}: ${body}`);
         }
-        await sendUserVisible(msg, lines.join('\n')).catch(() => {});
+        await sendUserVisible(msg, lines.join('\n')).catch(() => { });
       } catch (e: any) {
         await sendUserVisible(msg, `Error searching vault: ${e?.message ?? String(e)}`).catch(
-          () => {}
+          () => { }
         );
       }
       return;
     }
 
     if (content === '/status') {
-      const used = managed.session.usage.prompt + managed.session.usage.completion;
+      const used = managed.session.currentContextTokens;
       const pct =
         managed.session.contextWindow > 0
-          ? ((used / managed.session.contextWindow) * 100).toFixed(1)
+          ? Math.min(100, (used / managed.session.contextWindow) * 100).toFixed(1)
           : '?';
       const agentLine = managed.agentPersona
         ? `Agent: ${managed.agentPersona.display_name || managed.agentId}`
@@ -1361,24 +1361,24 @@ When you escalate, your request will be re-run on a more capable model.`;
           `State: ${managed.state}`,
           `Queue: ${managed.pendingQueue.length}/${maxQueue}`,
         ].join('\n')
-      ).catch(() => {});
+      ).catch(() => { });
       return;
     }
 
     if (content === '/watchdog' || content === '/watchdog status') {
-      await sendUserVisible(msg, watchdogStatusText(managed)).catch(() => {});
+      await sendUserVisible(msg, watchdogStatusText(managed)).catch(() => { });
       return;
     }
 
     if (content.startsWith('/watchdog ')) {
-      await sendUserVisible(msg, 'Usage: /watchdog or /watchdog status').catch(() => {});
+      await sendUserVisible(msg, 'Usage: /watchdog or /watchdog status').catch(() => { });
       return;
     }
 
     // /agent - show current agent info
     if (content === '/agent') {
       if (!managed.agentPersona) {
-        await sendUserVisible(msg, 'No agent configured. Using global config.').catch(() => {});
+        await sendUserVisible(msg, 'No agent configured. Using global config.').catch(() => { });
         return;
       }
       const p = managed.agentPersona;
@@ -1392,7 +1392,7 @@ When you escalate, your request will be re-run on a more capable model.`;
           ? [`Allowed dirs: ${p.allowed_dirs.map((d) => `\`${d}\``).join(', ')}`]
           : []),
       ];
-      await sendUserVisible(msg, lines.join('\n')).catch(() => {});
+      await sendUserVisible(msg, lines.join('\n')).catch(() => { });
       return;
     }
 
@@ -1400,7 +1400,7 @@ When you escalate, your request will be re-run on a more capable model.`;
     if (content === '/agents') {
       const agents = botConfig.agents;
       if (!agents || Object.keys(agents).length === 0) {
-        await sendUserVisible(msg, 'No agents configured. Using global config.').catch(() => {});
+        await sendUserVisible(msg, 'No agents configured. Using global config.').catch(() => { });
         return;
       }
       const lines = ['**Configured Agents:**'];
@@ -1438,7 +1438,7 @@ When you escalate, your request will be re-run on a more capable model.`;
         }
       }
 
-      await sendUserVisible(msg, lines.join('\n')).catch(() => {});
+      await sendUserVisible(msg, lines.join('\n')).catch(() => { });
       return;
     }
 
@@ -1447,7 +1447,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       const escalation = managed.agentPersona?.escalation;
       if (!escalation || !escalation.models?.length) {
         await sendUserVisible(msg, '❌ No escalation models configured for this agent.').catch(
-          () => {}
+          () => { }
         );
         return;
       }
@@ -1470,7 +1470,7 @@ When you escalate, your request will be re-run on a more capable model.`;
             `⚡ **Pending escalation:** \`${managed.pendingEscalation}\` (next message will use this)`
           );
         }
-        await sendUserVisible(msg, lines.join('\n')).catch(() => {});
+        await sendUserVisible(msg, lines.join('\n')).catch(() => { });
         return;
       }
 
@@ -1485,7 +1485,7 @@ When you escalate, your request will be re-run on a more capable model.`;
           await sendUserVisible(
             msg,
             `❌ Model \`${arg}\` not in escalation chain. Available: ${escalation.models.map((m) => `\`${m}\``).join(', ')}`
-          ).catch(() => {});
+          ).catch(() => { });
           return;
         }
         targetModel = arg;
@@ -1495,14 +1495,14 @@ When you escalate, your request will be re-run on a more capable model.`;
       await sendUserVisible(
         msg,
         `⚡ Next message will use \`${targetModel}\`. Send your request now.`
-      ).catch(() => {});
+      ).catch(() => { });
       return;
     }
 
     // /deescalate - return to base model
     if (content === '/deescalate') {
       if (managed.currentModelIndex === 0 && !managed.pendingEscalation) {
-        await sendUserVisible(msg, 'Already using base model.').catch(() => {});
+        await sendUserVisible(msg, 'Already using base model.').catch(() => { });
         return;
       }
 
@@ -1516,7 +1516,7 @@ When you escalate, your request will be re-run on a more capable model.`;
         model: baseModel,
       };
       await recreateSession(managed, cfg);
-      await sendUserVisible(msg, `✅ Returned to base model: \`${baseModel}\``).catch(() => {});
+      await sendUserVisible(msg, `✅ Returned to base model: \`${baseModel}\``).catch(() => { });
       return;
     }
 
@@ -1529,7 +1529,7 @@ When you escalate, your request will be re-run on a more capable model.`;
           await sendUserVisible(
             msg,
             'No hosts configured. Use `idlehands hosts add` in CLI.'
-          ).catch(() => {});
+          ).catch(() => { });
           return;
         }
 
@@ -1540,12 +1540,12 @@ When you escalate, your request will be re-run on a more capable model.`;
 
         const chunks = splitDiscord(lines.join('\n\n'));
         for (const [i, chunk] of chunks.entries()) {
-          if (i === 0) await sendUserVisible(msg, chunk).catch(() => {});
-          else await (msg.channel as any).send(chunk).catch(() => {});
+          if (i === 0) await sendUserVisible(msg, chunk).catch(() => { });
+          else await (msg.channel as any).send(chunk).catch(() => { });
         }
       } catch (e: any) {
         await sendUserVisible(msg, `❌ Failed to load hosts: ${e?.message ?? String(e)}`).catch(
-          () => {}
+          () => { }
         );
       }
       return;
@@ -1560,7 +1560,7 @@ When you escalate, your request will be re-run on a more capable model.`;
           await sendUserVisible(
             msg,
             'No backends configured. Use `idlehands backends add` in CLI.'
-          ).catch(() => {});
+          ).catch(() => { });
           return;
         }
 
@@ -1570,12 +1570,12 @@ When you escalate, your request will be re-run on a more capable model.`;
 
         const chunks = splitDiscord(lines.join('\n\n'));
         for (const [i, chunk] of chunks.entries()) {
-          if (i === 0) await sendUserVisible(msg, chunk).catch(() => {});
-          else await (msg.channel as any).send(chunk).catch(() => {});
+          if (i === 0) await sendUserVisible(msg, chunk).catch(() => { });
+          else await (msg.channel as any).send(chunk).catch(() => { });
         }
       } catch (e: any) {
         await sendUserVisible(msg, `❌ Failed to load backends: ${e?.message ?? String(e)}`).catch(
-          () => {}
+          () => { }
         );
       }
       return;
@@ -1586,7 +1586,7 @@ When you escalate, your request will be re-run on a more capable model.`;
         const { loadRuntimes } = await import('../runtime/store.js');
         const config = await loadRuntimes();
         if (!config.models.length) {
-          await sendUserVisible(msg, 'No runtime models configured.').catch(() => {});
+          await sendUserVisible(msg, 'No runtime models configured.').catch(() => { });
           return;
         }
 
@@ -1597,14 +1597,14 @@ When you escalate, your request will be re-run on a more capable model.`;
 
         const chunks = splitDiscord(lines.join('\n\n'));
         for (const [i, chunk] of chunks.entries()) {
-          if (i === 0) await sendUserVisible(msg, chunk).catch(() => {});
-          else await (msg.channel as any).send(chunk).catch(() => {});
+          if (i === 0) await sendUserVisible(msg, chunk).catch(() => { });
+          else await (msg.channel as any).send(chunk).catch(() => { });
         }
       } catch (e: any) {
         await sendUserVisible(
           msg,
           `❌ Failed to load runtime models: ${e?.message ?? String(e)}`
-        ).catch(() => {});
+        ).catch(() => { });
       }
       return;
     }
@@ -1614,7 +1614,7 @@ When you escalate, your request will be re-run on a more capable model.`;
         const { loadActiveRuntime } = await import('../runtime/executor.js');
         const active = await loadActiveRuntime();
         if (!active) {
-          await sendUserVisible(msg, 'No active runtime.').catch(() => {});
+          await sendUserVisible(msg, 'No active runtime.').catch(() => { });
           return;
         }
 
@@ -1630,14 +1630,14 @@ When you escalate, your request will be re-run on a more capable model.`;
 
         const chunks = splitDiscord(lines.join('\n'));
         for (const [i, chunk] of chunks.entries()) {
-          if (i === 0) await sendUserVisible(msg, chunk).catch(() => {});
-          else await (msg.channel as any).send(chunk).catch(() => {});
+          if (i === 0) await sendUserVisible(msg, chunk).catch(() => { });
+          else await (msg.channel as any).send(chunk).catch(() => { });
         }
       } catch (e: any) {
         await sendUserVisible(
           msg,
           `❌ Failed to read runtime status: ${e?.message ?? String(e)}`
-        ).catch(() => {});
+        ).catch(() => { });
       }
       return;
     }
@@ -1646,7 +1646,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       try {
         const modelId = content.slice('/switch'.length).trim();
         if (!modelId) {
-          await sendUserVisible(msg, 'Usage: /switch <model-id>').catch(() => {});
+          await sendUserVisible(msg, 'Usage: /switch <model-id>').catch(() => { });
           return;
         }
 
@@ -1659,12 +1659,12 @@ When you escalate, your request will be re-run on a more capable model.`;
         const result = plan({ modelId, mode: 'live' }, rtConfig, active);
 
         if (!result.ok) {
-          await sendUserVisible(msg, `❌ Plan failed: ${result.reason}`).catch(() => {});
+          await sendUserVisible(msg, `❌ Plan failed: ${result.reason}`).catch(() => { });
           return;
         }
 
         if (result.reuse) {
-          await sendUserVisible(msg, '✅ Runtime already active and healthy.').catch(() => {});
+          await sendUserVisible(msg, '✅ Runtime already active and healthy.').catch(() => { });
           return;
         }
 
@@ -1676,12 +1676,12 @@ When you escalate, your request will be re-run on a more capable model.`;
         const execResult = await execute(result, {
           onStep: async (step, status) => {
             if (status === 'done' && statusMsg) {
-              await statusMsg.edit(`⏳ ${step.description}... ✓`).catch(() => {});
+              await statusMsg.edit(`⏳ ${step.description}... ✓`).catch(() => { });
             }
           },
           confirm: async (prompt) => {
             await sendUserVisible(msg, `⚠️ ${prompt}\nAuto-approving for bot context.`).catch(
-              () => {}
+              () => { }
             );
             return true;
           },
@@ -1689,22 +1689,22 @@ When you escalate, your request will be re-run on a more capable model.`;
 
         if (execResult.ok) {
           if (statusMsg) {
-            await statusMsg.edit(`✅ Switched to \`${result.model.display_name}\``).catch(() => {});
+            await statusMsg.edit(`✅ Switched to \`${result.model.display_name}\``).catch(() => { });
           } else {
             await sendUserVisible(msg, `✅ Switched to \`${result.model.display_name}\``).catch(
-              () => {}
+              () => { }
             );
           }
         } else {
           const err = `❌ Switch failed: ${execResult.error || 'unknown error'}`;
           if (statusMsg) {
-            await statusMsg.edit(err).catch(() => {});
+            await statusMsg.edit(err).catch(() => { });
           } else {
-            await sendUserVisible(msg, err).catch(() => {});
+            await sendUserVisible(msg, err).catch(() => { });
           }
         }
       } catch (e: any) {
-        await sendUserVisible(msg, `❌ Switch failed: ${e?.message ?? String(e)}`).catch(() => {});
+        await sendUserVisible(msg, `❌ Switch failed: ${e?.message ?? String(e)}`).catch(() => { });
       }
       return;
     }
@@ -1720,11 +1720,11 @@ When you escalate, your request will be re-run on a more capable model.`;
         await sendUserVisible(
           msg,
           `⏳ Queue full (${managed.pendingQueue.length}/${maxQueue}). Use /cancel.`
-        ).catch(() => {});
+        ).catch(() => { });
         return;
       }
       managed.pendingQueue.push(msg);
-      await sendUserVisible(msg, `⏳ Queued (#${managed.pendingQueue.length}).`).catch(() => {});
+      await sendUserVisible(msg, `⏳ Queued (#${managed.pendingQueue.length}).`).catch(() => { });
       return;
     }
 
@@ -1741,7 +1741,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       await sendUserVisible(
         msg,
         `⚠️ Bot error: ${errMsg.length > 300 ? errMsg.slice(0, 297) + '...' : errMsg}`
-      ).catch(() => {});
+      ).catch(() => { });
     });
   });
 
@@ -1757,37 +1757,37 @@ When you escalate, your request will be re-run on a more capable model.`;
 
     if (!sub || sub === 'status') {
       if (!managed.antonActive) {
-        await sendUserVisible(msg, 'No Anton run in progress.').catch(() => {});
+        await sendUserVisible(msg, 'No Anton run in progress.').catch(() => { });
       } else if (managed.antonAbortSignal?.aborted) {
         await sendUserVisible(
           msg,
           '🛑 Anton is stopping. Please wait for the current attempt to unwind.'
-        ).catch(() => {});
+        ).catch(() => { });
       } else if (managed.antonProgress) {
-        await sendUserVisible(msg, formatProgressBar(managed.antonProgress)).catch(() => {});
+        await sendUserVisible(msg, formatProgressBar(managed.antonProgress)).catch(() => { });
       } else {
-        await sendUserVisible(msg, '🤖 Anton is running (no progress data yet).').catch(() => {});
+        await sendUserVisible(msg, '🤖 Anton is running (no progress data yet).').catch(() => { });
       }
       return;
     }
 
     if (sub === 'stop') {
       if (!managed.antonActive || !managed.antonAbortSignal) {
-        await sendUserVisible(msg, 'No Anton run in progress.').catch(() => {});
+        await sendUserVisible(msg, 'No Anton run in progress.').catch(() => { });
         return;
       }
       managed.lastActivity = Date.now();
       managed.antonAbortSignal.aborted = true;
-      await sendUserVisible(msg, '🛑 Anton stop requested.').catch(() => {});
+      await sendUserVisible(msg, '🛑 Anton stop requested.').catch(() => { });
       return;
     }
 
     if (sub === 'last') {
       if (!managed.antonLastResult) {
-        await sendUserVisible(msg, 'No previous Anton run.').catch(() => {});
+        await sendUserVisible(msg, 'No previous Anton run.').catch(() => { });
         return;
       }
-      await sendUserVisible(msg, formatRunSummary(managed.antonLastResult)).catch(() => {});
+      await sendUserVisible(msg, formatRunSummary(managed.antonLastResult)).catch(() => { });
       return;
     }
 
@@ -1796,7 +1796,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       await sendUserVisible(
         msg,
         '/anton <file> — start | /anton status | /anton stop | /anton last'
-      ).catch(() => {});
+      ).catch(() => { });
       return;
     }
 
@@ -1809,12 +1809,12 @@ When you escalate, your request will be re-run on a more capable model.`;
         await sendUserVisible(
           msg,
           '♻️ Recovered stale Anton run state. Starting a fresh run...'
-        ).catch(() => {});
+        ).catch(() => { });
       } else {
         const runningMsg = managed.antonAbortSignal?.aborted
           ? '🛑 Anton is still stopping. Please wait a moment, then try again.'
           : '⚠️ Anton is already running. Use /anton stop first.';
-        await sendUserVisible(msg, runningMsg).catch(() => {});
+        await sendUserVisible(msg, runningMsg).catch(() => { });
         return;
       }
     }
@@ -1825,7 +1825,7 @@ When you escalate, your request will be re-run on a more capable model.`;
     try {
       await fs.stat(filePath);
     } catch {
-      await sendUserVisible(msg, `File not found: ${filePath}`).catch(() => {});
+      await sendUserVisible(msg, `File not found: ${filePath}`).catch(() => { });
       return;
     }
 
@@ -1872,7 +1872,7 @@ When you escalate, your request will be re-run on a more capable model.`;
         const now = Date.now();
         if (now - lastProgressAt >= DISCORD_RATE_LIMIT_MS) {
           lastProgressAt = now;
-          channel.send(formatTaskStart(task, attempt, prog)).catch(() => {});
+          channel.send(formatTaskStart(task, attempt, prog)).catch(() => { });
         }
       },
       onTaskEnd(task, result, prog) {
@@ -1881,12 +1881,12 @@ When you escalate, your request will be re-run on a more capable model.`;
         const now = Date.now();
         if (now - lastProgressAt >= DISCORD_RATE_LIMIT_MS) {
           lastProgressAt = now;
-          channel.send(formatTaskEnd(task, result, prog)).catch(() => {});
+          channel.send(formatTaskEnd(task, result, prog)).catch(() => { });
         }
       },
       onTaskSkip(task, reason) {
         managed.lastActivity = Date.now();
-        channel.send(formatTaskSkip(task, reason)).catch(() => {});
+        channel.send(formatTaskSkip(task, reason)).catch(() => { });
       },
       onRunComplete(result) {
         managed.lastActivity = Date.now();
@@ -1894,7 +1894,7 @@ When you escalate, your request will be re-run on a more capable model.`;
         managed.antonActive = false;
         managed.antonAbortSignal = null;
         managed.antonProgress = null;
-        channel.send(formatRunSummary(result)).catch(() => {});
+        channel.send(formatRunSummary(result)).catch(() => { });
       },
       onHeartbeat() {
         managed.lastActivity = Date.now();
@@ -1905,12 +1905,12 @@ When you escalate, your request will be re-run on a more capable model.`;
     try {
       const tf = await parseTaskFile(filePath);
       pendingCount = tf.pending.length;
-    } catch {}
+    } catch { }
 
     await sendUserVisible(
       msg,
       `🤖 Anton started on ${filePart} (${pendingCount} tasks pending)`
-    ).catch(() => {});
+    ).catch(() => { });
 
     runAnton({
       config: runConfig,
@@ -1924,7 +1924,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       managed.antonActive = false;
       managed.antonAbortSignal = null;
       managed.antonProgress = null;
-      channel.send(`Anton error: ${err.message}`).catch(() => {});
+      channel.send(`Anton error: ${err.message}`).catch(() => { });
     });
   }
 
