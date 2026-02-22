@@ -146,6 +146,19 @@ export type HookSystemConfig = {
   allow_capabilities?: Array<'observe' | 'read_prompts' | 'read_responses' | 'read_tool_args' | 'read_tool_results'>;
 };
 
+export type ToolLoopDetectionConfig = {
+  enabled?: boolean;
+  history_size?: number;
+  warning_threshold?: number;
+  critical_threshold?: number;
+  global_circuit_breaker_threshold?: number;
+  detectors?: {
+    generic_repeat?: boolean;
+    known_poll_no_progress?: boolean;
+    ping_pong?: boolean;
+  };
+};
+
 export type IdlehandsConfig = {
   endpoint: string;
   model?: string;
@@ -159,6 +172,7 @@ export type IdlehandsConfig = {
   // loop
   timeout: number;
   max_iterations: number;
+  tool_loop_detection?: ToolLoopDetectionConfig;
 
   // network
   response_timeout: number;    // seconds to wait for model server responses (default 600)
@@ -566,6 +580,14 @@ export type ToolStreamEvent = {
   stream: 'stdout' | 'stderr';
   /** text chunk (UTF-8, safe for display) */
   chunk: string;
+};
+
+export type ToolLoopEvent = {
+  level: 'warning' | 'critical';
+  detector: string;
+  toolName: string;
+  count: number;
+  message: string;
 };
 
 export type TurnEndEvent = {

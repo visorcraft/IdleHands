@@ -1,4 +1,4 @@
-import type { ToolCallEvent, ToolResultEvent, TurnEndEvent, ToolStreamEvent } from '../types.js';
+import type { ToolCallEvent, ToolResultEvent, TurnEndEvent, ToolStreamEvent, ToolLoopEvent } from '../types.js';
 
 export const HOOK_CAPABILITIES = [
   'observe',
@@ -60,6 +60,11 @@ export type HookEventMap = {
     askId: string;
     turn: number;
     stream: ToolStreamEvent;
+  };
+  tool_loop: {
+    askId: string;
+    turn: number;
+    loop: ToolLoopEvent;
   };
 };
 

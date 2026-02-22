@@ -32,7 +32,7 @@ export const sessionCommands: SlashCommand[] = [
     async execute(ctx) {
       console.log(
         ctx.S.dim('Commands: ') +
-          '/help /quit /edit [seed text] /about /mode [code|sys] /status /watchdog [status] /hooks [status|errors|slow|plugins] /plugin init <name> [dir] [--force] /stats /server /perf /offline [on|off|status] /system [edit|reset|tokens] /lsp [status] /mcp [desc|restart <name>|enable <tool>|disable <tool>] /statusbar on|off /approval [mode] /plan /step [on|off] /approve [N] /reject /history /new /compact [topic|hard|dry] /init /git [/diff] /branch [name] /changes [--stat|--full|--since N|reset|<file>] /watch [off|status|<path...> [--max N]] /sessions /conv branch|branches|checkout|merge ... /cost /model <name> /escalate [next|N|model] /deescalate /capture on|off|last /index [run|status|stats|clear] /undo [path] /save <path> /load <path> /vault <query> /notes /note <key> <value> /checkpoints /rewind <id> /diff <id> /subagents [on|off] /theme [name|list] /vim /commands /exit-shell' +
+          '/help /quit /edit [seed text] /about /mode [code|sys] /status /toolstats /watchdog [status] /hooks [status|errors|slow|plugins] /plugin init <name> [dir] [--force] /stats /server /perf /offline [on|off|status] /system [edit|reset|tokens] /lsp [status] /mcp [desc|restart <name>|enable <tool>|disable <tool>] /statusbar on|off /approval [mode] /plan /step [on|off] /approve [N] /reject /history /new /compact [topic|hard|dry] /init /git [/diff] /branch [name] /changes [--stat|--full|--since N|reset|<file>] /watch [off|status|<path...> [--max N]] /sessions /conv branch|branches|checkout|merge ... /cost /model <name> /escalate [next|N|model] /deescalate /capture on|off|last /index [run|status|stats|clear] /undo [path] /save <path> /load <path> /vault <query> /notes /note <key> <value> /checkpoints /rewind <id> /diff <id> /subagents [on|off] /theme [name|list] /vim /commands /exit-shell' +
           '\n' + ctx.S.dim('Shell: !<cmd> run once, !!<cmd> run + inject output, ! toggles shell mode') +
           '\n' + ctx.S.dim('Templates: /fix /review /test /explain /refactor, plus custom markdown commands in ~/.config/idlehands/commands/')
       );
@@ -68,6 +68,32 @@ export const sessionCommands: SlashCommand[] = [
     async execute(ctx) {
       ctx.lastStatusLine = formatStatusLine(ctx.session, ctx.config, ctx.S);
       console.log(ctx.lastStatusLine);
+      return true;
+    },
+  },
+  {
+    name: '/toolstats',
+    description: 'Show tool-loop guard signature/outcome stats for this session',
+    async execute(ctx) {
+      const getter = (ctx.session as any)?.getToolLoopStats;
+      if (typeof getter !== 'function') {
+        console.log('Tool-loop stats unavailable for this session.');
+        return true;
+      }
+
+      const stats = getter();
+      const sigs = Array.isArray(stats?.signatures) ? stats.signatures.slice(0, 8) : [];
+      const outcomes = Array.isArray(stats?.outcomes) ? stats.outcomes.slice(0, 8) : [];
+
+      console.log('Tool Loop Stats');
+      console.log(`  History entries: ${Number(stats?.totalHistory ?? 0)}`);
+      console.log('  Top signatures:');
+      if (!sigs.length) console.log('    (none)');
+      else for (const row of sigs) console.log(`    - ${row.count}x ${row.signature}`);
+
+      console.log('  Top outcome keys:');
+      if (!outcomes.length) console.log('    (none)');
+      else for (const row of outcomes) console.log(`    - ${row.count}x ${row.key}`);
       return true;
     },
   },

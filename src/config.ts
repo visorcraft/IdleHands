@@ -12,6 +12,18 @@ const DEFAULTS: IdlehandsConfig = {
   top_p: 0.95,
   timeout: 600,
   max_iterations: 100,
+  tool_loop_detection: {
+    enabled: true,
+    history_size: 30,
+    warning_threshold: 4,
+    critical_threshold: 8,
+    global_circuit_breaker_threshold: 12,
+    detectors: {
+      generic_repeat: true,
+      known_poll_no_progress: true,
+      ping_pong: true,
+    },
+  },
   response_timeout: 600,
   connection_timeout: 600,
   initial_connection_check: true,
@@ -199,6 +211,18 @@ export async function loadConfig(opts: {
     top_p: parseNum(process.env.IDLEHANDS_TOP_P),
     timeout: parseNum(process.env.IDLEHANDS_TIMEOUT),
     max_iterations: parseNum(process.env.IDLEHANDS_MAX_ITERATIONS),
+    tool_loop_detection: {
+      enabled: parseBool(process.env.IDLEHANDS_TOOL_LOOP_DETECTION_ENABLED),
+      history_size: parseNum(process.env.IDLEHANDS_TOOL_LOOP_HISTORY_SIZE),
+      warning_threshold: parseNum(process.env.IDLEHANDS_TOOL_LOOP_WARNING_THRESHOLD),
+      critical_threshold: parseNum(process.env.IDLEHANDS_TOOL_LOOP_CRITICAL_THRESHOLD),
+      global_circuit_breaker_threshold: parseNum(process.env.IDLEHANDS_TOOL_LOOP_CIRCUIT_BREAKER_THRESHOLD),
+      detectors: {
+        generic_repeat: parseBool(process.env.IDLEHANDS_TOOL_LOOP_DETECTOR_GENERIC_REPEAT),
+        known_poll_no_progress: parseBool(process.env.IDLEHANDS_TOOL_LOOP_DETECTOR_KNOWN_POLL),
+        ping_pong: parseBool(process.env.IDLEHANDS_TOOL_LOOP_DETECTOR_PING_PONG),
+      },
+    },
     response_timeout: parseNum(process.env.IDLEHANDS_RESPONSE_TIMEOUT),
     connection_timeout: parseNum(process.env.IDLEHANDS_CONNECTION_TIMEOUT),
     initial_connection_check: parseBool(process.env.IDLEHANDS_INITIAL_CONNECTION_CHECK),
@@ -377,6 +401,23 @@ export async function loadConfig(opts: {
     ...stripUndef(cliHooks ?? {}),
   };
 
+  // Tool-loop detection: shallow merge + nested detectors (defaults < file < env < cli)
+  const fileToolLoop = (fileCfg as any).tool_loop_detection;
+  const envToolLoop = (envCfg as any).tool_loop_detection;
+  const cliToolLoop = (cliCfg as any).tool_loop_detection;
+  merged.tool_loop_detection = {
+    ...(DEFAULTS.tool_loop_detection ?? {}),
+    ...stripUndef(fileToolLoop ?? {}),
+    ...stripUndef(envToolLoop ?? {}),
+    ...stripUndef(cliToolLoop ?? {}),
+    detectors: {
+      ...((DEFAULTS.tool_loop_detection as any)?.detectors ?? {}),
+      ...(stripUndef((fileToolLoop ?? {}).detectors ?? {}) as any),
+      ...(stripUndef((envToolLoop ?? {}).detectors ?? {}) as any),
+      ...(stripUndef((cliToolLoop ?? {}).detectors ?? {}) as any),
+    },
+  };
+
   // merge order: defaults < file < env < cli
 
   // Normalize
@@ -443,6 +484,35 @@ export async function loadConfig(opts: {
   if (merged.hooks.allow_capabilities.length === 0) {
     merged.hooks.allow_capabilities = ['observe'];
   }
+
+  merged.tool_loop_detection = merged.tool_loop_detection && typeof merged.tool_loop_detection === 'object'
+    ? merged.tool_loop_detection
+    : { ...(DEFAULTS.tool_loop_detection ?? {}) };
+  const toolLoopEnabled = parseBoolLike(merged.tool_loop_detection.enabled);
+  if (toolLoopEnabled !== undefined) merged.tool_loop_detection.enabled = toolLoopEnabled;
+
+  if (typeof merged.tool_loop_detection.history_size === 'number') {
+    merged.tool_loop_detection.history_size = Math.max(10, Math.floor(merged.tool_loop_detection.history_size));
+  }
+  if (typeof merged.tool_loop_detection.warning_threshold === 'number') {
+    merged.tool_loop_detection.warning_threshold = Math.max(2, Math.floor(merged.tool_loop_detection.warning_threshold));
+  }
+  if (typeof merged.tool_loop_detection.critical_threshold === 'number') {
+    merged.tool_loop_detection.critical_threshold = Math.max(3, Math.floor(merged.tool_loop_detection.critical_threshold));
+  }
+  if (typeof merged.tool_loop_detection.global_circuit_breaker_threshold === 'number') {
+    merged.tool_loop_detection.global_circuit_breaker_threshold = Math.max(4, Math.floor(merged.tool_loop_detection.global_circuit_breaker_threshold));
+  }
+
+  const d = merged.tool_loop_detection.detectors = merged.tool_loop_detection.detectors && typeof merged.tool_loop_detection.detectors === 'object'
+    ? merged.tool_loop_detection.detectors
+    : {};
+  const genRepeat = parseBoolLike(d.generic_repeat);
+  if (genRepeat !== undefined) d.generic_repeat = genRepeat;
+  const knownPoll = parseBoolLike(d.known_poll_no_progress);
+  if (knownPoll !== undefined) d.known_poll_no_progress = knownPoll;
+  const pingPong = parseBoolLike(d.ping_pong);
+  if (pingPong !== undefined) d.ping_pong = pingPong;
 
   const subAgentsEnabled = parseBoolLike(merged.sub_agents.enabled);
   if (subAgentsEnabled !== undefined) merged.sub_agents.enabled = subAgentsEnabled;

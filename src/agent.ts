@@ -1,4 +1,4 @@
-import type { IdlehandsConfig, ChatMessage, UserContent, ToolSchema, ToolCall, TrifectaMode, ToolCallEvent, ToolResultEvent, ToolStreamEvent, TurnEndEvent, ConfirmationProvider, PlanStep, ApprovalMode } from './types.js';
+import type { IdlehandsConfig, ChatMessage, UserContent, ToolSchema, ToolCall, TrifectaMode, ToolCallEvent, ToolResultEvent, ToolStreamEvent, TurnEndEvent, ConfirmationProvider, PlanStep, ApprovalMode, ToolLoopEvent } from './types.js';
 import { OpenAIClient } from './client.js';
 import { enforceContextBudget, stripThinking, estimateTokensFromMessages, estimateToolSchemaTokens } from './history.js';
 import * as tools from './tools.js';
@@ -28,6 +28,7 @@ import {
 } from './agent/formatting.js';
 import { parseToolCallsFromContent, getMissingRequiredParams, getArgValidationIssues, stripMarkdownFences } from './agent/tool-calls.js';
 import { ToolError, ValidationError } from './tools/tool-error.js';
+import { ToolLoopGuard } from './agent/tool-loop-guard.js';
 export { parseToolCallsFromContent };
 import {
   type ReviewArtifact,
@@ -51,7 +52,6 @@ function makeAbortController() {
 }
 
 const CACHED_EXEC_OBSERVATION_HINT = '[idlehands hint] Reused cached output for repeated read-only exec call (unchanged observation).';
-const CACHED_READ_OBSERVATION_HINT = '[idlehands hint] Reused cached output for repeated identical read call.';
 
 function looksLikeReadOnlyExecCommand(command: string): boolean {
   const cmd = String(command || '').trim().toLowerCase();
@@ -128,56 +128,6 @@ function readOnlyExecCacheable(content: string): boolean {
     return false;
   }
 }
-
-function withCachedReadObservationHint(content: string, toolName?: string): string {
-  if (!content) return `[CACHE HIT] Resource unchanged. Use the content you already have.`;
-  if (content.includes('[CACHE HIT]')) return content;
-
-  // Return minimal hint - no file preview to maximize context savings
-  const resourceType = toolName === 'read_file' ? 'file' 
-    : toolName === 'read_files' ? 'files' 
-    : toolName === 'list_dir' ? 'directory' 
-    : 'resource';
-
-  return `[CACHE HIT] ${resourceType.charAt(0).toUpperCase() + resourceType.slice(1)} unchanged since previous read. Use the content you already have.`;
-}
-
-// Helper to get mtime for cache invalidation. Returns 0 if unavailable.
-async function getMtimeForPath(p: string): Promise<number> {
-  try {
-    const st = await fs.stat(p);
-    return st.mtimeMs;
-  } catch {
-    return 0;
-  }
-}
-
-// Helper to extract resolved paths from read tool args for mtime checking.
-function extractPathsFromReadArgs(toolName: string, args: Record<string, unknown>, baseCwd: string): string[] {
-  const resolve = (p: string) => path.resolve(baseCwd, p);
-
-  if (toolName === 'read_file' || toolName === 'list_dir') {
-    if (typeof args?.path === 'string' && args.path.trim()) {
-      return [resolve(args.path)];
-    }
-    return [];
-  }
-
-  if (toolName === 'read_files') {
-    // read_files expects requests: [{ path, ... }, ...]
-    const reqs = (args as any)?.requests;
-    if (!Array.isArray(reqs)) return [];
-    const out: string[] = [];
-    for (const r of reqs) {
-      const p = typeof (r as any)?.path === 'string' ? String((r as any).path).trim() : '';
-      if (p) out.push(resolve(p));
-    }
-    return out;
-  }
-
-  return [];
-}
-
 
 function ensureInformativeAssistantText(text: string, ctx: { toolCalls: number; turns: number }): string {
   if (String(text ?? '').trim()) return text;
@@ -678,6 +628,7 @@ export type AgentHooks = {
   onToolCall?: (call: ToolCallEvent) => void;
   onToolStream?: (ev: ToolStreamEvent) => void | Promise<void>;
   onToolResult?: (result: ToolResultEvent) => void | Promise<void>;
+  onToolLoop?: (event: ToolLoopEvent) => void | Promise<void>;
   onTurnEnd?: (stats: TurnEndEvent) => void | Promise<void>;
 };
 
@@ -755,6 +706,11 @@ export type AgentSession = {
   listModels: () => Promise<string[]>;
   refreshServerHealth: () => Promise<ServerHealthSnapshot | null>;
   getPerfSummary: () => PerfSummary;
+  getToolLoopStats: () => {
+    totalHistory: number;
+    signatures: Array<{ signature: string; count: number }>;
+    outcomes: Array<{ key: string; count: number }>;
+  };
   captureOn: (filePath?: string) => Promise<string>;
   captureOff: () => void;
   captureLast: (filePath?: string) => Promise<string>;
@@ -1726,6 +1682,11 @@ export async function createSession(opts: {
   const tgSamples: number[] = [];
   let lastTurnMetrics: TurnPerformance | undefined;
   let lastServerHealth: ServerHealthSnapshot | undefined;
+  let lastToolLoopStats: {
+    totalHistory: number;
+    signatures: Array<{ signature: string; count: number }>;
+    outcomes: Array<{ key: string; count: number }>;
+  } = { totalHistory: 0, signatures: [], outcomes: [] };
   let lastModelsProbeMs = 0;
 
   const capturesDir = path.join(stateDir(), 'captures');
@@ -2148,6 +2109,11 @@ export async function createSession(opts: {
       await hookManager.emit('tool_result', { askId, turn: turns, result });
     };
 
+    const emitToolLoop = async (loop: ToolLoopEvent): Promise<void> => {
+      await hookObj.onToolLoop?.(loop);
+      await hookManager.emit('tool_loop', { askId, turn: turns, loop });
+    };
+
     const emitTurnEnd = async (stats: TurnEndEvent): Promise<void> => {
       await hookObj.onTurnEnd?.(stats);
       await hookManager.emit('turn_end', { askId, stats });
@@ -2301,9 +2267,23 @@ export async function createSession(opts: {
     const blockedExecAttemptsBySig = new Map<string, number>();
     // Cache successful read-only exec observations by exact signature.
     const execObservationCacheBySig = new Map<string, string>();
-    // Cache successful read_file/read_files/list_dir results by signature + mtime for invalidation.
-    const readFileCacheBySig = new Map<string, { content: string; paths: string[]; mtimes: number[] }>();
     const READ_FILE_CACHE_TOOLS = new Set(['read_file', 'read_files', 'list_dir']);
+
+    const toolLoopGuard = new ToolLoopGuard({
+      enabled: cfg.tool_loop_detection?.enabled,
+      historySize: cfg.tool_loop_detection?.history_size,
+      warningThreshold: cfg.tool_loop_detection?.warning_threshold,
+      criticalThreshold: cfg.tool_loop_detection?.critical_threshold,
+      globalCircuitBreakerThreshold: cfg.tool_loop_detection?.global_circuit_breaker_threshold,
+      detectors: {
+        genericRepeat: cfg.tool_loop_detection?.detectors?.generic_repeat,
+        knownPollNoProgress: cfg.tool_loop_detection?.detectors?.known_poll_no_progress,
+        pingPong: cfg.tool_loop_detection?.detectors?.ping_pong,
+      },
+    });
+    const toolLoopWarningKeys = new Set<string>();
+    let forceToollessRecoveryTurn = false;
+    let toollessRecoveryUsed = false;
     // Prevent repeating the same "stop rerunning" reminder every turn.
     const readOnlyExecHintedSigs = new Set<string>();
     // Keep a lightweight breadcrumb for diagnostics on partial failures.
@@ -2517,11 +2497,13 @@ export async function createSession(opts: {
         let resp;
         try {
           try {
+            const toolsForTurn = forceToollessRecoveryTurn ? [] : getToolsSchema();
+            const toolChoiceForTurn = forceToollessRecoveryTurn ? 'none' : 'auto';
             resp = await client.chatStream({
               model,
               messages,
-              tools: getToolsSchema(),
-              tool_choice: 'auto',
+              tools: toolsForTurn,
+              tool_choice: toolChoiceForTurn,
               temperature,
               top_p: topP,
               max_tokens: maxTokens,
@@ -2614,6 +2596,8 @@ export async function createSession(opts: {
               },
             }
           : undefined;
+        const wasToollessRecoveryTurn = forceToollessRecoveryTurn;
+        forceToollessRecoveryTurn = false;
         const choice0 = resp.choices?.[0] ?? legacyChoice;
         const finishReason = choice0?.finish_reason ?? 'unknown';
         const msg = choice0?.message;
@@ -2671,6 +2655,11 @@ export async function createSession(opts: {
               tc.function.arguments = stripMarkdownFences(tc.function.arguments);
             }
           }
+        }
+
+        if (wasToollessRecoveryTurn && toolCallsArr?.length) {
+          // Recovery turn explicitly disables tools; ignore any stray tool-call output.
+          toolCallsArr = undefined;
         }
 
         if (cfg.verbose) {
@@ -2752,12 +2741,18 @@ export async function createSession(opts: {
           // narration chunk starts on a fresh line (avoids wall-of-text output).
           if (visible && hookObj.onToken) hookObj.onToken('\n');
 
-          toolCalls += toolCallsArr.length;
+          const originalToolCallsArr = toolCallsArr;
+          const preparedTurn = toolLoopGuard.prepareTurn(originalToolCallsArr);
+          const replayByCallId = preparedTurn.replayByCallId;
+          const parsedArgsByCallId = preparedTurn.parsedArgsByCallId;
+          toolCallsArr = preparedTurn.uniqueCalls;
+
+          toolCalls += originalToolCallsArr.length;
           const assistantToolCallText = visible || '';
           const compactAssistantToolCallText = assistantToolCallText.length > 900
             ? `${assistantToolCallText.slice(0, 900)}\n[history-compacted: assistant narration truncated before tool execution]`
             : assistantToolCallText;
-          messages.push({ role: 'assistant', content: compactAssistantToolCallText, tool_calls: toolCallsArr });
+          messages.push({ role: 'assistant', content: compactAssistantToolCallText, tool_calls: originalToolCallsArr });
 
           // sigCounts is scoped to the entire ask() run (see above)
 
@@ -2811,9 +2806,15 @@ export async function createSession(opts: {
           // We only treat repeated exec as a loop if no file mutations happened since the
           // last time we saw that exact exec signature.
           const turnSigs = new Set<string>();
+          const sigMetaBySig = new Map<string, { toolName: string; args: Record<string, unknown> }>();
           for (const tc of toolCallsArr) {
-            const sig = `${tc.function.name}:${tc.function.arguments ?? '{}'}`;
+            const callId = resolveCallId(tc);
+            const parsedArgs = parsedArgsByCallId.get(callId) ?? {};
+            const sig = toolLoopGuard.computeSignature(tc.function.name, parsedArgs);
             turnSigs.add(sig);
+            if (!sigMetaBySig.has(sig)) {
+              sigMetaBySig.set(sig, { toolName: tc.function.name, args: parsedArgs });
+            }
           }
 
           // Repeated read-only exec calls can be served from cache instead of hard-breaking.
@@ -2822,12 +2823,45 @@ export async function createSession(opts: {
           // Repeated read_file/read_files/list_dir calls can be served from cache.
           const repeatedReadFileSigs = new Set<string>();
 
+          let shouldForceToollessRecovery = false;
+          for (const tc of toolCallsArr) {
+            const callId = resolveCallId(tc);
+            const args = parsedArgsByCallId.get(callId) ?? {};
+            const detected = toolLoopGuard.detect(tc.function.name, args);
+            const warning = toolLoopGuard.formatWarning(detected, tc.function.name);
+            if (warning) {
+              const warningKey = `${warning.level}:${warning.detector}:${detected.signature}`;
+              if (!toolLoopWarningKeys.has(warningKey)) {
+                toolLoopWarningKeys.add(warningKey);
+                await emitToolLoop({
+                  level: warning.level,
+                  detector: warning.detector,
+                  toolName: warning.toolName,
+                  count: warning.count,
+                  message: warning.message,
+                });
+                messages.push({
+                  role: 'system',
+                  content: `[tool-loop ${warning.level}] ${warning.message}. Stop repeating ${warning.toolName} with unchanged inputs; continue with analysis or next step.`,
+                } as ChatMessage);
+              }
+            }
+
+            if (
+              toolLoopGuard.shouldDisableToolsNextTurn(detected) &&
+              isReadOnlyToolDynamic(tc.function.name)
+            ) {
+              shouldForceToollessRecovery = true;
+            }
+          }
+
           // Track whether a mutation happened since a given signature was last seen.
           // (Tool-loop is single-threaded across turns; this is safe to keep in-memory.)
 
           for (const sig of turnSigs) {
             sigCounts.set(sig, (sigCounts.get(sig) ?? 0) + 1);
-            const toolName = sig.split(':')[0];
+            const sigMeta = sigMetaBySig.get(sig);
+            const toolName = sigMeta?.toolName ?? sig.split(':')[0];
 
             // For exec loops, only break if nothing changed since last identical exec.
             if (toolName === 'exec') {
@@ -2853,7 +2887,8 @@ export async function createSession(opts: {
                   await injectVaultContext().catch(() => {});
                 }
                 if (count >= loopThreshold) {
-                  const command = execCommandFromSig(sig);
+                  const sigArgs = sigMetaBySig.get(sig)?.args ?? {};
+                  const command = typeof (sigArgs as any)?.command === 'string' ? String((sigArgs as any).command) : '';
                   const canReuseReadOnlyObservation =
                     looksLikeReadOnlyExecCommand(command) &&
                     execObservationCacheBySig.has(sig);
@@ -2867,8 +2902,8 @@ export async function createSession(opts: {
                     continue;
                   }
 
-                  const args = sig.slice(toolName.length + 1);
-                  const argsPreview = args.length > 220 ? args.slice(0, 220) + '…' : args;
+                  const argsPreviewRaw = JSON.stringify(sigArgs);
+                  const argsPreview = argsPreviewRaw.length > 220 ? argsPreviewRaw.slice(0, 220) + '…' : argsPreviewRaw;
                   throw new Error(
                     `tool ${toolName}: identical call repeated ${loopThreshold}x across turns; breaking loop. ` +
                       `args=${argsPreview}`
@@ -2930,30 +2965,23 @@ export async function createSession(opts: {
                   } as ChatMessage);
                 }
 
-                if (readFileCacheBySig.has(sig)) {
-                  // Verify all tracked mtimes still match before serving from cache
-                  const cachedEntry = readFileCacheBySig.get(sig);
-                  if (cachedEntry && cachedEntry.paths.length > 0) {
-                    const currentMtimes = await Promise.all(cachedEntry.paths.map((p) => getMtimeForPath(p)));
-                    const valid =
-                      currentMtimes.length === cachedEntry.mtimes.length &&
-                      currentMtimes.every((m, i) => m !== 0 && m === cachedEntry.mtimes[i]);
-                    if (valid) {
-                      repeatedReadFileSigs.add(sig);
-                      continue;
-                    }
-                  }
-                  // mtime changed or cache malformed - invalidate and proceed normally
-                  readFileCacheBySig.delete(sig);
+                const argsForSig = sigMetaBySig.get(sig)?.args ?? {};
+                const replay = await toolLoopGuard.getReadCacheReplay(toolName, argsForSig, ctx.cwd);
+                if (replay) {
+                  repeatedReadFileSigs.add(sig);
+                  continue;
                 }
               }
 
-              // Hard-break at threshold
+              // Deterministic recovery at threshold (no hard throw): force one no-tools turn.
               if (consec >= hardBreakAt) {
-                throw new Error(
-                  `tool ${toolName}: identical read repeated ${consec}x consecutively; breaking loop. ` +
-                  `The resource content has not changed between reads.`
-                );
+                shouldForceToollessRecovery = true;
+                messages.push({
+                  role: 'system',
+                  content:
+                    `[tool-loop critical] ${toolName} repeated ${consec}x with unchanged inputs. ` +
+                    'Next turn will run with tools disabled so you must use existing results and provide a concrete next step/final response.',
+                } as ChatMessage);
               }
               continue;
             }
@@ -2961,8 +2989,9 @@ export async function createSession(opts: {
             // Default behavior for mutating/other tools: break on repeated identical signature.
             const loopThreshold = harness.quirks.loopsOnToolError ? 2 : 3;
             if ((sigCounts.get(sig) ?? 0) >= loopThreshold) {
-              const args = sig.slice(toolName.length + 1);
-              const argsPreview = args.length > 220 ? args.slice(0, 220) + '…' : args;
+              const argsObj = sigMetaBySig.get(sig)?.args ?? {};
+              const argsRaw = JSON.stringify(argsObj);
+              const argsPreview = argsRaw.length > 220 ? argsRaw.slice(0, 220) + '…' : argsRaw;
               throw new Error(
                 `tool ${toolName}: identical call repeated ${loopThreshold}x across turns; breaking loop. ` +
                   `args=${argsPreview}\n` +
@@ -2976,6 +3005,36 @@ export async function createSession(opts: {
 
           // Update consecutive tracking: save this turn's signatures for next turn comparison.
           lastTurnSigs = turnSigs;
+
+          if (shouldForceToollessRecovery) {
+            if (!toollessRecoveryUsed) {
+              forceToollessRecoveryTurn = true;
+              toollessRecoveryUsed = true;
+              messages.push({
+                role: 'user' as const,
+                content:
+                  '[system] Critical tool loop detected. Next turn will run with tools disabled. ' +
+                  'Use already available tool results to provide a concrete next step or final response; do not request more tools.',
+              });
+
+              await emitTurnEnd({
+                turn: turns,
+                toolCalls,
+                promptTokens: cumulativeUsage.prompt,
+                completionTokens: cumulativeUsage.completion,
+                promptTokensTurn,
+                completionTokensTurn,
+                ttftMs,
+                ttcMs,
+                ppTps,
+                tgTps,
+              });
+              continue;
+            }
+            throw new AgentLoopBreak(
+              'critical tool-loop persisted after one tools-disabled recovery turn. Stopping to avoid infinite loop.'
+            );
+          }
 
           const runOne = async (tc: ToolCall) => {
             const name = tc.function.name;
@@ -3008,6 +3067,7 @@ export async function createSession(opts: {
 
             // Keep parsed args by call-id so we can digest/archive tool outputs with context.
             toolArgsByCallId.set(callId, args && typeof args === 'object' && !Array.isArray(args) ? args : {});
+            toolLoopGuard.registerCall(name, args && typeof args === 'object' && !Array.isArray(args) ? args : {}, callId);
 
             // Pre-dispatch argument validation.
             // - Required params
@@ -3127,7 +3187,7 @@ export async function createSession(opts: {
               }
             }
 
-            const sig = `${name}:${rawArgs || '{}'}`;
+            const sig = toolLoopGuard.computeSignature(name, args && typeof args === 'object' && !Array.isArray(args) ? args : {});
             let content = '';
             let reusedCachedReadOnlyExec = false;
             let reusedCachedReadTool = false;
@@ -3141,9 +3201,9 @@ export async function createSession(opts: {
             }
 
             if (READ_FILE_CACHE_TOOLS.has(name) && repeatedReadFileSigs.has(sig)) {
-              const cached = readFileCacheBySig.get(sig);
-              if (cached) {
-                content = withCachedReadObservationHint(cached.content, name);
+              const replay = await toolLoopGuard.getReadCacheReplay(name, args as Record<string, unknown>, ctx.cwd);
+              if (replay) {
+                content = replay;
                 reusedCachedReadTool = true;
               }
             }
@@ -3163,19 +3223,7 @@ export async function createSession(opts: {
 
                 if (READ_FILE_CACHE_TOOLS.has(name) && typeof content === 'string' && !content.startsWith('ERROR:')) {
                   const baseCwd = typeof (args as any)?.cwd === 'string' ? String((args as any).cwd) : ctx.cwd;
-                  const paths = extractPathsFromReadArgs(name, args as Record<string, unknown>, baseCwd);
-                  if (paths.length > 0) {
-                    const mtimes = await Promise.all(paths.map((p) => getMtimeForPath(p)));
-                    const allValid = mtimes.length === paths.length && mtimes.every((m) => m !== 0);
-                    if (allValid) {
-                      readFileCacheBySig.set(sig, { content, paths, mtimes });
-                    } else {
-                      // If we can't stat every path reliably, don't cache to avoid stale reuse.
-                      readFileCacheBySig.delete(sig);
-                    }
-                  } else {
-                    readFileCacheBySig.delete(sig);
-                  }
+                  await toolLoopGuard.storeReadCache(name, args as Record<string, unknown>, baseCwd, content);
                 }
 
                 if (name === 'exec') {
@@ -3332,6 +3380,10 @@ export async function createSession(opts: {
               }
             }
 
+            toolLoopGuard.registerOutcome(name, args as Record<string, unknown>, {
+              toolCallId: callId,
+              result: content,
+            });
             return { id: callId, content };
           };
 
@@ -3388,6 +3440,20 @@ export async function createSession(opts: {
               errorCode: te.code,
               retryable: te.retryable,
               result: toolErrorContent,
+            });
+
+            let parsedArgs: Record<string, unknown> = {};
+            try {
+              const parsed = JSON.parse(tc.function.arguments ?? '{}');
+              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                parsedArgs = parsed as Record<string, unknown>;
+              }
+            } catch {
+              // keep empty object
+            }
+            toolLoopGuard.registerOutcome(tc.function.name, parsedArgs, {
+              toolCallId: callId,
+              error: msg,
             });
 
             return { id: callId, content: toolErrorContent };
@@ -3461,6 +3527,18 @@ export async function createSession(opts: {
             }
           }
 
+          if (replayByCallId.size > 0) {
+            const canonicalById = new Map(results.map((r) => [r.id, r.content]));
+            for (const [dupId, canonicalId] of replayByCallId.entries()) {
+              const canonical = canonicalById.get(canonicalId);
+              if (canonical == null) continue;
+              results.push({
+                id: dupId,
+                content: `${canonical}\n\n[idlehands dedupe] Replayed identical tool result from call ${canonicalId}.`,
+              });
+            }
+          }
+
           // Bail immediately if cancelled during tool execution
           if (ac.signal.aborted) break;
 
@@ -3515,6 +3593,9 @@ export async function createSession(opts: {
                 'Do not narrate. Fix required/mistyped fields and unknown keys.',
             });
           }
+
+          // Update session-level tool loop stats for observability
+          lastToolLoopStats = toolLoopGuard.getStats();
 
           // Hook: onTurnEnd (Phase 8.5)
           await emitTurnEnd({
@@ -3708,6 +3789,7 @@ export async function createSession(opts: {
     listModels,
     refreshServerHealth,
     getPerfSummary,
+    getToolLoopStats: () => lastToolLoopStats,
     captureOn,
     captureOff,
     captureLast,
