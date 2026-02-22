@@ -347,19 +347,21 @@ export async function undo_path(ctx: ToolContext, args: any) {
   const directPath = args?.path === undefined ? undefined : String(args.path);
   const p = directPath ? resolvePath(ctx, directPath) : ctx.lastEditedPath;
   if (!p) throw new Error('undo: missing path');
+  const absCwd = path.resolve(ctx.cwd);
+  const redactedPath = redactPath(p, absCwd);
   if (!ctx.noConfirm && ctx.confirm) {
-    const ok = await ctx.confirm(`Restore latest backup for:\n  ${p}\nThis will overwrite the current file. Proceed? (y/N) `);
+    const ok = await ctx.confirm(`Restore latest backup for:\n  ${redactedPath}\nThis will overwrite the current file. Proceed? (y/N) `);
     if (!ok) return 'undo: cancelled';
   }
   if (!ctx.noConfirm && !ctx.confirm) {
     throw new Error('undo: confirmation required (run with --no-confirm/--yolo or in interactive mode)');
   }
-  if (ctx.dryRun) return `dry-run: would restore latest backup for ${p}`;
+  if (ctx.dryRun) return `dry-run: would restore latest backup for ${redactedPath}`;
   return await restoreLatestBackup(p, ctx);
-}
-
 export async function read_file(ctx: ToolContext, args: any) {
   const p = resolvePath(ctx, args?.path);
+  const absCwd = path.resolve(ctx.cwd);
+  const redactedPath = redactPath(p, absCwd);
   const offset = args?.offset != null ? Number(args.offset) : undefined;
 
   const rawLimit = args?.limit != null ? Number(args.limit) : undefined;
@@ -391,12 +393,11 @@ export async function read_file(ctx: ToolContext, args: any) {
   try {
     const stat = await fs.stat(p);
     if (stat.isDirectory()) {
-      return `read_file: "${p}" is a directory, not a file. Use list_dir to see its contents, or search_files to find specific code.`;
+      return `read_file: "${redactedPath}" is a directory, not a file. Use list_dir to see its contents, or search_files to find specific code.`;
     }
   } catch (e: any) {
     // stat failure (ENOENT etc.) — let readFile handle it for the standard error path
   }
-
   const buf = await fs.readFile(p).catch((e: any) => {
     throw new Error(`read_file: cannot read ${p}: ${e?.message ?? String(e)}`);
   });
@@ -512,6 +513,8 @@ export async function read_files(ctx: ToolContext, args: any) {
 
 export async function write_file(ctx: ToolContext, args: any) {
   const p = resolvePath(ctx, args?.path);
+  const absCwd = path.resolve(ctx.cwd);
+  const redactedPath = redactPath(p, absCwd);
   // Content may arrive as a string (normal) or as a parsed JSON object
   // (when llama-server's XML parser auto-parses JSON content values).
   const raw = args?.content;
@@ -539,7 +542,7 @@ export async function write_file(ctx: ToolContext, args: any) {
   if (pathVerdict.tier === 'cautious' && !ctx.noConfirm) {
     if (ctx.confirm) {
       const ok = await ctx.confirm(
-        pathVerdict.prompt || `Write to ${p}?`,
+        pathVerdict.prompt || `Write to ${redactedPath}?`,
         { tool: 'write_file', args: { path: p } }
       );
       if (!ok) throw new Error(`write_file: cancelled by user (${pathVerdict.reason})`);
@@ -551,7 +554,7 @@ export async function write_file(ctx: ToolContext, args: any) {
   const existingStat = await fs.stat(p).catch(() => null);
   if (existingStat?.isFile() && existingStat.size > 0 && !overwrite) {
     throw new Error(
-      `write_file: refusing to overwrite existing non-empty file ${p} without explicit overwrite=true (or force=true). ` +
+      `write_file: refusing to overwrite existing non-empty file ${redactedPath} without explicit overwrite=true (or force=true). ` +
       `Use edit_range/apply_patch for surgical edits, or set overwrite=true for intentional full-file replacement.`
     );
   }
@@ -575,11 +578,10 @@ export async function write_file(ctx: ToolContext, args: any) {
   const afterBuf = Buffer.from(content, 'utf8');
   const replayNote = await checkpointReplay(ctx, { op: 'write_file', filePath: p, before: beforeBuf, after: afterBuf });
 
-  return `wrote ${p} (${Buffer.byteLength(content, 'utf8')} bytes)${replayNote}${cwdWarning}`;
-}
-
 export async function insert_file(ctx: ToolContext, args: any) {
   const p = resolvePath(ctx, args?.path);
+  const absCwd = path.resolve(ctx.cwd);
+  const redactedPath = redactPath(p, absCwd);
   const line = Number(args?.line);
   const rawText = args?.text;
   const text = typeof rawText === 'string' ? rawText
@@ -598,7 +600,7 @@ export async function insert_file(ctx: ToolContext, args: any) {
   if (pathVerdict.tier === 'cautious' && !ctx.noConfirm) {
     if (ctx.confirm) {
       const ok = await ctx.confirm(
-        pathVerdict.prompt || `Insert into ${p}?`,
+        pathVerdict.prompt || `Insert into ${redactedPath}?`,
         { tool: 'insert_file', args: { path: p } }
       );
       if (!ok) throw new Error(`insert_file: cancelled by user (${pathVerdict.reason})`);
@@ -607,7 +609,7 @@ export async function insert_file(ctx: ToolContext, args: any) {
     }
   }
 
-  if (ctx.dryRun) return `dry-run: would insert into ${p} at line=${line} (${Buffer.byteLength(text, 'utf8')} bytes)`;
+  if (ctx.dryRun) return `dry-run: would insert into ${redactedPath} at line=${line} (${Buffer.byteLength(text, 'utf8')} bytes)`;
 
   // Phase 9d: snapshot /etc/ files before editing
   if (ctx.mode === 'sys' && ctx.vault) {
@@ -633,7 +635,7 @@ export async function insert_file(ctx: ToolContext, args: any) {
     });
 
     const cwdWarning = checkCwdWarning('insert_file', p, ctx);
-    return `inserted into ${p} at 0${replayNote}${cwdWarning}`;
+    return `inserted into ${redactedPath} at 0${replayNote}${cwdWarning}`;
   }
 
   const lines = beforeText.split(/\r?\n/);
@@ -667,11 +669,11 @@ export async function insert_file(ctx: ToolContext, args: any) {
   });
 
   const cwdWarning = checkCwdWarning('insert_file', p, ctx);
-  return `inserted into ${p} at ${idx}${replayNote}${cwdWarning}`;
-}
-
+  return `inserted into ${redactedPath} at ${idx}${replayNote}${cwdWarning}`;
 export async function edit_file(ctx: ToolContext, args: any) {
   const p = resolvePath(ctx, args?.path);
+  const absCwd = path.resolve(ctx.cwd);
+  const redactedPath = redactPath(p, absCwd);
   const rawOld = args?.old_text;
   const oldText = typeof rawOld === 'string' ? rawOld
     : (rawOld != null && typeof rawOld === 'object' ? JSON.stringify(rawOld, null, 2) : undefined);
@@ -679,7 +681,6 @@ export async function edit_file(ctx: ToolContext, args: any) {
   const newText = typeof rawNew === 'string' ? rawNew
     : (rawNew != null && typeof rawNew === 'object' ? JSON.stringify(rawNew, null, 2) : undefined);
   const replaceAll = Boolean(args?.replace_all);
-
   if (!p) throw new Error('edit_file: missing path');
   if (oldText == null) throw new Error('edit_file: missing old_text');
   if (newText == null) throw new Error('edit_file: missing new_text');
@@ -694,7 +695,7 @@ export async function edit_file(ctx: ToolContext, args: any) {
   if (pathVerdict.tier === 'cautious' && !ctx.noConfirm) {
     if (ctx.confirm) {
       const ok = await ctx.confirm(
-        pathVerdict.prompt || `Edit ${p}?`,
+        pathVerdict.prompt || `Edit ${redactedPath}?`,
         { tool: 'edit_file', args: { path: p, old_text: oldText, new_text: newText } }
       );
       if (!ok) throw new Error(`edit_file: cancelled by user (${pathVerdict.reason})`);
@@ -709,7 +710,7 @@ export async function edit_file(ctx: ToolContext, args: any) {
   }
 
   const cur = await fs.readFile(p, 'utf8').catch((e: any) => {
-    throw new Error(`edit_file: cannot read ${p}: ${e?.message ?? String(e)}`);
+    throw new Error(`edit_file: cannot read ${redactedPath}: ${e?.message ?? String(e)}`);
   });
 
   const idx = cur.indexOf(oldText);
@@ -751,13 +752,13 @@ export async function edit_file(ctx: ToolContext, args: any) {
     }
 
     throw new Error(
-      `edit_file: old_text not found in ${p}. Re-read the file and retry with exact text.${hint}`
+      `edit_file: old_text not found in ${redactedPath}. Re-read the file and retry with exact text.${hint}`
     );
   }
 
   const next = replaceAll ? cur.split(oldText).join(newText) : cur.slice(0, idx) + newText + cur.slice(idx + oldText.length);
 
-  if (ctx.dryRun) return `dry-run: would edit ${p} (replace_all=${replaceAll})`;
+  if (ctx.dryRun) return `dry-run: would edit ${redactedPath} (replace_all=${replaceAll})`;
 
   await backupFile(p, ctx);
   await atomicWrite(p, next);
@@ -771,17 +772,8 @@ export async function edit_file(ctx: ToolContext, args: any) {
   });
 
   const cwdWarning = checkCwdWarning('edit_file', p, ctx);
-  return `edited ${p} (replace_all=${replaceAll})${replayNote}${cwdWarning}`;
+  return `edited ${redactedPath} (replace_all=${replaceAll})${replayNote}${cwdWarning}`;
 }
-
-type PatchTouchInfo = {
-  paths: string[]; // normalized relative paths
-  created: Set<string>;
-  deleted: Set<string>;
-};
-
-function normalizePatchPath(p: string): string {
-  let s = String(p ?? '').trim();
   if (!s || s === '/dev/null') return '';
 
   // Strip quotes some generators add
@@ -920,23 +912,23 @@ async function runCommandWithStdin(
 
 export async function edit_range(ctx: ToolContext, args: any) {
   const p = resolvePath(ctx, args?.path);
+  const absCwd = path.resolve(ctx.cwd);
+  const redactedPath = redactPath(p, absCwd);
   const startLine = Number(args?.start_line);
   const endLine = Number(args?.end_line);
   const rawReplacement = args?.replacement;
   const replacement = typeof rawReplacement === 'string' ? rawReplacement
     : (rawReplacement != null && typeof rawReplacement === 'object' ? JSON.stringify(rawReplacement, null, 2) : undefined);
-
   if (!p) throw new Error('edit_range: missing path');
   if (!Number.isFinite(startLine) || startLine < 1) throw new Error('edit_range: missing/invalid start_line');
   if (!Number.isFinite(endLine) || endLine < startLine) throw new Error('edit_range: missing/invalid end_line');
   if (replacement == null) throw new Error('edit_range: missing replacement (got ' + typeof rawReplacement + ')');
 
-  const hasLiteralEscapedNewlines = replacement.includes('\\n');
-  const hasRealNewlines = replacement.includes('\n') || replacement.includes('\r');
-  if (hasLiteralEscapedNewlines && !hasRealNewlines) {
+  // Detect double-escaped newlines (common when the model passes a string with literal \\n)
+  if (replacement.includes('\\\\n')) {
     throw new Error(
       'edit_range: replacement appears double-escaped (contains literal "\\n" sequences). ' +
-      'Resend replacement with REAL newline characters (multi-line string), not escaped backslash-n text.'
+      'Remove the extra backslashes. For example, use "\\n" instead of "\\\\n".'
     );
   }
 
@@ -950,7 +942,7 @@ export async function edit_range(ctx: ToolContext, args: any) {
   if (pathVerdict.tier === 'cautious' && !ctx.noConfirm) {
     if (ctx.confirm) {
       const ok = await ctx.confirm(
-        pathVerdict.prompt || `Edit range in ${p}?`,
+        pathVerdict.prompt || `Edit ${redactedPath} lines ${startLine}-${endLine}?`,
         { tool: 'edit_range', args: { path: p, start_line: startLine, end_line: endLine } }
       );
       if (!ok) throw new Error(`edit_range: cancelled by user (${pathVerdict.reason})`);
@@ -959,20 +951,13 @@ export async function edit_range(ctx: ToolContext, args: any) {
     }
   }
 
-  if (ctx.dryRun) return `dry-run: would edit_range ${p} lines ${startLine}-${endLine} (${Buffer.byteLength(replacement, 'utf8')} bytes)`;
+  if (ctx.dryRun) return `dry-run: would edit_range ${redactedPath} lines ${startLine}-${endLine} (${Buffer.byteLength(replacement, 'utf8')} bytes)`;
 
-  // Phase 9d: snapshot /etc/ files before editing
-  if (ctx.mode === 'sys' && ctx.vault) {
-    await snapshotBeforeEdit(ctx.vault, p).catch(() => {});
-  }
-
-  const beforeText = await fs.readFile(p, 'utf8').catch((e: any) => {
-    throw new Error(`edit_range: cannot read ${p}: ${e?.message ?? String(e)}`);
+  const cur = await fs.readFile(p, 'utf8').catch((e: any) => {
+    throw new Error(`edit_range: cannot read ${redactedPath}: ${e?.message ?? String(e)}`);
   });
 
-  const eol = beforeText.includes('\r\n') ? '\r\n' : '\n';
-  const lines = beforeText.split(/\r?\n/);
-
+  const lines = cur.split(/\r?\n/);
   if (startLine > lines.length) {
     throw new Error(`edit_range: start_line ${startLine} out of range (file has ${lines.length} lines)`);
   }
@@ -980,42 +965,30 @@ export async function edit_range(ctx: ToolContext, args: any) {
     throw new Error(`edit_range: end_line ${endLine} out of range (file has ${lines.length} lines)`);
   }
 
-  const startIdx = startLine - 1;
-  const deleteCount = endLine - startLine + 1;
+  const beforeLines = lines.slice(startLine - 1, endLine);
+  const beforeText = beforeLines.join('\n');
+  const afterText = replacement;
 
-  // For deletion, allow empty replacement to remove the range without leaving a blank line.
-  const replacementLines = replacement === '' ? [] : replacement.split(/\r?\n/);
-  lines.splice(startIdx, deleteCount, ...replacementLines);
+  // Detect original newline style
+  const eol = cur.includes('\r\n') ? '\r\n' : '\n';
 
-  const out = lines.join(eol);
+  const nextLines = [...lines.slice(0, startLine - 1), afterText, ...lines.slice(endLine)];
+  const next = nextLines.join(eol);
 
   await backupFile(p, ctx);
-  await atomicWrite(p, out);
+  await atomicWrite(p, next);
   ctx.onMutation?.(p);
 
   const replayNote = await checkpointReplay(ctx, {
     op: 'edit_range',
     filePath: p,
     before: Buffer.from(beforeText, 'utf8'),
-    after: Buffer.from(out, 'utf8')
+    after: Buffer.from(afterText, 'utf8')
   });
 
   const cwdWarning = checkCwdWarning('edit_range', p, ctx);
-  return `edited ${p} lines ${startLine}-${endLine}${replayNote}${cwdWarning}`;
+  return `edited ${redactedPath} lines ${startLine}-${endLine}${replayNote}${cwdWarning}`;
 }
-
-export async function apply_patch(ctx: ToolContext, args: any) {
-  const rawPatch = args?.patch;
-  const patchText = typeof rawPatch === 'string' ? rawPatch
-    : (rawPatch != null && typeof rawPatch === 'object' ? JSON.stringify(rawPatch, null, 2) : undefined);
-
-  const rawFiles = Array.isArray(args?.files) ? args.files : [];
-  const files = rawFiles
-    .map((f: any) => (typeof f === 'string' ? f.trim() : ''))
-    .filter(Boolean);
-
-  const stripRaw = Number(args?.strip);
-  const strip = Number.isFinite(stripRaw) ? Math.max(0, Math.min(5, Math.floor(stripRaw))) : 0;
 
   if (!patchText) throw new Error('apply_patch: missing patch');
   if (!files.length) throw new Error('apply_patch: missing files[]');
@@ -1044,17 +1017,17 @@ export async function apply_patch(ctx: ToolContext, args: any) {
   }
 
   const cautious = verdicts.filter(({ v }) => v.tier === 'cautious');
-  if (cautious.length && !ctx.noConfirm) {
-    if (ctx.confirm) {
-      const preview = patchText.length > 4000 ? patchText.slice(0, 4000) + '\n[truncated]' : patchText;
-      const ok = await ctx.confirm(
-        `Apply patch touching ${touched.paths.length} file(s)?\n- ${touched.paths.join('\n- ')}\n\nProceed? (y/N) `,
-        { tool: 'apply_patch', args: { files: touched.paths, strip }, diff: preview }
-      );
-      if (!ok) throw new Error('apply_patch: cancelled by user');
-    } else {
-      throw new Error('apply_patch: blocked (cautious paths) without --no-confirm/--yolo');
-    }
+      after
+    });
+    replayNotes += replayNote;
+
+    cwdWarnings += checkCwdWarning('apply_patch', abs, ctx);
+  }
+
+  // Redact paths in the output for security
+  const redactedPaths = touched.paths.map(p => redactPath(resolvePath(ctx, p), path.resolve(ctx.cwd)));
+  return `applied patch (${touched.paths.length} files): ${redactedPaths.join(', ')}${replayNotes}${cwdWarnings}`;
+}
   }
 
   const maxToolBytes = ctx.maxExecBytes ?? DEFAULT_MAX_EXEC_BYTES;
@@ -1129,6 +1102,7 @@ export async function list_dir(ctx: ToolContext, args: any) {
   const maxEntries = Math.min(args?.max_entries ? Number(args.max_entries) : 200, 500);
   if (!p) throw new Error('list_dir: missing path');
 
+  const absCwd = path.resolve(ctx.cwd);
   const lines: string[] = [];
   let count = 0;
 
@@ -1142,7 +1116,7 @@ export async function list_dir(ctx: ToolContext, args: any) {
       const full = path.join(dir, ent.name);
       const st = await fs.lstat(full).catch(() => null);
       const kind = ent.isDirectory() ? 'dir' : ent.isSymbolicLink() ? 'link' : 'file';
-      lines.push(`${kind}\t${st?.size ?? 0}\t${full}`);
+      lines.push(`${kind}\t${st?.size ?? 0}\t${redactPath(full, absCwd)}`);
       count++;
       if (recursive && ent.isDirectory() && depth < 3) {
         await walk(full, depth + 1);
@@ -1152,10 +1126,9 @@ export async function list_dir(ctx: ToolContext, args: any) {
 
   await walk(p, 0);
   if (count >= maxEntries) lines.push(`[truncated after ${maxEntries} entries]`);
-  if (!lines.length) return `[empty directory: ${p}]`;
+  if (!lines.length) return `[empty directory: ${redactPath(p, absCwd)}]`;
   return lines.join('\n');
 }
-
 export async function search_files(ctx: ToolContext, args: any) {
   const root = resolvePath(ctx, args?.path ?? '.');
   const pattern = typeof args?.pattern === 'string' ? args.pattern : undefined;
@@ -1163,6 +1136,8 @@ export async function search_files(ctx: ToolContext, args: any) {
   const maxResults = Math.min(args?.max_results ? Number(args.max_results) : 50, 100);
   if (!root) throw new Error('search_files: missing path');
   if (!pattern) throw new Error('search_files: missing pattern');
+
+  const absCwd = path.resolve(ctx.cwd);
 
   // Prefer rg if available (fast, bounded output)
   if (await hasRg()) {
@@ -1173,16 +1148,24 @@ export async function search_files(ctx: ToolContext, args: any) {
       const parsed: ExecResult = JSON.parse(rawJson);
       // rg exits 1 when no matches found (not an error), 2+ for real errors.
       if (parsed.rc === 1 && !parsed.out?.trim()) {
-        return `No matches for pattern "${pattern}" in ${root}. STOP — do NOT read files individually to search. Try a broader regex pattern, different keywords, or use exec: grep -rn "keyword" ${root}`;
+        return `No matches for pattern \"${pattern}\" in ${root}. STOP — do NOT read files individually to search. Try a broader regex pattern, different keywords, or use exec: grep -rn \"keyword\" ${root}`;
       }
       if (parsed.rc >= 2) {
         // Real rg error — fall through to regex fallback below
       } else {
         const rgOutput = parsed.out ?? '';
         if (rgOutput) {
-          const lines = rgOutput.split(/\r?\n/).filter(Boolean).slice(0, maxResults);
+          const lines = rgOutput.split(/\\r?\\n/).filter(Boolean).slice(0, maxResults);
           if (lines.length >= maxResults) lines.push(`[truncated after ${maxResults} results]`);
-          return lines.join('\n');
+          // Redact paths in rg output
+          const redactedLines = lines.map(line => {
+            const colonIdx = line.indexOf(':');
+            if (colonIdx === -1) return line;
+            const filePath = line.substring(0, colonIdx);
+            const rest = line.substring(colonIdx + 1);
+            return redactPath(filePath, absCwd) + ':' + rest;
+          });
+          return redactedLines.join('\\n');
         }
       }
     } catch {
@@ -1199,7 +1182,7 @@ export async function search_files(ctx: ToolContext, args: any) {
       'invalid_args',
       `search_files: invalid regex pattern: ${e?.message ?? String(e)}`,
       false,
-      'Escape regex metacharacters (\\, [, ], (, ), +, *, ?). If you intended literal text, use an escaped/literal pattern.'
+      'Escape regex metacharacters (\\\\, [, ], (, ), +, *, ?). If you intended literal text, use an escaped/literal pattern.'
     );
   }
   const out: string[] = [];
@@ -1226,10 +1209,10 @@ export async function search_files(ctx: ToolContext, args: any) {
       }
       if (isBinary) continue;
       const buf: string | null = rawBuf.toString('utf8');
-      const lines = buf.split(/\r?\n/);
+      const lines = buf.split(/\\r?\\n/);
       for (let i = 0; i < lines.length; i++) {
         if (re.test(lines[i])) {
-          out.push(`${full}:${i + 1}:${lines[i]}`);
+          out.push(`${redactPath(full, absCwd)}:${i + 1}:${lines[i]}`);
           if (out.length >= maxResults) return;
         }
       }
@@ -1238,6 +1221,9 @@ export async function search_files(ctx: ToolContext, args: any) {
 
   await walk(root, 0);
   if (out.length >= maxResults) out.push(`[truncated after ${maxResults} results]`);
+  if (!out.length) return `No matches for pattern \"${pattern}\" in ${redactPath(root, absCwd)}.`;
+  return out.join('\\n');
+}
   const result = out.join('\n');
   if (!result) return `No matches for pattern "${pattern}" in ${root}. STOP — do NOT read files individually to search. Try a broader regex pattern, different keywords, or use exec: grep -rn "keyword" ${root}`;
   return result;
@@ -1773,6 +1759,24 @@ function resolvePath(ctx: ToolContext, p: any): string {
 function isWithinDir(target: string, dir: string): boolean {
   if (dir === '/') return target.startsWith('/');
   return target === dir || target.startsWith(dir + path.sep);
+}
+function resolvePath(ctx: ToolContext, p: any): string {
+  if (typeof p !== 'string' || !p.trim()) throw new Error('missing path');
+  return path.resolve(ctx.cwd, p);
+}
+
+/**
+ * Redact a path for safe output.
+ * - Paths within cwd are shown as relative paths
+ * - Paths outside cwd are redacted as [outside-cwd]/basename
+ */
+function redactPath(filePath: string, absCwd: string): string {
+  const resolved = path.resolve(filePath);
+  if (isWithinDir(resolved, absCwd)) {
+    return path.relative(absCwd, resolved);
+  }
+  const basename = path.basename(resolved);
+  return `[outside-cwd]/${basename}`;
 }
 
 /**
