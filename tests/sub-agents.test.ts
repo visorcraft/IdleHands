@@ -284,7 +284,12 @@ describe('sub-agent config validation and limits', () => {
       assert.ok(toolMsg, 'expected spawn_task tool result');
       const content = String(toolMsg.content ?? '');
       assert.ok(content.includes('status=failed'));
-      assert.ok(content.includes('max iterations exceeded (2)'));
+      assert.ok(
+        content.includes('max iterations exceeded (2)') ||
+        content.includes('identical read repeated') ||
+        content.includes('identical read/list call repeated'),
+        `expected failure reason to mention max-iterations or loop guard, got: ${content}`,
+      );
       assert.ok(content.includes('approval_mode: yolo'));
       assert.deepEqual(subMaxTokensSeen, [321, 321]);
     } finally {

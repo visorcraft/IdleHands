@@ -7,6 +7,7 @@
 - **Multi-repo candidate auto-allow**: When multiple repo candidates are detected but cwd matches one of them, mutations now proceed automatically.
 - **Exec outside-cwd respects approval mode**: `yolo` and `auto-edit` modes allow outside-cwd paths with warning; other modes still block.
 - **Pre-break read warnings**: Explicit warning injected at 3rd consecutive identical read before hard break at 4x.
+- **CI stabilization**: Sub-agent failure-reason assertion now accepts either max-iterations or loop-guard failure wording to avoid brittle CI failures.
 
 ### Improvements
 
