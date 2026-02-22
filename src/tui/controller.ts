@@ -392,7 +392,7 @@ export class TuiController {
       this.pushSystemMessage(
         `Commands: ${cmds}\n` +
         `Shell: !<cmd> to run, !! to inject output\n` +
-        `TUI: /cancel (stop active run), /branches [browse|checkout|merge], /steps, /settings, /hooks [status|errors|slow|plugins]\n` +
+        `TUI: /cancel (stop active run), /branches [browse|checkout|merge], /steps, /settings, /hooks [status|errors|slow|plugins], /version\n` +
         `Hotkeys: Ctrl+C cancel in-flight run, Ctrl+G step navigator, Ctrl+O quick settings`
       );
       return true;

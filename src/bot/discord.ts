@@ -747,6 +747,7 @@ When you escalate, your request will be re-run on a more capable model.`;
           '**IdleHands Commands**',
           '',
           '/help — This message',
+        '/version — Show version',
           '/version — Show version',
           '/new — Start fresh session',
           '/status — Session stats',
@@ -987,6 +988,7 @@ When you escalate, your request will be re-run on a more capable model.`;
         'Commands:',
         '/start — Welcome + config summary',
         '/help — This message',
+        '/version — Show version',
         '/new — Start a new session',
         '/cancel — Abort current generation',
         '/status — Session stats',
@@ -1013,6 +1015,11 @@ When you escalate, your request will be re-run on a more capable model.`;
 
     if (content === '/model') {
       await sendUserVisible(msg, `Model: \`${managed.session.model}\`\nHarness: \`${managed.session.harness}\``).catch(() => {});
+      return;
+    }
+
+    if (content === '/version') {
+      await sendUserVisible(msg, `Idle Hands v${PKG_VERSION}`).catch(() => {});
       return;
     }
 
