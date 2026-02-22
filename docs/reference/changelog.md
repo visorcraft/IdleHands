@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.10 (2026-02-21)
+
+### Bug fixes
+
+- Anton controller now stops in-flight runs promptly on `/cancel`.
+- Session expiry logic hardened to prevent stale sessions from lingering.
+
 ## 1.1.9 (2026-02-21)
 
 ### Runtime reliability + discovery

@@ -2,6 +2,13 @@
 
 All notable changes to Idle Hands are documented in this file.
 
+## [1.1.10] - 2026-02-21
+
+### Fixed
+
+- Anton controller now stops in-flight runs promptly on `/cancel` and prevents stale session expiry.
+- Session manager and bot commands updated to handle cancellation signals correctly.
+
 ## [1.1.9] - 2026-02-21
 
 ### Added
