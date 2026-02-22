@@ -155,10 +155,11 @@ export class ToolLoopGuard {
       this.recordByCallId.delete(outcome.toolCallId);
     }
 
-    // Track consecutive read_file failures
-    if (toolName === 'read_file' && outcome.error !== undefined) {
+    // Track consecutive read_file/read_files failures
+    const isReadFileTool = toolName === 'read_file' || toolName === 'read_files';
+    if (isReadFileTool && outcome.error !== undefined) {
       this.telemetry.readFileFailures += 1;
-    } else if (toolName === 'read_file' && outcome.error === undefined) {
+    } else if (isReadFileTool && outcome.error === undefined) {
       // Reset on success
       this.telemetry.readFileFailures = 0;
     }

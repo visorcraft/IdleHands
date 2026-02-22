@@ -2473,9 +2473,6 @@ export async function createSession(opts: {
     // Recover once/twice from server-side context-overflow 400/413s by forcing compaction and retrying.
     let overflowCompactionAttempts = 0;
     const MAX_OVERFLOW_COMPACTION_ATTEMPTS = 2;
-    // Track consecutive read_file/read_files failures (any file) to provide fallback hints.
-    let consecutiveReadFileFailures = 0;
-    let readFileFailureHintIssuedForStreak = false;
 
     const archiveToolOutputForVault = async (msg: ChatMessage) => {
       if (!lens || !vault || msg.role !== 'tool' || typeof msg.content !== 'string') return msg;
@@ -3616,11 +3613,6 @@ export async function createSession(opts: {
               result: content,
             });
 
-            // Reset failure counter on successful read_file
-            if (name === 'read_file') {
-              toolLoopGuard.resetReadFileFailureCount();
-            }
-
             return { id: callId, content };
           };
 
@@ -3695,12 +3687,15 @@ export async function createSession(opts: {
               error: msg,
             });
 
-            // Inject hint after 2 consecutive read_file failures
+            // Inject fallback guidance after 2 consecutive read_file/read_files failures.
             let resultContent = toolErrorContent;
-            if (tc.function.name === 'read_file') {
+            if (tc.function.name === 'read_file' || tc.function.name === 'read_files') {
               const failureCount = toolLoopGuard.getReadFileFailureCount();
               if (failureCount >= 2) {
-                resultContent += `\n\n[WARNING: read_file has failed ${failureCount} times consecutively. Try using \`sed\` and the \`edit_range\` tool; if those don't work, create a temporary file with the full contents and save it. Then remove the existing file and rename the temporary file, to bypass edit_file failing.]`;
+                resultContent +=
+                  `\n\n[WARNING: ${tc.function.name} has failed ${failureCount} times consecutively. ` +
+                  'Try using `sed` and the `edit_range` tool; if those do not work, create a temporary file with the full contents and save it. ' +
+                  'Then remove the existing file and rename the temporary file to bypass edit_file failing.]';
                 toolLoopGuard.resetReadFileFailureCount();
               }
             }
@@ -3796,34 +3791,6 @@ export async function createSession(opts: {
           for (const r of results) {
             const compactToolMsg = await compactToolMessageForHistory(r.id, r.content);
             messages.push(compactToolMsg as any);
-
-            // Track consecutive read_file/read_files failures (any file) and inject fallback hint.
-            const tcForResult = toolCallsArr.find((tc) => resolveCallId(tc) === r.id);
-            const toolNameForResult = tcForResult?.function?.name;
-            const isReadFileLike = toolNameForResult === 'read_file' || toolNameForResult === 'read_files';
-
-            if (isReadFileLike && typeof r.content === 'string' && r.content.startsWith('ERROR:')) {
-              consecutiveReadFileFailures++;
-              if (consecutiveReadFileFailures >= 2 && !readFileFailureHintIssuedForStreak) {
-                readFileFailureHintIssuedForStreak = true;
-                messages.push({
-                  role: 'user' as const,
-                  content:
-                    '[system] read_file failed twice consecutively. Try this fallback path: ' +
-                    '1) Use exec+sed to inspect exact line ranges (example: sed -n "10,80p" path/to/file). ' +
-                    '2) Use edit_range for targeted line edits. ' +
-                    '3) If edit_range still fails, write full corrected contents to a temporary file, then remove the original file and rename the temp file into place to bypass edit_file failures.',
-                });
-              }
-            } else if (isReadFileLike) {
-              // Successful read_file/read_files resets consecutive failure streak.
-              consecutiveReadFileFailures = 0;
-              readFileFailureHintIssuedForStreak = false;
-            } else {
-              // Any non-read_file tool result breaks the consecutive read_file-failure streak.
-              consecutiveReadFileFailures = 0;
-              readFileFailureHintIssuedForStreak = false;
-            }
           }
 
           if (readOnlyExecTurnHints.length) {
