@@ -27,7 +27,11 @@ import {
 } from './parser.js';
 import { buildAntonPrompt, parseAntonResult } from './prompt.js';
 import { detectVerificationCommands, runVerification } from './verifier.js';
-import { acquireAntonLock, releaseAntonLock } from './lock.js';
+import { acquireAntonLock, releaseAntonLock, touchAntonLock } from './lock.js';
+import { loadRuntimes } from '../runtime/store.js';
+import { plan } from '../runtime/planner.js';
+import { execute, loadActiveRuntime, runOnHost } from '../runtime/executor.js';
+import { waitForModelsReady } from '../runtime/health.js';
 import { buildSessionConfig, buildVerifyConfig, defaultCreateSession } from './session.js';
 import { formatDryRunPlan } from './reporter.js';
 import { 
@@ -38,6 +42,7 @@ import {
   cleanUntracked, 
   createBranch 
 } from '../git.js';
+import { estimateTokens } from '../utils.js';
 
 export interface RunAntonOpts {
   config: AntonRunConfig;
@@ -50,12 +55,126 @@ export interface RunAntonOpts {
   createSession?: (config: IdlehandsConfig, apiKey?: string) => Promise<AgentSession>;
 }
 
+function endpointBase(endpoint?: string): string | null {
+  if (!endpoint) return null;
+  const e = endpoint.trim().replace(/\/+$/, '');
+  if (!e) return null;
+  return e.endsWith('/v1') ? e : `${e}/v1`;
+}
+
+async function probeEndpointReady(endpoint?: string): Promise<{ ok: boolean; reason: string }> {
+  const base = endpointBase(endpoint);
+  if (!base) return { ok: false, reason: 'endpoint-not-configured' };
+
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 7000);
+  try {
+    const res = await fetch(`${base}/models`, { signal: ctrl.signal as any });
+    if (res.status === 503) return { ok: false, reason: 'loading-http-503' };
+    if (!res.ok) return { ok: false, reason: `http-${res.status}` };
+    return { ok: true, reason: 'ok' };
+  } catch (e: any) {
+    const msg = String(e?.message ?? e).toLowerCase();
+    if (msg.includes('aborted')) return { ok: false, reason: 'timeout' };
+    return { ok: false, reason: msg.slice(0, 120) };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function classifyInfraError(err: unknown): 'infra_down' | 'loading' | 'other' {
+  const msg = String((err as any)?.message ?? err ?? '').toLowerCase();
+  if (!msg) return 'other';
+  if (msg.includes('aborted') || msg.includes('cancel')) return 'other';
+
+  if (msg.includes('503') || msg.includes('model is loading') || msg.includes('loading')) {
+    return 'loading';
+  }
+
+  const infraPatterns = [
+    'econnrefused',
+    'could not connect',
+    'connection refused',
+    'enotfound',
+    'fetch failed',
+    'connect timeout',
+    'socket hang up',
+    'no models found',
+    'endpoint',
+  ];
+
+  if (infraPatterns.some((p) => msg.includes(p))) {
+    return 'infra_down';
+  }
+
+  return 'other';
+}
+
+async function ensureAntonRuntimeReady(
+  idlehandsConfig: IdlehandsConfig,
+  opts: { forceRestart: boolean; timeoutMs?: number },
+): Promise<{ ok: boolean; detail: string }> {
+  const endpointProbe = await probeEndpointReady(idlehandsConfig.endpoint);
+  if (endpointProbe.ok) return { ok: true, detail: 'endpoint-ready' };
+
+  // Try runtime orchestration recovery when endpoint probe fails.
+  let rtConfig;
+  try {
+    rtConfig = await loadRuntimes();
+  } catch {
+    return { ok: false, detail: `endpoint-not-ready (${endpointProbe.reason}); runtimes-unavailable` };
+  }
+
+  const active = await loadActiveRuntime();
+  let targetModelId: string | undefined;
+
+  if (active?.modelId && rtConfig.models.some((m) => m.id === active.modelId && m.enabled)) {
+    targetModelId = active.modelId;
+  } else if (typeof idlehandsConfig.model === 'string' && rtConfig.models.some((m) => m.id === idlehandsConfig.model && m.enabled)) {
+    targetModelId = idlehandsConfig.model;
+  }
+
+  if (!targetModelId) {
+    return { ok: false, detail: `endpoint-not-ready (${endpointProbe.reason}); no-runtime-model-mapping` };
+  }
+
+  const planOut = plan({ modelId: targetModelId, mode: 'live', forceRestart: opts.forceRestart }, rtConfig, active);
+  if (!planOut.ok) {
+    return { ok: false, detail: `runtime-plan-failed ${planOut.code}: ${planOut.reason}` };
+  }
+
+  const execRes = await execute(planOut, {
+    force: true,
+    confirm: async () => true,
+  });
+
+  if (!execRes.ok) {
+    return { ok: false, detail: `runtime-exec-failed: ${execRes.error ?? 'unknown'}` };
+  }
+
+  const timeoutMs = Math.max(10_000, opts.timeoutMs ?? ((planOut.model.launch.probe_timeout_sec ?? 600) * 1000));
+  for (const resolvedHost of planOut.hosts) {
+    const hostCfg = rtConfig.hosts.find((h) => h.id === resolvedHost.id);
+    if (!hostCfg) continue;
+    const ready = await waitForModelsReady(runOnHost as any, hostCfg, planOut.model.runtime_defaults?.port ?? 8080, {
+      timeoutMs,
+      intervalMs: planOut.model.launch.probe_interval_ms ?? 2000,
+    });
+    if (!ready.ok) {
+      return { ok: false, detail: `wait-ready failed on ${resolvedHost.id}: ${ready.reason ?? 'timeout'}` };
+    }
+  }
+
+  return { ok: true, detail: 'runtime-ready' };
+}
+
 /**
  * Main Anton orchestrator.
  */
 export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
   const { config, idlehandsConfig, progress, abortSignal, apiKey, vault, lens } = opts;
   const createSessionFn = opts.createSession || defaultCreateSession;
+  const runtimeResilienceEnabled = !opts.createSession; // unit tests inject mock sessions; skip runtime orchestration there.
   
   const startTimeMs = Date.now();
   let lockAcquired = false;
@@ -64,6 +183,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
   let iterationsUsed = 0;
   const attempts: AntonAttempt[] = [];
   const taskRetryCount: Map<string, number> = new Map();
+  let lockHeartbeatTimer: NodeJS.Timeout | null = null;
   
   // SIGINT handler
   const handleAbort = () => {
@@ -75,6 +195,12 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
     // 1. Acquire Anton lock
     await acquireAntonLock(config.taskFile, config.projectDir);
     lockAcquired = true;
+
+    // Keep Anton lock fresh + emit heartbeat while run is active.
+    lockHeartbeatTimer = setInterval(() => {
+      void touchAntonLock();
+      try { progress.onHeartbeat?.(); } catch {}
+    }, 5000);
     
     // 2. Parse task file
     let taskFile = await parseTaskFile(config.taskFile);
@@ -121,6 +247,18 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         completedAll: false,
         stopReason: 'all_done',
       };
+    }
+
+    // Runtime preflight (infra guardrail): ensure endpoint/model is actually ready
+    // before spending tokens on task attempts.
+    if (runtimeResilienceEnabled) {
+      const preflight = await ensureAntonRuntimeReady(idlehandsConfig, {
+        forceRestart: false,
+        timeoutMs: 120_000,
+      });
+      if (!preflight.ok) {
+        throw new Error(`Anton preflight failed: ${preflight.detail}`);
+      }
     }
     
     // 7. Main loop
@@ -240,7 +378,38 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             lens,
             maxContextTokens: idlehandsConfig.context_max_tokens || 8000,
           });
-          const result = await session.ask(prompt, { signal: controller.signal } as any);
+
+          const promptText = typeof prompt === 'string' ? prompt : JSON.stringify(prompt);
+          const estimatedPromptTokens = estimateTokens(promptText);
+          if (estimatedPromptTokens > config.maxPromptTokensPerAttempt) {
+            throw new Error(`prompt-budget-exceeded: estimated=${estimatedPromptTokens} max=${config.maxPromptTokensPerAttempt}`);
+          }
+
+          let result: Awaited<ReturnType<AgentSession['ask']>>;
+          let recoveredInfra = false;
+          while (true) {
+            try {
+              result = await session.ask(prompt, { signal: controller.signal } as any);
+              break;
+            } catch (e) {
+              const infraKind = classifyInfraError(e);
+              if (!runtimeResilienceEnabled || abortSignal.aborted || controller.signal.aborted || recoveredInfra || infraKind === 'other') {
+                throw e;
+              }
+
+              const recovery = await ensureAntonRuntimeReady(idlehandsConfig, {
+                forceRestart: infraKind === 'infra_down',
+                timeoutMs: 180_000,
+              });
+
+              if (!recovery.ok) {
+                throw new Error(`infra-recovery-failed: ${recovery.detail}`);
+              }
+
+              recoveredInfra = true;
+              // Retry the same attempt once after infra recovery without incrementing retry counters.
+            }
+          }
           
           const taskEndMs = Date.now();
           const durationMs = taskEndMs - taskStartMs;
@@ -363,7 +532,12 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
       
       // Update retry count
       if (attempt.status !== 'passed') {
-        taskRetryCount.set(currentTask.key, attemptNumber);
+        if ((attempt.error ?? '').startsWith('prompt-budget-exceeded')) {
+          // Don't burn retries/tokens forever on oversized prompts.
+          taskRetryCount.set(currentTask.key, config.maxRetriesPerTask);
+        } else {
+          taskRetryCount.set(currentTask.key, attemptNumber);
+        }
       }
       
       // Report task end
@@ -419,6 +593,11 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
     return result;
     
   } finally {
+    if (lockHeartbeatTimer) {
+      clearInterval(lockHeartbeatTimer);
+      lockHeartbeatTimer = null;
+    }
+
     // 8. Lock release in finally
     if (lockAcquired) {
       await releaseAntonLock();

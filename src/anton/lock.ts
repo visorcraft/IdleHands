@@ -5,11 +5,13 @@ import { stateDir } from '../utils.js';
 function lockPath(): string {
   return path.join(stateDir(), 'anton.lock');
 }
-const STALE_LOCK_MS = 60 * 60 * 1000; // 1 hour
+const STALE_LOCK_MS = 60 * 60 * 1000; // 1 hour hard cap
+const STALE_HEARTBEAT_MS = 2 * 60 * 1000; // no heartbeat for 2m => stale run
 
 type AntonLock = {
   pid: number;
   startedAt: string;
+  heartbeatAt: string;
   cwd: string;
   taskFile: string;
 };
@@ -30,10 +32,20 @@ function lockAgeMs(lock: AntonLock | null): number | null {
   return Date.now() - ts;
 }
 
+function heartbeatAgeMs(lock: AntonLock | null): number | null {
+  if (!lock?.heartbeatAt) return null;
+  const ts = Date.parse(lock.heartbeatAt);
+  if (!Number.isFinite(ts)) return null;
+  return Date.now() - ts;
+}
+
 function isLockStale(lock: AntonLock | null): boolean {
   if (!lock) return false;
+  if (!Number.isFinite(lock.pid) || lock.pid <= 1) return true;
   const age = lockAgeMs(lock);
   if (age != null && age > STALE_LOCK_MS) return true;
+  const hbAge = heartbeatAgeMs(lock);
+  if (hbAge != null && hbAge > STALE_HEARTBEAT_MS) return true;
   return !isPidAlive(lock.pid);
 }
 
@@ -48,6 +60,7 @@ async function readLock(): Promise<AntonLock | null> {
     return {
       pid: typeof parsed.pid === 'number' ? parsed.pid : 0,
       startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : '',
+      heartbeatAt: typeof parsed.heartbeatAt === 'string' ? parsed.heartbeatAt : (typeof parsed.startedAt === 'string' ? parsed.startedAt : ''),
       cwd: typeof parsed.cwd === 'string' ? parsed.cwd : '',
       taskFile: typeof parsed.taskFile === 'string' ? parsed.taskFile : '',
     };
@@ -58,9 +71,11 @@ async function readLock(): Promise<AntonLock | null> {
 
 async function writeLock(taskFile: string, cwd: string): Promise<void> {
   await ensureStateDir();
+  const now = new Date().toISOString();
   const payload: AntonLock = {
     pid: process.pid,
-    startedAt: new Date().toISOString(),
+    startedAt: now,
+    heartbeatAt: now,
     cwd,
     taskFile,
   };
@@ -103,6 +118,17 @@ export async function acquireAntonLock(taskFile: string, cwd: string): Promise<v
       return acquireAntonLock(taskFile, cwd);
     }
     throw error;
+  }
+}
+
+export async function touchAntonLock(): Promise<void> {
+  try {
+    const current = await readLock();
+    if (!current || current.pid !== process.pid) return;
+    current.heartbeatAt = new Date().toISOString();
+    await fs.writeFile(lockPath(), JSON.stringify(current), { encoding: 'utf8' });
+  } catch {
+    // best effort
   }
 }
 

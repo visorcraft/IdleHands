@@ -3,6 +3,7 @@ import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { spawnSync } from 'node:child_process';
 import type { RuntimeBackend, RuntimeHost, RuntimeModel } from '../runtime/types.js';
+import { probeModelsEndpoint, waitForModelsReady } from '../runtime/health.js';
 import {
   loadRuntimes,
   saveRuntimes,
@@ -50,17 +51,16 @@ function runHostCommand(host: RuntimeHost, command: string, timeoutSec = 5): { o
   if (host.transport === 'local') return runLocalCommand(command, timeoutSec);
 
   const target = `${host.connection.user ? `${host.connection.user}@` : ''}${host.connection.host ?? ''}`;
-  const sshArgs = [
+  const sshParts = [
     'ssh',
     '-o', 'BatchMode=yes',
     '-o', `ConnectTimeout=${timeoutSec}`,
   ];
-  if (host.connection.port) sshArgs.push('-p', String(host.connection.port));
-  if (host.connection.key_path) sshArgs.push('-i', shellEscape(host.connection.key_path));
-  sshArgs.push(shellEscape(target));
-  sshArgs.push(shellEscape(command));
+  if (host.connection.port) sshParts.push('-p', String(host.connection.port));
+  if (host.connection.key_path) sshParts.push('-i', shellEscape(host.connection.key_path));
+  sshParts.push(shellEscape(target), '--', 'bash', '-lc', shellEscape(command));
 
-  return runLocalCommand(sshArgs.join(' '), timeoutSec + 1);
+  return runLocalCommand(sshParts.join(' '), timeoutSec + 1);
 }
 
 function usage(kind: 'hosts' | 'backends' | 'models'): void {
@@ -733,9 +733,12 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
   const force = !!args.force;
   const restart = !!args.restart;
   const forceRestart = force || restart;
+  const waitReady = !!(args['wait-ready'] ?? args.wait_ready);
+  const waitTimeoutSecRaw = Number(args['wait-timeout'] ?? args.wait_timeout ?? args.timeout ?? 0);
+  const waitTimeoutSec = Number.isFinite(waitTimeoutSecRaw) && waitTimeoutSecRaw > 0 ? waitTimeoutSecRaw : undefined;
 
   if (!modelId) {
-    console.log('Usage: idlehands select --model <id> [--backend <id>] [--host <id>] [--dry-run] [--json] [--force] [--restart]');
+    console.log('Usage: idlehands select --model <id> [--backend <id>] [--host <id>] [--dry-run] [--json] [--force] [--restart] [--wait-ready] [--wait-timeout <sec>]');
     console.log('       idlehands select status');
     return;
   }
@@ -802,6 +805,7 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
     force,
   });
 
+  let executedPlan = result;
   let execResult = await executeWithRenderer(result);
 
   // Reuse-probe fallback: if reuse validation fails, force restart automatically.
@@ -809,26 +813,70 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
     console.error('Reuse health check failed. Retrying with forced restart...');
     const restartPlan = plan({ modelId, backendOverride, hostOverride, mode: 'live', forceRestart: true }, rtConfig, active);
     if (restartPlan.ok) {
+      executedPlan = restartPlan;
       await applyDynamicProbeDefaults(restartPlan, rtConfig, runOnHost);
       execResult = await executeWithRenderer(restartPlan);
+    }
+  }
+
+  const readyChecks: Array<{ hostId: string; ok: boolean; attempts: number; reason?: string; status?: string; httpCode?: number | null; modelIds?: string[] }> = [];
+  let readyOk = true;
+
+  if (execResult.ok && waitReady) {
+    const timeoutSec = waitTimeoutSec ?? (executedPlan.model.launch.probe_timeout_sec ?? 60);
+    for (const resolvedHost of executedPlan.hosts) {
+      const hostCfg = rtConfig.hosts.find((h) => h.id === resolvedHost.id);
+      if (!hostCfg) continue;
+      const port = executedPlan.model.runtime_defaults?.port ?? 8080;
+
+      process.stdout.write(`  Waiting for /v1/models on ${resolvedHost.id}:${port}...`);
+      const ready = await waitForModelsReady(runOnHost as any, hostCfg, port, {
+        timeoutMs: timeoutSec * 1000,
+        intervalMs: executedPlan.model.launch.probe_interval_ms ?? 1500,
+      });
+
+      readyChecks.push({
+        hostId: resolvedHost.id,
+        ok: ready.ok,
+        attempts: ready.attempts,
+        reason: ready.reason,
+        status: ready.last.status,
+        httpCode: ready.last.httpCode,
+        modelIds: ready.last.modelIds,
+      });
+
+      if (ready.ok) {
+        process.stdout.write(' ✓\n');
+      } else {
+        process.stdout.write(' ✗\n');
+        if (ready.reason) process.stdout.write(`    ${ready.reason}\n`);
+        readyOk = false;
+      }
     }
   }
 
   iface.close();
 
   if (jsonOut) {
-    console.log(JSON.stringify(execResult, null, 2));
+    console.log(JSON.stringify({
+      execute: execResult,
+      waitReady: waitReady ? { ok: readyOk, checks: readyChecks } : undefined,
+    }, null, 2));
   } else if (execResult.ok) {
     if (execResult.reused) {
       console.log('Runtime already active and healthy. No changes needed.');
     } else {
-      console.log(`Runtime switched to "${result.model.display_name}" successfully.`);
+      console.log(`Runtime switched to "${executedPlan.model.display_name}" successfully.`);
     }
     // Show the derived endpoint so the user knows where requests will go
     const { loadActiveRuntime: loadAR } = await import('../runtime/executor.js');
     const activeNow = await loadAR();
     if (activeNow?.endpoint) {
       console.log(`Endpoint: ${activeNow.endpoint}`);
+    }
+    if (waitReady && !readyOk) {
+      console.error('Wait-ready failed: server did not become ready in time.');
+      process.exitCode = 1;
     }
   } else {
     console.error(`Execution failed: ${execResult.error || 'unknown error'}`);
@@ -845,24 +893,9 @@ const DIM = '\x1b[2m';
 const BOLD = '\x1b[1m';
 const RESET = '\x1b[0m';
 
-function parseCurlTagged(stdout: string): { code: number | null; body: string } {
-  const m = stdout.match(/\n__HTTP__:(\d{3})\s*$/);
-  if (!m) return { code: null, body: stdout.trim() };
-  const code = Number(m[1]);
-  const body = stdout.slice(0, m.index).trim();
-  return { code: Number.isFinite(code) ? code : null, body };
-}
-
-function classifyProbe(exitCode: number, httpCode: number | null): 'ready' | 'loading' | 'down' | 'unknown' {
-  if (httpCode === 200) return 'ready';
-  if (httpCode === 503) return 'loading';
-  if (exitCode === 7 || exitCode === 28) return 'down';
-  if (exitCode !== 0) return 'down';
-  return 'unknown';
-}
-
 export async function runHealthSubcommand(args: any, _config: any): Promise<void> {
   const { runOnHost } = await import('../runtime/executor.js');
+  const jsonOut = !!args.json;
 
   let runtimes;
   try {
@@ -883,7 +916,6 @@ export async function runHealthSubcommand(args: any, _config: any): Promise<void
     const trimmed = input.trim();
     if (!trimmed) return null;
 
-    // Try range format: "8000-8100"
     if (/^\d+-\d+$/.test(trimmed)) {
       const [start, end] = trimmed.split('-').map(Number);
       if (start > end || start < 1 || end > 65535) return null;
@@ -892,14 +924,12 @@ export async function runHealthSubcommand(args: any, _config: any): Promise<void
       return ports;
     }
 
-    // Try comma-separated: "8080,8081,8082"
     if (trimmed.includes(',')) {
       const parts = trimmed.split(',').map((s) => s.trim()).filter(Boolean);
       const ports = parts.map(Number).filter((p) => Number.isFinite(p) && p >= 1 && p <= 65535);
       return ports.length > 0 ? ports : null;
     }
 
-    // Single port
     const port = Number(trimmed);
     if (Number.isFinite(port) && port >= 1 && port <= 65535) return [port];
     return null;
@@ -914,9 +944,18 @@ export async function runHealthSubcommand(args: any, _config: any): Promise<void
 
   let anyFailed = false;
 
-  // ── Host health checks ──────────────────────────────────────────
+  const report = {
+    ok: true,
+    generatedAt: new Date().toISOString(),
+    hosts: [] as Array<{ id: string; ok: boolean; exitCode: number; stdout: string; stderr: string }>,
+    configuredModels: [] as Array<{ modelId: string; hostId: string; ok: boolean; exitCode: number; detail: string }>,
+    discovery: {
+      ports: [] as number[],
+      hosts: [] as Array<{ hostId: string; services: Array<{ port: number; status: string; httpCode: number | null; modelIds: string[]; stderr: string; exitCode: number }> }>,
+    },
+  };
 
-  console.log(`\n${BOLD}Hosts${RESET}`);
+  if (!jsonOut) console.log(`\n${BOLD}Hosts${RESET}`);
 
   for (const host of enabledHosts) {
     const label = host.transport === 'ssh'
@@ -926,87 +965,103 @@ export async function runHealthSubcommand(args: any, _config: any): Promise<void
     const cmd = host.health.check_cmd;
     const timeoutMs = (host.health.timeout_sec ?? 5) * 1000;
 
-    process.stdout.write(`  ${label}... `);
+    if (!jsonOut) process.stdout.write(`  ${label}... `);
     const result = await runOnHost(cmd, host, timeoutMs);
 
+    report.hosts.push({
+      id: host.id,
+      ok: result.exitCode === 0,
+      exitCode: result.exitCode,
+      stdout: result.stdout ?? '',
+      stderr: result.stderr ?? '',
+    });
+
     if (result.exitCode === 0) {
-      console.log(`${GREEN}✓${RESET}`);
+      if (!jsonOut) console.log(`${GREEN}✓${RESET}`);
     } else {
-      console.log(`${RED}✗${RESET}`);
-      if (result.stderr.trim()) {
-        for (const line of result.stderr.trim().split('\n').slice(0, 4)) {
-          console.log(`    ${DIM}${line}${RESET}`);
+      if (!jsonOut) {
+        console.log(`${RED}✗${RESET}`);
+        if (result.stderr.trim()) {
+          for (const line of result.stderr.trim().split('\n').slice(0, 4)) {
+            console.log(`    ${DIM}${line}${RESET}`);
+          }
         }
       }
       anyFailed = true;
     }
   }
 
-  // ── Model probe checks ─────────────────────────────────────────
+  if (enabledModels.length > 0 && !jsonOut) {
+    console.log(`\n${BOLD}Configured Models${RESET}`);
+  }
 
-  if (enabledModels.length > 0) {
-    console.log(`\n${BOLD}Models${RESET}`);
+  for (const model of enabledModels) {
+    const targetHosts = model.host_policy === 'any'
+      ? enabledHosts
+      : enabledHosts.filter((h) => (model.host_policy as string[]).includes(h.id));
 
-    for (const model of enabledModels) {
-      // Figure out which hosts this model can run on
-      const targetHosts = model.host_policy === 'any'
-        ? enabledHosts
-        : enabledHosts.filter((h) => (model.host_policy as string[]).includes(h.id));
+    const backend = model.backend_policy === 'any'
+      ? enabledBackends[0] ?? null
+      : enabledBackends.find((b) => (model.backend_policy as string[]).includes(b.id)) ?? null;
 
-      // Find applicable backend for template vars
-      const backend = model.backend_policy === 'any'
-        ? enabledBackends[0] ?? null
-        : enabledBackends.find((b) => (model.backend_policy as string[]).includes(b.id)) ?? null;
+    for (const host of targetHosts) {
+      const port = String(model.runtime_defaults?.port ?? 8080);
+      const backendArgs = backend?.args?.map((a) => shellEscape(a)).join(' ') ?? '';
+      const backendEnv = backend?.env
+        ? Object.entries(backend.env).map(([k, v]) => `${k}=${shellEscape(String(v))}`).join(' ')
+        : '';
 
-      for (const host of targetHosts) {
-        const port = String(model.runtime_defaults?.port ?? 8080);
-        const backendArgs = backend?.args?.map((a) => shellEscape(a)).join(' ') ?? '';
-        const backendEnv = backend?.env
-          ? Object.entries(backend.env).map(([k, v]) => `${k}=${shellEscape(String(v))}`).join(' ')
-          : '';
+      const vars: Record<string, string | number | undefined> = {
+        source: model.source,
+        port,
+        host: host.connection.host ?? host.id,
+        backend_args: backendArgs,
+        backend_env: backendEnv,
+        model_id: model.id,
+        host_id: host.id,
+        backend_id: backend?.id ?? '',
+      };
 
-        const vars: Record<string, string | number | undefined> = {
-          source: model.source,
-          port,
-          host: host.connection.host ?? host.id,
-          backend_args: backendArgs,
-          backend_env: backendEnv,
-          model_id: model.id,
-          host_id: host.id,
-          backend_id: backend?.id ?? '',
-        };
+      let probeCmd: string;
+      try {
+        probeCmd = interpolateTemplate(model.launch.probe_cmd, vars);
+      } catch {
+        probeCmd = model.launch.probe_cmd;
+      }
 
-        let probeCmd: string;
-        try {
-          probeCmd = interpolateTemplate(model.launch.probe_cmd, vars);
-        } catch {
-          probeCmd = model.launch.probe_cmd;
-        }
+      const timeoutMs = (model.launch.probe_timeout_sec ?? 60) * 1000;
 
-        const timeoutMs = (model.launch.probe_timeout_sec ?? 60) * 1000;
+      if (!jsonOut) process.stdout.write(`  ${model.display_name} on ${host.id}... `);
+      const result = await runOnHost(probeCmd, host, timeoutMs);
+      const detail = (result.stderr || result.stdout || '').trim();
 
-        process.stdout.write(`  ${model.display_name} on ${host.id}... `);
-        const result = await runOnHost(probeCmd, host, timeoutMs);
+      report.configuredModels.push({
+        modelId: model.id,
+        hostId: host.id,
+        ok: result.exitCode === 0,
+        exitCode: result.exitCode,
+        detail,
+      });
 
-        if (result.exitCode === 0) {
+      if (result.exitCode === 0) {
+        if (!jsonOut) {
           const body = result.stdout.trim();
           console.log(`${GREEN}✓${RESET}${body ? ` ${DIM}${body.split('\n')[0].slice(0, 80)}${RESET}` : ''}`);
-        } else {
+        }
+      } else {
+        if (!jsonOut) {
           console.log(`${RED}✗${RESET}`);
-          const detail = (result.stderr || result.stdout).trim();
           if (detail) {
             for (const line of detail.split('\n').slice(0, 4)) {
               console.log(`    ${DIM}${line}${RESET}`);
             }
           }
-          anyFailed = true;
         }
+        anyFailed = true;
       }
     }
   }
 
-  // ── Discovery: what is actually loaded (configured + common ports) ──
-  console.log(`\n${BOLD}Loaded (discovered)${RESET}`);
   let candidatePorts: number[];
   if (scanPortsOverride) {
     candidatePorts = scanPortsOverride;
@@ -1015,63 +1070,50 @@ export async function runHealthSubcommand(args: any, _config: any): Promise<void
     for (let p = 8080; p <= 8090; p++) configuredPorts.add(p);
     candidatePorts = Array.from(configuredPorts).sort((a, b) => a - b);
   }
+  report.discovery.ports = candidatePorts;
   const configuredModelIds = new Set(enabledModels.map((m) => m.id));
 
+  if (!jsonOut) console.log(`\n${BOLD}Discovered Servers (/v1/models + /health)${RESET}`);
+
   for (const host of enabledHosts) {
-    console.log(`  ${host.id}:`);
+    const hostEntry = { hostId: host.id, services: [] as Array<{ port: number; status: string; httpCode: number | null; modelIds: string[]; stderr: string; exitCode: number }> };
+
+    if (!jsonOut) console.log(`  ${host.id}:`);
 
     for (const port of candidatePorts) {
-      const modelsCmd = `curl -sS -m 3 -o - -w "\\n__HTTP__:%{http_code}" http://127.0.0.1:${port}/v1/models`;
-      const modelsRes = await runOnHost(modelsCmd, host, 5000);
-      const parsedModels = parseCurlTagged(modelsRes.stdout ?? '');
-      let status = classifyProbe(modelsRes.exitCode, parsedModels.code);
-      let modelIds: string[] = [];
-      let httpCode = parsedModels.code;
+      const probe = await probeModelsEndpoint(runOnHost as any, host, port, 5000);
 
-      if (modelsRes.exitCode === 0 && parsedModels.code === 200) {
-        try {
-          const json = JSON.parse(parsedModels.body);
-          modelIds = Array.isArray(json?.data)
-            ? json.data.map((x: any) => String(x?.id ?? '')).filter(Boolean)
-            : [];
-        } catch {
-          // leave modelIds empty
-        }
+      if (probe.status === 'down') continue; // concise display + compact JSON
+
+      hostEntry.services.push({
+        port,
+        status: probe.status,
+        httpCode: probe.httpCode,
+        modelIds: probe.modelIds,
+        stderr: probe.stderr,
+        exitCode: probe.exitCode,
+      });
+
+      if (!jsonOut) {
+        const icon = probe.status === 'ready' ? `${GREEN}✓${RESET}` : probe.status === 'loading' ? `${YELLOW}~${RESET}` : `${DIM}?${RESET}`;
+        const extras = probe.modelIds.filter((id) => !configuredModelIds.has(id));
+        const idsText = probe.modelIds.length ? ` models=${probe.modelIds.join(', ')}` : '';
+        const extrasText = extras.length ? ` ${YELLOW}(extra/unconfigured: ${extras.join(', ')})${RESET}` : '';
+        const httpText = probe.httpCode != null ? ` http=${probe.httpCode}` : '';
+        console.log(`    ${icon} :${port} ${probe.status}${httpText}${idsText}${extrasText}`);
       }
-
-      // Fallback to /health when /v1/models doesn't resolve as ready.
-      if (status !== 'ready') {
-        const healthCmd = `curl -sS -m 3 -o - -w "\\n__HTTP__:%{http_code}" http://127.0.0.1:${port}/health`;
-        const healthRes = await runOnHost(healthCmd, host, 5000);
-        const parsedHealth = parseCurlTagged(healthRes.stdout ?? '');
-        const healthStatus = classifyProbe(healthRes.exitCode, parsedHealth.code);
-
-        // Prefer the more informative status.
-        if (healthStatus === 'ready' || healthStatus === 'loading') {
-          status = healthStatus;
-          httpCode = parsedHealth.code;
-        } else if (status === 'unknown') {
-          status = healthStatus;
-          httpCode = parsedHealth.code;
-        }
-      }
-
-      if (status === 'down') continue; // keep output concise
-
-      const icon = status === 'ready' ? `${GREEN}✓${RESET}` : status === 'loading' ? `${YELLOW}~${RESET}` : `${DIM}?${RESET}`;
-      const statusWord = status === 'ready' ? 'ready' : status === 'loading' ? 'loading' : 'unknown';
-
-      const extras = modelIds.filter((id) => !configuredModelIds.has(id));
-      const idsText = modelIds.length ? ` models=${modelIds.join(', ')}` : '';
-      const extrasText = extras.length ? ` ${YELLOW}(extra/unconfigured: ${extras.join(', ')})${RESET}` : '';
-      const httpText = httpCode != null ? ` http=${httpCode}` : '';
-
-      console.log(`    ${icon} :${port} ${statusWord}${httpText}${idsText}${extrasText}`);
     }
+
+    report.discovery.hosts.push(hostEntry);
   }
 
-  console.log();
-  if (anyFailed) {
-    process.exitCode = 1;
+  report.ok = !anyFailed;
+
+  if (jsonOut) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    console.log();
   }
+
+  if (anyFailed) process.exitCode = 1;
 }

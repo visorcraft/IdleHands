@@ -27,14 +27,16 @@ async function cleanupTestStateDir(): Promise<void> {
   }
 }
 
-async function writeStaleLock(age: number, pid: number): Promise<void> {
+async function writeStaleLock(age: number, pid: number, heartbeatAge?: number): Promise<void> {
   const lockPath = path.join(tempStateDir, 'idlehands', 'anton.lock');
   await fs.mkdir(path.dirname(lockPath), { recursive: true });
   
   const staleTime = new Date(Date.now() - age);
+  const hbTime = new Date(Date.now() - (heartbeatAge ?? age));
   const staleLock = {
     pid,
     startedAt: staleTime.toISOString(),
+    heartbeatAt: hbTime.toISOString(),
     cwd: '/tmp/test',
     taskFile: 'test.md'
   };
@@ -141,6 +143,24 @@ describe('Anton lock functions', () => {
         await acquireAntonLock('test.md', '/tmp/test');
       });
       
+      assert.strictEqual(await isAntonLockHeld(), true);
+    } finally {
+      await releaseAntonLock();
+      await cleanupTestStateDir();
+    }
+  });
+
+  test('stale heartbeat lock is reclaimed even if process PID is alive', async () => {
+    await setupTestStateDir();
+    try {
+      const alivePid = process.pid;
+      // Fresh start time, but stale heartbeat (3 minutes old)
+      await writeStaleLock(10_000, alivePid, 3 * 60 * 1000);
+
+      await assert.doesNotReject(async () => {
+        await acquireAntonLock('test.md', '/tmp/test');
+      });
+
       assert.strictEqual(await isAntonLockHeld(), true);
     } finally {
       await releaseAntonLock();

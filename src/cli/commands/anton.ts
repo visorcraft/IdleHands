@@ -181,6 +181,7 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
     taskTimeoutSec: parsed.taskTimeout ?? defaults.task_timeout_sec ?? 600,
     totalTimeoutSec: parsed.totalTimeout ?? defaults.total_timeout_sec ?? 7200,
     maxTotalTokens: parsed.maxTokens ?? defaults.max_total_tokens ?? Infinity,
+    maxPromptTokensPerAttempt: defaults.max_prompt_tokens_per_attempt ?? 128_000,
     autoCommit: parsed.autoCommit ?? defaults.auto_commit ?? true,
     branch: parsed.branch ?? false,
     allowDirty: parsed.allowDirty ?? false,

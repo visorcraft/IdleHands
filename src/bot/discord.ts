@@ -1522,11 +1522,19 @@ When you escalate, your request will be re-run on a more capable model.`;
     }
 
     if (managed.antonActive) {
-      const runningMsg = managed.antonAbortSignal?.aborted
-        ? '🛑 Anton is still stopping. Please wait a moment, then try again.'
-        : '⚠️ Anton is already running. Use /anton stop first.';
-      await sendUserVisible(msg, runningMsg).catch(() => {});
-      return;
+      const staleMs = Date.now() - managed.lastActivity;
+      if (staleMs > 120_000) {
+        managed.antonActive = false;
+        managed.antonAbortSignal = null;
+        managed.antonProgress = null;
+        await sendUserVisible(msg, '♻️ Recovered stale Anton run state. Starting a fresh run...').catch(() => {});
+      } else {
+        const runningMsg = managed.antonAbortSignal?.aborted
+          ? '🛑 Anton is still stopping. Please wait a moment, then try again.'
+          : '⚠️ Anton is already running. Use /anton stop first.';
+        await sendUserVisible(msg, runningMsg).catch(() => {});
+        return;
+      }
     }
 
     const cwd = managed.config.dir || process.cwd();
@@ -1545,6 +1553,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       taskTimeoutSec: defaults.task_timeout_sec ?? 600,
       totalTimeoutSec: defaults.total_timeout_sec ?? 7200,
       maxTotalTokens: defaults.max_total_tokens ?? Infinity,
+      maxPromptTokensPerAttempt: defaults.max_prompt_tokens_per_attempt ?? 128_000,
       autoCommit: defaults.auto_commit ?? true,
       branch: false, allowDirty: false,
       aggressiveCleanOnFail: false,
@@ -1597,6 +1606,9 @@ When you escalate, your request will be re-run on a more capable model.`;
         managed.antonAbortSignal = null;
         managed.antonProgress = null;
         channel.send(formatRunSummary(result)).catch(() => {});
+      },
+      onHeartbeat() {
+        managed.lastActivity = Date.now();
       },
     };
 

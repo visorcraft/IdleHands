@@ -480,11 +480,19 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
   }
 
   if (session.antonActive) {
-    const msg = session.antonAbortSignal?.aborted
-      ? '🛑 Anton is still stopping. Please wait a moment, then try again.'
-      : '⚠️ Anton is already running. Use /anton stop first.';
-    await ctx.reply(msg);
-    return;
+    const staleMs = Date.now() - session.lastActivity;
+    if (staleMs > 120_000) {
+      session.antonActive = false;
+      session.antonAbortSignal = null;
+      session.antonProgress = null;
+      await ctx.reply('♻️ Recovered stale Anton run state. Starting a fresh run...');
+    } else {
+      const msg = session.antonAbortSignal?.aborted
+        ? '🛑 Anton is still stopping. Please wait a moment, then try again.'
+        : '⚠️ Anton is already running. Use /anton stop first.';
+      await ctx.reply(msg);
+      return;
+    }
   }
 
   const cwd = session.workingDir;
@@ -506,6 +514,7 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
     taskTimeoutSec: defaults.task_timeout_sec ?? 600,
     totalTimeoutSec: defaults.total_timeout_sec ?? 7200,
     maxTotalTokens: defaults.max_total_tokens ?? Infinity,
+    maxPromptTokensPerAttempt: defaults.max_prompt_tokens_per_attempt ?? 128_000,
     autoCommit: defaults.auto_commit ?? true,
     branch: false,
     allowDirty: false,
@@ -561,6 +570,9 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
       session.antonAbortSignal = null;
       session.antonProgress = null;
       ctx.reply(formatRunSummary(result)).catch(() => {});
+    },
+    onHeartbeat() {
+      session.lastActivity = Date.now();
     },
   };
 
