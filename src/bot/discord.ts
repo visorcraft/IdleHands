@@ -564,9 +564,13 @@ When you escalate, your request will be re-run on a more capable model.`;
         managed.activeAbortController = attemptController;
         turn.controller = attemptController;
 
-        const askText = isRetryAfterCompaction
+        let askText = isRetryAfterCompaction
           ? 'Continue working on the task from where you left off. Context was compacted to free memory — do NOT restart from the beginning.'
           : msg.content;
+
+        if (managed.antonActive) {
+          askText = `${askText}\n\n[System Runtime Context: Anton task runner is CURRENTLY ACTIVE and running autonomously in the background for this project.]`;
+        }
 
         const hooks = chainAgentHooks(
           { signal: attemptController.signal },
