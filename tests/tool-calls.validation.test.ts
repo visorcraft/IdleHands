@@ -26,3 +26,21 @@ test('valid read_file args produce no issues', () => {
   } as any);
   assert.equal(issues.length, 0);
 });
+
+test('write_file accepts overwrite/force booleans and rejects wrong types', () => {
+  const ok = getArgValidationIssues('write_file', {
+    path: 'a.ts',
+    content: 'x',
+    overwrite: true,
+    force: false,
+  } as any);
+  assert.equal(ok.length, 0);
+
+  const bad = getArgValidationIssues('write_file', {
+    path: 'a.ts',
+    content: 'x',
+    overwrite: 'yes',
+  } as any);
+  const fields = bad.map((i: any) => i.field);
+  assert.ok(fields.includes('overwrite'));
+});

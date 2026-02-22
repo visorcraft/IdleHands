@@ -139,6 +139,50 @@ process.stdin.on('data', (chunk) => {
   return file;
 }
 
+describe('context overflow recovery', () => {
+  it('auto-compacts and retries when server returns context-size 400', async () => {
+    let calls = 0;
+    const fakeClient: any = {
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
+      async warmup() {},
+      async chatStream() {
+        calls++;
+        if (calls === 1) {
+          const err: any = new Error('POST /chat/completions failed: 400 Bad Request {"error":{"code":400,"message":"request (64330 tokens) exceeds the available context size (64000 tokens)"}}');
+          err.status = 400;
+          err.retryable = false;
+          throw err;
+        }
+        return {
+          id: 'fake',
+          choices: [
+            {
+              index: 0,
+              finish_reason: 'stop',
+              message: {
+                role: 'assistant',
+                content: 'Recovered after compaction',
+              },
+            },
+          ],
+          usage: { prompt_tokens: 120, completion_tokens: 8 },
+        };
+      }
+    };
+
+    const session = await createSession({
+      config: baseConfig(tmpDir, { max_iterations: 3 }),
+      runtime: { client: fakeClient }
+    });
+
+    const result = await session.ask('trigger overflow recovery');
+    assert.equal(result.text, 'Recovered after compaction');
+    assert.equal(calls, 2, 'should retry once after compacting context');
+  });
+});
+
 describe('agent failure persistence', () => {
   it('persists a failure note when max iterations are exceeded', async () => {
     const notes: Array<{ key: string; value: string }> = [];

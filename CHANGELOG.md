@@ -129,6 +129,12 @@ All notable changes to Idle Hands are documented in this file.
 - Tool schemas were compacted to reduce per-request prompt overhead.
 - Oversized project context now defaults to summary injection with retrieval hints, instead of immediate hard failure.
 
+### Fixed
+
+- `edit_range` now rejects likely double-escaped replacements (literal `\\n` with no real newlines) and returns guidance to resend with real multiline text.
+- `write_file` now refuses to overwrite existing non-empty files unless `overwrite=true` (or `force=true`) is explicitly provided.
+- Agent auto-recovery now compacts and retries when `/chat/completions` returns 400/413 context-window overflow errors (e.g. `request (...) exceeds the available context size (...)`).
+
 ### Internal
 
 - Tool outputs are now proactively digested in live history while full output is archived to Vault (when available), reducing context growth during long runs.

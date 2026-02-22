@@ -526,6 +526,8 @@ export async function write_file(ctx: ToolContext, args: any) {
   if (!p) throw new Error('write_file: missing path');
   if (content == null) throw new Error('write_file: missing content (got ' + typeof raw + ')');
 
+  const overwrite = Boolean(args?.overwrite ?? args?.force);
+
   enforceMutationWithinCwd('write_file', p, ctx);
   const cwdWarning = checkCwdWarning('write_file', p, ctx);
 
@@ -546,7 +548,18 @@ export async function write_file(ctx: ToolContext, args: any) {
     }
   }
 
-  if (ctx.dryRun) return `dry-run: would write ${p} (${Buffer.byteLength(content, 'utf8')} bytes)${cwdWarning}`;
+  const existingStat = await fs.stat(p).catch(() => null);
+  if (existingStat?.isFile() && existingStat.size > 0 && !overwrite) {
+    throw new Error(
+      `write_file: refusing to overwrite existing non-empty file ${p} without explicit overwrite=true (or force=true). ` +
+      `Use edit_range/apply_patch for surgical edits, or set overwrite=true for intentional full-file replacement.`
+    );
+  }
+
+  if (ctx.dryRun) {
+    const mode = existingStat?.isFile() ? (existingStat.size > 0 ? 'overwrite' : 'update-empty') : 'create';
+    return `dry-run: would write ${p} (${Buffer.byteLength(content, 'utf8')} bytes, mode=${mode}${overwrite ? ', explicit-overwrite' : ''})${cwdWarning}`;
+  }
 
   // Phase 9d: snapshot /etc/ files before editing
   if (ctx.mode === 'sys' && ctx.vault) {
@@ -917,6 +930,15 @@ export async function edit_range(ctx: ToolContext, args: any) {
   if (!Number.isFinite(startLine) || startLine < 1) throw new Error('edit_range: missing/invalid start_line');
   if (!Number.isFinite(endLine) || endLine < startLine) throw new Error('edit_range: missing/invalid end_line');
   if (replacement == null) throw new Error('edit_range: missing replacement (got ' + typeof rawReplacement + ')');
+
+  const hasLiteralEscapedNewlines = replacement.includes('\\n');
+  const hasRealNewlines = replacement.includes('\n') || replacement.includes('\r');
+  if (hasLiteralEscapedNewlines && !hasRealNewlines) {
+    throw new Error(
+      'edit_range: replacement appears double-escaped (contains literal "\\n" sequences). ' +
+      'Resend replacement with REAL newline characters (multi-line string), not escaped backslash-n text.'
+    );
+  }
 
   enforceMutationWithinCwd('edit_range', p, ctx);
 

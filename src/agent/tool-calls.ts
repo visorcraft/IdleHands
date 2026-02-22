@@ -294,7 +294,7 @@ export function getMissingRequiredParams(toolName: string, args: Record<string, 
 const TOOL_ALLOWED_KEYS: Record<string, string[]> = {
   read_file: ['path', 'offset', 'limit', 'search', 'context', 'format', 'max_bytes'],
   read_files: ['requests'],
-  write_file: ['path', 'content'],
+  write_file: ['path', 'content', 'overwrite', 'force'],
   apply_patch: ['patch', 'files', 'strip'],
   edit_range: ['path', 'start_line', 'end_line', 'replacement'],
   edit_file: ['path', 'old_text', 'new_text', 'replace_all'],
@@ -395,6 +395,8 @@ export function getArgValidationIssues(toolName: string, args: Record<string, un
     case 'write_file':
       if (args.path != null && !isStr(args.path)) issues.push({ field: 'path', message: 'must be a string', value: args.path });
       if (args.content != null && !isStr(args.content)) issues.push({ field: 'content', message: 'must be a string', value: args.content });
+      if (args.overwrite != null && !isBool(args.overwrite)) issues.push({ field: 'overwrite', message: 'must be a boolean', value: args.overwrite });
+      if (args.force != null && !isBool(args.force)) issues.push({ field: 'force', message: 'must be a boolean', value: args.force });
       break;
     case 'edit_file':
       if (args.path != null && !isStr(args.path)) issues.push({ field: 'path', message: 'must be a string', value: args.path });

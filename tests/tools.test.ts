@@ -101,9 +101,24 @@ describe('write_file', () => {
     const p = path.join(tmpDir, 'exec.sh');
     await fs.writeFile(p, '#!/bin/bash\necho hi');
     await fs.chmod(p, 0o755);
-    await write_file(ctx, { path: 'exec.sh', content: '#!/bin/bash\necho updated' });
+    await write_file(ctx, { path: 'exec.sh', content: '#!/bin/bash\necho updated', overwrite: true });
     const st = await fs.stat(p);
     assert.equal(st.mode & 0o777, 0o755);
+  });
+
+  it('blocks overwrite of existing non-empty files unless overwrite/force is explicit', async () => {
+    await fs.writeFile(path.join(tmpDir, 'existing.txt'), 'hello\n', 'utf8');
+    await assert.rejects(
+      () => write_file(ctx, { path: 'existing.txt', content: 'new text' }),
+      /without explicit overwrite=true/i,
+    );
+  });
+
+  it('allows overwrite of existing non-empty files with overwrite=true', async () => {
+    await fs.writeFile(path.join(tmpDir, 'existing-overwrite.txt'), 'hello\n', 'utf8');
+    await write_file(ctx, { path: 'existing-overwrite.txt', content: 'new text', overwrite: true });
+    const content = await fs.readFile(path.join(tmpDir, 'existing-overwrite.txt'), 'utf8');
+    assert.equal(content, 'new text');
   });
 
   it('blocks writes outside cwd in code mode', async () => {
@@ -233,6 +248,14 @@ describe('edit_range', () => {
     );
   });
 
+  it('rejects double-escaped replacement payloads and asks for real newlines', async () => {
+    await fs.writeFile(path.join(tmpDir, 'range-escaped.txt'), 'one\ntwo\nthree\n', 'utf8');
+    await assert.rejects(
+      () => edit_range(ctx, { path: 'range-escaped.txt', start_line: 2, end_line: 2, replacement: 'alpha\\nbeta' }),
+      /double-escaped|real newline/i,
+    );
+  });
+
   it('blocks range edits outside cwd in code mode', async () => {
     const outside = '/tmp/idlehands-outside-range.txt';
     await fs.writeFile(outside, 'a\nb\nc\n', 'utf8');
@@ -334,7 +357,7 @@ describe('undo_path', () => {
     };
 
     await write_file(ctxBase as any, { path: 'undo.txt', content: 'original' });
-    await write_file(ctxBase as any, { path: 'undo.txt', content: 'changed' });
+    await write_file(ctxBase as any, { path: 'undo.txt', content: 'changed', overwrite: true });
 
     const restored = await undo_path(
       {

@@ -138,6 +138,16 @@ function ensureInformativeAssistantText(text: string, ctx: { toolCalls: number; 
   return `I have no user-visible response text for this turn (turn=${ctx.turns}). Please try again or rephrase your request.`;
 }
 
+function isContextWindowExceededError(err: unknown): boolean {
+  const status = Number((err as any)?.status ?? NaN);
+  const msg = String((err as any)?.message ?? err ?? '');
+
+  if (status === 413) return true;
+  if (!msg) return false;
+
+  return /(exceeds?\s+the\s+available\s+context\s+size|exceed_context|context\s+size|context\s+window|maximum\s+context\s+length|too\s+many\s+tokens|request\s*\(\d+\s*tokens\))/i.test(msg);
+}
+
 /** Errors that should break the outer agent loop, not be caught by per-tool handlers */
 class AgentLoopBreak extends Error {
   constructor(message: string) {
@@ -162,6 +172,7 @@ Rules:
 - Use read_file with search=... to jump to relevant code; avoid reading whole files.
 - Never call read_file/read_files/list_dir twice in a row with identical arguments (same path/options). Reuse the previous result instead.
 - Prefer apply_patch or edit_range for code edits (token-efficient). Use edit_file only when exact old_text replacement is necessary.
+- write_file is for new files or explicit full rewrites only. Existing non-empty files require overwrite=true/force=true.
 - Use insert_file for insertions (prepend/append/line).
 - Use exec to run commands, tests, builds; check results before reporting success.
 - When running commands in a subdirectory, use exec's cwd parameter — NOT "cd /path && cmd". Each exec call is a fresh shell; cd does not persist.
@@ -368,8 +379,8 @@ function buildToolsSchema(opts?: {
       type: 'function',
       function: {
         name: 'write_file',
-        description: 'Write file (atomic, backup).',
-        parameters: obj({ path: str(), content: str() }, ['path', 'content']),
+        description: 'Write file (atomic, backup). Existing non-empty files require overwrite=true (or force=true).',
+        parameters: obj({ path: str(), content: str(), overwrite: bool(), force: bool() }, ['path', 'content']),
       },
     },
     {
@@ -2190,6 +2201,9 @@ export async function createSession(opts: {
     let lastSuccessfulTestRun: any = null;
     // One-time nudge to prevent post-success churn after green test runs.
     let finalizeAfterTestsNudgeUsed = false;
+    // Recover once/twice from server-side context-overflow 400/413s by forcing compaction and retrying.
+    let overflowCompactionAttempts = 0;
+    const MAX_OVERFLOW_COMPACTION_ATTEMPTS = 2;
 
     const archiveToolOutputForVault = async (msg: ChatMessage) => {
       if (!lens || !vault || msg.role !== 'tool' || typeof msg.content !== 'string') return msg;
@@ -2392,20 +2406,39 @@ export async function createSession(opts: {
 
         let resp;
         try {
-          resp = await client.chatStream({
-            model,
-            messages,
-            tools: getToolsSchema(),
-            tool_choice: 'auto',
-            temperature,
-            top_p: topP,
-            max_tokens: maxTokens,
-            extra: { cache_prompt: cfg.cache_prompt ?? true },
-            signal: ac.signal,
-            requestId: `r${reqCounter}`,
-            onToken: hookObj.onToken,
-            onFirstDelta,
-          });
+          try {
+            resp = await client.chatStream({
+              model,
+              messages,
+              tools: getToolsSchema(),
+              tool_choice: 'auto',
+              temperature,
+              top_p: topP,
+              max_tokens: maxTokens,
+              extra: { cache_prompt: cfg.cache_prompt ?? true },
+              signal: ac.signal,
+              requestId: `r${reqCounter}`,
+              onToken: hookObj.onToken,
+              onFirstDelta,
+            });
+            // Successful response resets overflow recovery budget.
+            overflowCompactionAttempts = 0;
+          } catch (e) {
+            if (isContextWindowExceededError(e) && overflowCompactionAttempts < MAX_OVERFLOW_COMPACTION_ATTEMPTS) {
+              overflowCompactionAttempts++;
+              const useHardCompaction = overflowCompactionAttempts > 1;
+              const compacted = await compactHistory({ force: true, hard: useHardCompaction });
+              const mode = useHardCompaction ? 'hard' : 'force';
+              messages.push({
+                role: 'system',
+                content:
+                  `[auto-recovery] Previous request exceeded model context window. Ran ${mode} compaction ` +
+                  `(freed ~${compacted.freedTokens} tokens, dropped ${compacted.droppedMessages} messages). Continue from latest state; do not restart work.`,
+              } as ChatMessage);
+              continue;
+            }
+            throw e;
+          }
         } finally {
           clearTimeout(timer);
           callerSignal?.removeEventListener('abort', onCallerAbort);
