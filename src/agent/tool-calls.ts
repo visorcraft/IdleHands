@@ -49,7 +49,75 @@ export function parseToolCallsFromContent(content: string): ToolCall[] | null {
     }
   }
 
-  // Case 3: find a JSON object substring (handles tool_calls wrapper OR single tool-call)
+  // Case 3: concatenated JSON objects (common malformed content-mode output):
+  // {"name":"tool1","arguments":{...}}
+  // {"name":"tool2","arguments":{...}}
+  // ...
+  // We recover each top-level JSON object and parse tool calls from them.
+  const seqCalls: ToolCall[] = [];
+  {
+    const objects: string[] = [];
+    let depth = 0;
+    let start = -1;
+    let inStr = false;
+    let esc = false;
+
+    for (let i = 0; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+
+      if (inStr) {
+        if (esc) {
+          esc = false;
+        } else if (ch === '\\') {
+          esc = true;
+        } else if (ch === '"') {
+          inStr = false;
+        }
+        continue;
+      }
+
+      if (ch === '"') {
+        inStr = true;
+        continue;
+      }
+
+      if (ch === '{') {
+        if (depth === 0) start = i;
+        depth++;
+      } else if (ch === '}') {
+        if (depth > 0) depth--;
+        if (depth === 0 && start !== -1) {
+          objects.push(trimmed.slice(start, i + 1));
+          start = -1;
+        }
+      }
+    }
+
+    if (objects.length > 1) {
+      for (const [i, obj] of objects.entries()) {
+        const parsed = tryParse(obj);
+        if (parsed?.tool_calls && Array.isArray(parsed.tool_calls)) {
+          for (const call of parsed.tool_calls) {
+            if (call?.function?.name) seqCalls.push(call);
+          }
+          continue;
+        }
+        if (parsed?.name && parsed?.arguments != null) {
+          seqCalls.push({
+            id: `call_seq_${i}`,
+            type: 'function',
+            function: {
+              name: String(parsed.name),
+              arguments: typeof parsed.arguments === 'string' ? parsed.arguments : JSON.stringify(parsed.arguments ?? {})
+            }
+          });
+        }
+      }
+    }
+  }
+  if (seqCalls.length > 0) return seqCalls;
+
+  // Case 4: find a JSON object substring (handles tool_calls wrapper OR single tool-call)
   const start = trimmed.indexOf('{');
   const end = trimmed.lastIndexOf('}');
   if (start !== -1 && end !== -1 && end > start) {
