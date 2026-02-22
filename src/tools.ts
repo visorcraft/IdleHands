@@ -1545,20 +1545,16 @@ export async function exec(ctx: ToolContext, args: any) {
     errText = (errText ? errText + '\n' : '') + `[killed after ${timeout}s timeout]`;
   }
 
-  // When a search command (grep/rg/ag/ack/find) exits with rc=1 and produces
-  // no output, add a semantic hint so the model understands "no results" is the
-  // answer and doesn't retry the same command in a loop.
-  if (rc === 1 && !outText && !errText) {
-    const cmdLower = command.toLowerCase().trim();
-    if (/(?:^|\|)\s*(?:grep|rg|ag|ack|find)\b/.test(cmdLower)) {
-      outText = '[no matches found]';
+  // When any command produces no output, add an explicit semantic hint so the
+  // model understands the result and doesn't retry the same command in a loop.
+  if (!outText && !errText && !killed) {
+    if (rc === 0) {
+      outText = '[command completed successfully with no output. Do NOT retry — the command worked but produced no output. Move on to the next step.]';
+    } else if (rc === 1) {
+      outText = '[no matches found — the command returned zero results (exit code 1). Do NOT retry this command with the same arguments. The target simply has no matches. Move on or try different search terms/parameters.]';
+    } else {
+      outText = `[command exited with code ${rc} and produced no output. Do NOT retry with identical arguments — diagnose the issue or try a different approach.]`;
     }
-  }
-
-  // When a command succeeds (rc=0) but produces no output at all, add a hint
-  // so the model knows the command ran successfully and doesn't retry expecting output.
-  if (rc === 0 && !outText && !errText && !killed) {
-    outText = '[command completed successfully with no output]';
   }
 
   const result: ExecResult = {
@@ -1665,14 +1661,14 @@ async function execWithPty(args: ExecWithPtyArgs): Promise<string> {
   }
 
   // Semantic hints for empty output (same as non-pty exec path).
-  if (rc === 1 && !outText && !errText) {
-    const cmdLower = command.toLowerCase().trim();
-    if (/(?:^|\|)\s*(?:grep|rg|ag|ack|find)\b/.test(cmdLower)) {
-      outText = '[no matches found]';
+  if (!outText && !errText && !killed) {
+    if (rc === 0) {
+      outText = '[command completed successfully with no output. Do NOT retry — the command worked but produced no output. Move on to the next step.]';
+    } else if (rc === 1) {
+      outText = '[no matches found — the command returned zero results (exit code 1). Do NOT retry this command with the same arguments. The target simply has no matches. Move on or try different search terms/parameters.]';
+    } else {
+      outText = `[command exited with code ${rc} and produced no output. Do NOT retry with identical arguments — diagnose the issue or try a different approach.]`;
     }
-  }
-  if (rc === 0 && !outText && !errText && !killed) {
-    outText = '[command completed successfully with no output]';
   }
 
   const result: ExecResult = {

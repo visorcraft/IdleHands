@@ -2650,7 +2650,13 @@ export async function createSession(opts: {
 
               if (!hasMutatedSince) {
                 const count = sigCounts.get(sig) ?? 0;
-                const loopThreshold = harness.quirks.loopsOnToolError ? 3 : 6;
+                let loopThreshold = harness.quirks.loopsOnToolError ? 3 : 6;
+                // If the cached observation already tells the model "no matches found",
+                // break much earlier — the model is ignoring the hint.
+                const cachedObs = execObservationCacheBySig.get(sig) ?? '';
+                if (cachedObs.includes('Do NOT retry')) {
+                  loopThreshold = Math.min(loopThreshold, 3);
+                }
                 // At 3x, inject vault context so the model gets the data it needs
                 if (count >= 3 && count < loopThreshold) {
                   await injectVaultContext().catch(() => {});
