@@ -213,6 +213,25 @@ export type AgentResult = {
   toolCalls: number;
 };
 
+type CompactionOutcome = {
+  beforeMessages: number;
+  afterMessages: number;
+  freedTokens: number;
+  archivedToolMessages: number;
+  droppedMessages: number;
+  dryRun: boolean;
+};
+
+type CompactionStats = CompactionOutcome & {
+  inProgress: boolean;
+  lockHeld: boolean;
+  runs: number;
+  failedRuns: number;
+  lastReason?: string;
+  lastError?: string;
+  updatedAt?: string;
+};
+
 const SYSTEM_PROMPT = `You are a coding agent with filesystem and shell access. Execute the user's request using the provided tools.
 
 Rules:
@@ -787,6 +806,8 @@ export type AgentSession = {
   executePlanStep: (index?: number) => Promise<string[]>;
   /** Clear accumulated plan steps */
   clearPlan: () => void;
+  /** Current compaction telemetry/state for this session. */
+  compactionStats: CompactionStats;
   /** Manual context compaction. */
   compactHistory: (opts?: { topic?: string; hard?: boolean; force?: boolean; dry?: boolean; reason?: string }) => Promise<{
     beforeMessages: number;
@@ -1638,85 +1659,159 @@ export async function createSession(opts: {
     });
   };
 
+  let compactionLockTail: Promise<void> = Promise.resolve();
+  let compactionStats: CompactionStats = {
+    inProgress: false,
+    lockHeld: false,
+    runs: 0,
+    failedRuns: 0,
+    beforeMessages: 0,
+    afterMessages: 0,
+    freedTokens: 0,
+    archivedToolMessages: 0,
+    droppedMessages: 0,
+    dryRun: false,
+  };
+
+  const runCompactionWithLock = async (reason: string, runner: () => Promise<CompactionOutcome>): Promise<CompactionOutcome> => {
+    const prev = compactionLockTail;
+    let release: (() => void) | null = null;
+    compactionLockTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    await prev;
+
+    compactionStats = {
+      ...compactionStats,
+      inProgress: true,
+      lockHeld: true,
+      lastReason: reason,
+      lastError: undefined,
+      updatedAt: new Date().toISOString(),
+      // Reset run stats before fresh calculation.
+      beforeMessages: 0,
+      afterMessages: 0,
+      freedTokens: 0,
+      archivedToolMessages: 0,
+      droppedMessages: 0,
+      dryRun: false,
+    };
+
+    try {
+      const result = await runner();
+      compactionStats = {
+        ...compactionStats,
+        ...result,
+        inProgress: false,
+        lockHeld: false,
+        runs: compactionStats.runs + 1,
+        lastReason: reason,
+        updatedAt: new Date().toISOString(),
+      };
+      return result;
+    } catch (e: any) {
+      compactionStats = {
+        ...compactionStats,
+        inProgress: false,
+        lockHeld: false,
+        failedRuns: compactionStats.failedRuns + 1,
+        lastReason: reason,
+        lastError: e?.message ?? String(e),
+        updatedAt: new Date().toISOString(),
+      };
+      throw e;
+    } finally {
+      release?.();
+    }
+  };
+
   const compactHistory = async (opts?: { topic?: string; hard?: boolean; force?: boolean; dry?: boolean; reason?: string }) => {
-    const beforeMessages = messages.length;
-    const beforeTokens = estimateTokensFromMessages(messages);
+    const reason = opts?.reason
+      ?? (opts?.hard ? 'manual hard compaction'
+        : opts?.force ? 'manual force compaction'
+        : 'manual compaction');
 
-    let compacted: ChatMessage[];
-    if (opts?.hard) {
-      const sys = messages[0]?.role === 'system' ? [messages[0]] : [];
-      const tail = messages.slice(-2);
-      compacted = [...sys, ...tail];
-    } else {
-      compacted = enforceContextBudget({
-        messages,
-        contextWindow,
-        maxTokens,
-        minTailMessages: opts?.force ? 2 : 12,
-        compactAt: opts?.force ? 0.5 : (cfg.compact_at ?? 0.8),
-        toolSchemaTokens: estimateToolSchemaTokens(getToolsSchema()),
-        force: opts?.force,
-      });
-    }
+    return await runCompactionWithLock(reason, async () => {
+      const beforeMessages = messages.length;
+      const beforeTokens = estimateTokensFromMessages(messages);
 
-    const compactedByRefs = new Set(compacted);
-    let dropped = messages.filter((m) => !compactedByRefs.has(m));
+      let compacted: ChatMessage[];
+      if (opts?.hard) {
+        const sys = messages[0]?.role === 'system' ? [messages[0]] : [];
+        const tail = messages.slice(-2);
+        compacted = [...sys, ...tail];
+      } else {
+        compacted = enforceContextBudget({
+          messages,
+          contextWindow,
+          maxTokens,
+          minTailMessages: opts?.force ? 2 : 12,
+          compactAt: opts?.force ? 0.5 : (cfg.compact_at ?? 0.8),
+          toolSchemaTokens: estimateToolSchemaTokens(getToolsSchema()),
+          force: opts?.force,
+        });
+      }
 
-    if (opts?.topic) {
-      const topic = opts.topic.toLowerCase();
-      dropped = dropped.filter((m) => !userContentToText((m as any).content ?? '').toLowerCase().includes(topic));
-      const keepFromTopic = messages.filter((m) => userContentToText((m as any).content ?? '').toLowerCase().includes(topic));
-      compacted = [...compacted, ...keepFromTopic.filter((m) => !compactedByRefs.has(m))];
-    }
+      const compactedByRefs = new Set(compacted);
+      let dropped = messages.filter((m) => !compactedByRefs.has(m));
 
-    const archivedToolMessages = dropped.filter((m) => m.role === 'tool').length;
-    const afterMessages = compacted.length;
-    const afterTokens = estimateTokensFromMessages(compacted);
-    const freedTokens = Math.max(0, beforeTokens - afterTokens);
+      if (opts?.topic) {
+        const topic = opts.topic.toLowerCase();
+        dropped = dropped.filter((m) => !userContentToText((m as any).content ?? '').toLowerCase().includes(topic));
+        const keepFromTopic = messages.filter((m) => userContentToText((m as any).content ?? '').toLowerCase().includes(topic));
+        compacted = [...compacted, ...keepFromTopic.filter((m) => !compactedByRefs.has(m))];
+      }
 
-    if (!opts?.dry) {
-      if (dropped.length && vault) {
-        try {
-          // Store the original/current user prompt before compaction so it survives context loss.
-          let userPromptToPreserve: string | null = null;
-          for (let i = messages.length - 1; i >= 0; i--) {
-            const m = messages[i];
-            if (m.role === 'user') {
-              const text = userContentToText((m.content ?? '') as UserContent).trim();
-              if (text && !text.startsWith('[Trifecta Vault') && !text.startsWith('[Vault context') && text.length > 20) {
-                userPromptToPreserve = text;
-                break;
+      const archivedToolMessages = dropped.filter((m) => m.role === 'tool').length;
+      const afterMessages = compacted.length;
+      const afterTokens = estimateTokensFromMessages(compacted);
+      const freedTokens = Math.max(0, beforeTokens - afterTokens);
+
+      if (!opts?.dry) {
+        if (dropped.length && vault) {
+          try {
+            // Store the original/current user prompt before compaction so it survives context loss.
+            let userPromptToPreserve: string | null = null;
+            for (let i = messages.length - 1; i >= 0; i--) {
+              const m = messages[i];
+              if (m.role === 'user') {
+                const text = userContentToText((m.content ?? '') as UserContent).trim();
+                if (text && !text.startsWith('[Trifecta Vault') && !text.startsWith('[Vault context') && text.length > 20) {
+                  userPromptToPreserve = text;
+                  break;
+                }
               }
             }
-          }
-          if (userPromptToPreserve) {
-            await vault.upsertNote('current_task', userPromptToPreserve.slice(0, 2000), 'system');
-          }
+            if (userPromptToPreserve) {
+              await vault.upsertNote('current_task', userPromptToPreserve.slice(0, 2000), 'system');
+            }
 
-          await vault.archiveToolMessages(dropped as ChatMessage[], new Map());
-          await vault.note('compaction_summary', `Dropped ${dropped.length} messages (${freedTokens} tokens).`);
-        } catch {
-          // best-effort
+            await vault.archiveToolMessages(dropped as ChatMessage[], new Map());
+            await vault.note('compaction_summary', `Dropped ${dropped.length} messages (${freedTokens} tokens).`);
+          } catch {
+            // best-effort
+          }
+        }
+        messages = compacted;
+        if (dropped.length) {
+          messages.push({ role: 'system', content: buildCompactionSystemNote('manual', dropped.length) });
+          await injectVaultContext().catch(() => {});
+          if (opts?.reason || opts?.force) {
+            injectCompactionReminder(opts?.reason ?? 'history compaction');
+          }
         }
       }
-      messages = compacted;
-      if (dropped.length) {
-        messages.push({ role: 'system', content: buildCompactionSystemNote('manual', dropped.length) });
-        await injectVaultContext().catch(() => {});
-        if (opts?.reason || opts?.force) {
-          injectCompactionReminder(opts?.reason ?? 'history compaction');
-        }
-      }
-    }
 
-    return {
-      beforeMessages,
-      afterMessages,
-      freedTokens,
-      archivedToolMessages,
-      droppedMessages: dropped.length,
-      dryRun: !!opts?.dry,
-    };
+      return {
+        beforeMessages,
+        afterMessages,
+        freedTokens,
+        archivedToolMessages,
+        droppedMessages: dropped.length,
+        dryRun: !!opts?.dry,
+      };
+    });
   };
 
   const cumulativeUsage = { prompt: 0, completion: 0 };
@@ -2438,55 +2533,68 @@ export async function createSession(opts: {
 
         await maybeAutoDetectModelChange();
 
-        const beforeMsgs = messages;
-        const compacted = enforceContextBudget({
-          messages: beforeMsgs,
-          contextWindow,
-          maxTokens: maxTokens,
-          minTailMessages: 12,
-          compactAt: cfg.compact_at ?? 0.8,
-          toolSchemaTokens: estimateToolSchemaTokens(getToolsSchema()),
-        });
+        await runCompactionWithLock('auto context-budget compaction', async () => {
+          const beforeMsgs = messages;
+          const beforeTokens = estimateTokensFromMessages(beforeMsgs);
+          const compacted = enforceContextBudget({
+            messages: beforeMsgs,
+            contextWindow,
+            maxTokens: maxTokens,
+            minTailMessages: 12,
+            compactAt: cfg.compact_at ?? 0.8,
+            toolSchemaTokens: estimateToolSchemaTokens(getToolsSchema()),
+          });
 
-        const compactedByRefs = new Set(compacted);
-        const dropped = beforeMsgs.filter((m) => !compactedByRefs.has(m));
+          const compactedByRefs = new Set(compacted);
+          const dropped = beforeMsgs.filter((m) => !compactedByRefs.has(m));
 
-        if (dropped.length && vault) {
-          try {
-            // Store the original/current user prompt before compaction so it survives context loss.
-            // Find the last substantive user message that looks like a task/instruction.
-            let userPromptToPreserve: string | null = null;
-            for (let i = beforeMsgs.length - 1; i >= 0; i--) {
-              const m = beforeMsgs[i];
-              if (m.role === 'user') {
-                const text = userContentToText((m.content ?? '') as UserContent).trim();
-                // Skip vault injection messages and short prompts
-                if (text && !text.startsWith('[Trifecta Vault') && !text.startsWith('[Vault context') && text.length > 20) {
-                  userPromptToPreserve = text;
-                  break;
+          if (dropped.length && vault) {
+            try {
+              // Store the original/current user prompt before compaction so it survives context loss.
+              // Find the last substantive user message that looks like a task/instruction.
+              let userPromptToPreserve: string | null = null;
+              for (let i = beforeMsgs.length - 1; i >= 0; i--) {
+                const m = beforeMsgs[i];
+                if (m.role === 'user') {
+                  const text = userContentToText((m.content ?? '') as UserContent).trim();
+                  // Skip vault injection messages and short prompts
+                  if (text && !text.startsWith('[Trifecta Vault') && !text.startsWith('[Vault context') && text.length > 20) {
+                    userPromptToPreserve = text;
+                    break;
+                  }
                 }
               }
-            }
-            if (userPromptToPreserve) {
-              await vault.upsertNote('current_task', userPromptToPreserve.slice(0, 2000), 'system');
-            }
+              if (userPromptToPreserve) {
+                await vault.upsertNote('current_task', userPromptToPreserve.slice(0, 2000), 'system');
+              }
 
-            const toArchive = lens
-              ? await Promise.all(dropped.map((m) => archiveToolOutputForVault(m as ChatMessage)))
-              : dropped;
-            await vault.archiveToolMessages(toArchive as ChatMessage[], toolNameByCallId);
-          } catch (e) {
-            console.warn(`[warn] vault archive failed: ${e instanceof Error ? e.message : String(e)}`);
+              const toArchive = lens
+                ? await Promise.all(dropped.map((m) => archiveToolOutputForVault(m as ChatMessage)))
+                : dropped;
+              await vault.archiveToolMessages(toArchive as ChatMessage[], toolNameByCallId);
+            } catch (e) {
+              console.warn(`[warn] vault archive failed: ${e instanceof Error ? e.message : String(e)}`);
+            }
           }
-        }
 
-        messages = compacted;
+          messages = compacted;
 
-        if (dropped.length) {
-          messages.push({ role: 'system', content: buildCompactionSystemNote('auto', dropped.length) } as ChatMessage);
-          await injectVaultContext().catch(() => {});
-          injectCompactionReminder('auto context-budget compaction');
-        }
+          if (dropped.length) {
+            messages.push({ role: 'system', content: buildCompactionSystemNote('auto', dropped.length) } as ChatMessage);
+            await injectVaultContext().catch(() => {});
+            injectCompactionReminder('auto context-budget compaction');
+          }
+
+          const afterTokens = estimateTokensFromMessages(compacted);
+          return {
+            beforeMessages: beforeMsgs.length,
+            afterMessages: compacted.length,
+            freedTokens: Math.max(0, beforeTokens - afterTokens),
+            archivedToolMessages: dropped.filter((m) => m.role === 'tool').length,
+            droppedMessages: dropped.length,
+            dryRun: false,
+          };
+        });
 
         const ac = makeAbortController();
         inFlight = ac;
@@ -3744,6 +3852,9 @@ export async function createSession(opts: {
     },
     get planSteps() {
       return planSteps;
+    },
+    get compactionStats() {
+      return { ...compactionStats };
     },
     executePlanStep,
     clearPlan,

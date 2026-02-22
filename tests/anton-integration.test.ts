@@ -76,6 +76,18 @@ function mockSession(responses: string[]): AgentSession {
     mcpWarnings() { return []; }, listLspServers() { return []; },
     setVerbose() {}, reset() {}, restore() {},
     planSteps: [], async executePlanStep() { return []; }, clearPlan() {},
+    compactionStats: {
+      inProgress: false,
+      lockHeld: false,
+      runs: 0,
+      failedRuns: 0,
+      beforeMessages: 0,
+      afterMessages: 0,
+      freedTokens: 0,
+      archivedToolMessages: 0,
+      droppedMessages: 0,
+      dryRun: false,
+    },
     async compactHistory() {
       return { beforeMessages: 0, afterMessages: 0, freedTokens: 0, archivedToolMessages: 0, droppedMessages: 0, dryRun: false };
     },
