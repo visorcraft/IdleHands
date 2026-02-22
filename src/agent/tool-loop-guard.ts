@@ -29,6 +29,7 @@ type ToolLoopTelemetry = {
   warnings: number;
   criticals: number;
   recoveryRecommended: number;
+  readFileFailures: number;
 };
 
 export type ToolLoopWarning = {
@@ -59,6 +60,7 @@ export class ToolLoopGuard {
     warnings: 0,
     criticals: 0,
     recoveryRecommended: 0,
+    readFileFailures: 0,
   };
 
   constructor(config?: ToolLoopConfig) {
@@ -152,6 +154,14 @@ export class ToolLoopGuard {
     if (outcome.toolCallId) {
       this.recordByCallId.delete(outcome.toolCallId);
     }
+
+    // Track consecutive read_file failures
+    if (toolName === 'read_file' && outcome.error !== undefined) {
+      this.telemetry.readFileFailures += 1;
+    } else if (toolName === 'read_file' && outcome.error === undefined) {
+      // Reset on success
+      this.telemetry.readFileFailures = 0;
+    }
   }
 
   getStats() {
@@ -176,6 +186,14 @@ export class ToolLoopGuard {
     const should = result.level === 'critical';
     if (should) this.telemetry.recoveryRecommended += 1;
     return should;
+  }
+
+  getReadFileFailureCount(): number {
+    return this.telemetry.readFileFailures;
+  }
+
+  resetReadFileFailureCount(): void {
+    this.telemetry.readFileFailures = 0;
   }
 
   async getReadCacheReplay(

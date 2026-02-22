@@ -429,7 +429,7 @@ function buildToolsSchema(opts?: {
       type: 'function',
       function: {
         name: 'apply_patch',
-        description: 'Apply unified diff patch (multi-file).',
+        description: 'Apply unified diff patch (multi-file).\n\nUSAGE EXAMPLE:\n  apply_patch({\n    patch: "--- a/src/file.ts\\n+++ b/src/file.ts\\n@@ -1,5 +1,5 @@\\n-old text\\n+new text\\n",\n    files: ["src/file.ts"]\n  })\n\nThe patch must be a valid unified diff format. Use strip=1 if paths include directory prefixes.\nFiles listed must match the paths in the diff.',
         parameters: obj(
           {
             patch: str(),
@@ -444,7 +444,7 @@ function buildToolsSchema(opts?: {
       type: 'function',
       function: {
         name: 'edit_range',
-        description: 'Replace a line range in a file.',
+        description: 'Replace a line range in a file.\n\nUSAGE EXAMPLE:\n  edit_range({\n    path: "src/file.ts",\n    start_line: 10,\n    end_line: 15,\n    replacement: "new content\\nmore content"\n  })\n\n- start_line and end_line are 1-indexed (first line is 1, not 0)\n- To delete lines, set replacement to empty string ""\n- To insert at a position, set start_line and end_line to the same value\n- The replacement text replaces the entire range inclusive',
         parameters: obj(
           {
             path: str(),
@@ -3609,6 +3609,12 @@ export async function createSession(opts: {
               toolCallId: callId,
               result: content,
             });
+
+            // Reset failure counter on successful read_file
+            if (name === 'read_file') {
+              toolLoopGuard.resetReadFileFailureCount();
+            }
+
             return { id: callId, content };
           };
 
@@ -3683,7 +3689,17 @@ export async function createSession(opts: {
               error: msg,
             });
 
-            return { id: callId, content: toolErrorContent };
+            // Inject hint after 2 consecutive read_file failures
+            let resultContent = toolErrorContent;
+            if (tc.function.name === 'read_file') {
+              const failureCount = toolLoopGuard.getReadFileFailureCount();
+              if (failureCount >= 2) {
+                resultContent += `\n\n[WARNING: read_file has failed ${failureCount} times consecutively. Try using \`sed\` and the \`edit_range\` tool; if those don't work, create a temporary file with the full contents and save it. Then remove the existing file and rename the temporary file, to bypass edit_file failing.]`;
+                toolLoopGuard.resetReadFileFailureCount();
+              }
+            }
+
+            return { id: callId, content: resultContent };
           };
 
           // ── Anti-scan guardrails (§ read budget, dir scan, same-search) ──
