@@ -503,6 +503,17 @@ export async function loadConfig(opts: {
   if (typeof merged.tool_loop_detection.global_circuit_breaker_threshold === 'number') {
     merged.tool_loop_detection.global_circuit_breaker_threshold = Math.max(4, Math.floor(merged.tool_loop_detection.global_circuit_breaker_threshold));
   }
+  // Ensure threshold ordering: warning < critical < circuit_breaker
+  if (typeof merged.tool_loop_detection.warning_threshold === 'number' &&
+      typeof merged.tool_loop_detection.critical_threshold === 'number' &&
+      merged.tool_loop_detection.warning_threshold >= merged.tool_loop_detection.critical_threshold) {
+    merged.tool_loop_detection.critical_threshold = merged.tool_loop_detection.warning_threshold + 2;
+  }
+  if (typeof merged.tool_loop_detection.critical_threshold === 'number' &&
+      typeof merged.tool_loop_detection.global_circuit_breaker_threshold === 'number' &&
+      merged.tool_loop_detection.critical_threshold >= merged.tool_loop_detection.global_circuit_breaker_threshold) {
+    merged.tool_loop_detection.global_circuit_breaker_threshold = merged.tool_loop_detection.critical_threshold + 2;
+  }
 
   const d = merged.tool_loop_detection.detectors = merged.tool_loop_detection.detectors && typeof merged.tool_loop_detection.detectors === 'object'
     ? merged.tool_loop_detection.detectors

@@ -11,6 +11,7 @@ import {
   stableStringify,
   type ToolLoopConfig,
   type ToolLoopDetectionResult,
+  type ToolCallRecord,
 } from './tool-loop-detection.js';
 
 type ReadCacheEntry = {
@@ -38,6 +39,7 @@ export class ToolLoopGuard {
   private readonly loopState = createToolLoopState();
   private readonly readCache = new Map<string, ReadCacheEntry>();
   private readonly config: Required<ToolLoopConfig>;
+  private readonly recordByCallId = new Map<string, ToolCallRecord>();
 
   constructor(config?: ToolLoopConfig) {
     this.config = {
@@ -104,17 +106,25 @@ export class ToolLoopGuard {
   }
 
   registerCall(toolName: string, args: Record<string, unknown>, toolCallId?: string): void {
-    recordToolCall(this.loopState, toolName, args, toolCallId, this.config);
+    const rec = recordToolCall(this.loopState, toolName, args, toolCallId, this.config);
+    if (toolCallId) {
+      this.recordByCallId.set(toolCallId, rec);
+    }
   }
 
   registerOutcome(toolName: string, args: Record<string, unknown>, outcome: { toolCallId?: string; result?: unknown; error?: unknown }): void {
+    const record = outcome.toolCallId ? this.recordByCallId.get(outcome.toolCallId) : undefined;
     recordToolCallOutcome(this.loopState, {
       toolName,
       toolParams: args,
       toolCallId: outcome.toolCallId,
       result: outcome.result,
       error: outcome.error,
-    });
+    }, record);
+    // Clean up the record reference after outcome is recorded
+    if (outcome.toolCallId) {
+      this.recordByCallId.delete(outcome.toolCallId);
+    }
   }
 
   getStats() {

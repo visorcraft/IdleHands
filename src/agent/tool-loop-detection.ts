@@ -112,6 +112,13 @@ function hashToolOutcome(result?: unknown, error?: unknown): string {
   }
 
   const raw = typeof result === 'string' ? result : JSON.stringify(result ?? '');
+  // For large outputs, hash prefix + length to avoid expensive full hashing
+  // This still detects "same outcome" reliably for loop detection purposes
+  if (raw.length > 4096) {
+    const prefix = raw.slice(0, 2048);
+    const suffix = raw.slice(-1024);
+    return `ok:${sha256(`${prefix}...${suffix}|len:${raw.length}`)}`;
+  }
   return `ok:${sha256(raw ?? '')}`;
 }
 
@@ -162,20 +169,28 @@ export function recordToolCallOutcome(
     result?: unknown;
     error?: unknown;
   },
+  record?: ToolCallRecord,
 ): void {
-  const { signature } = hashToolCall(args.toolName, args.toolParams);
   const outHash = hashToolOutcome(args.result, args.error);
 
-  for (let i = state.history.length - 1; i >= 0; i--) {
-    const rec = state.history[i];
-    if (rec.signature !== signature) continue;
-    if (args.toolCallId && rec.toolCallId && rec.toolCallId !== args.toolCallId) continue;
-    if (!rec.resultHash) {
-      rec.resultHash = outHash;
-      break;
+  // If caller passed the record from recordToolCall, use it directly
+  if (record && !record.resultHash) {
+    record.resultHash = outHash;
+  } else {
+    // Fallback: search backwards for matching record without outcome
+    const { signature } = hashToolCall(args.toolName, args.toolParams);
+    for (let i = state.history.length - 1; i >= 0; i--) {
+      const rec = state.history[i];
+      if (rec.signature !== signature) continue;
+      if (args.toolCallId && rec.toolCallId && rec.toolCallId !== args.toolCallId) continue;
+      if (!rec.resultHash) {
+        rec.resultHash = outHash;
+        break;
+      }
     }
   }
 
+  const { signature } = hashToolCall(args.toolName, args.toolParams);
   const key = `${signature}|${outHash}`;
   state.byOutcomeKey.set(key, (state.byOutcomeKey.get(key) ?? 0) + 1);
 }
@@ -227,7 +242,15 @@ export function detectToolCallLoop(
   if (cfg.detectors.pingPong && state.history.length >= 4) {
     const tail = state.history.slice(-4);
     const [a, b, c, d] = tail;
+    // Ping-pong: A→B→A→B with same outcomes each time
+    // But only flag if at least one is a read-only tool (avoid false positives on legitimate edit patterns)
+    const readOnlyTools = new Set(['read_file', 'read_files', 'list_dir', 'search_files', 'exec']);
+    const isAReadOnly = readOnlyTools.has(a.toolName);
+    const isBReadOnly = readOnlyTools.has(b.toolName);
+    const hasReadOnly = isAReadOnly || isBReadOnly;
+
     if (
+      hasReadOnly &&
       a.signature === c.signature &&
       b.signature === d.signature &&
       a.signature !== b.signature &&
