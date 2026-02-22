@@ -162,10 +162,15 @@ describe('write_file', () => {
       requireDirPinForMutations: true,
       dirPinned: true,
     } as any;
-    const outside = '/tmp/idlehands-any-root-write.txt';
-    await write_file(globalCtx, { path: outside, content: 'ok' });
-    const got = await fs.readFile(outside, 'utf8');
-    assert.equal(got, 'ok');
+    const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), 'idlehands-any-root-'));
+    const outside = path.join(outsideDir, 'write.txt');
+    try {
+      await write_file(globalCtx, { path: outside, content: 'ok' });
+      const got = await fs.readFile(outside, 'utf8');
+      assert.equal(got, 'ok');
+    } finally {
+      await fs.rm(outsideDir, { recursive: true, force: true }).catch(() => {});
+    }
   });
 });
 
