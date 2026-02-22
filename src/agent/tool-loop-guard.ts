@@ -80,6 +80,7 @@ export class ToolLoopGuard {
     for (const tc of toolCalls) {
       const toolName = tc.function?.name ?? '';
       const callId = tc.id ?? `${toolName}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+      if (!tc.id) tc.id = callId;
       const args = this.parseArgs(tc.function?.arguments ?? '{}');
       const sig = this.computeSignature(toolName, args);
 
