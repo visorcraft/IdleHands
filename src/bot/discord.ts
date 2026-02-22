@@ -1473,7 +1473,15 @@ When you escalate, your request will be re-run on a more capable model.`;
     }
 
     console.error(`[bot:discord] ${msg.author.id}: ${content.slice(0, 50)}${content.length > 50 ? '…' : ''}`);
-    await processMessage(managed, msg);
+
+    // Do not await long-running turns here.
+    // Keeping the message handler non-blocking ensures control commands like /cancel
+    // are handled immediately while a generation is in flight.
+    void processMessage(managed, msg).catch(async (e: any) => {
+      const errMsg = e?.message ?? String(e);
+      console.error(`[bot:discord] processMessage failed for ${msg.author.id}: ${errMsg}`);
+      await sendUserVisible(msg, `⚠️ Bot error: ${errMsg.length > 300 ? errMsg.slice(0, 297) + '...' : errMsg}`).catch(() => {});
+    });
   });
 
   const DISCORD_RATE_LIMIT_MS = 15_000;

@@ -68,7 +68,7 @@ export class TuiController {
       this.tabIndex = -1;
       const names = allCommandNames();
       // Add TUI-specific commands that aren't in the registry
-      const extra = ['/quit', '/exit', '/clear', '/help', '/branches', '/steps', '/settings', '/hooks'];
+      const extra = ['/quit', '/exit', '/clear', '/cancel', '/help', '/branches', '/steps', '/settings', '/hooks'];
       const all = [...new Set([...names, ...extra])];
       this.tabCandidates = all.filter(n => n.toLowerCase().startsWith(prefix)).sort();
     }
@@ -372,6 +372,16 @@ export class TuiController {
       if (this.cleanupFn) await this.cleanupFn();
       return true;
     }
+    if (head === '/cancel') {
+      if (this.inFlight && this.aborter) {
+        try { this.aborter.abort(); } catch {}
+        try { this.session?.cancel(); } catch {}
+        this.dispatch({ type: 'ALERT_PUSH', id: `cancel_${Date.now()}`, level: 'warn', text: '⏹ Cancel requested.' });
+      } else {
+        this.dispatch({ type: 'ALERT_PUSH', id: `cancel_${Date.now()}`, level: 'info', text: 'Nothing to cancel.' });
+      }
+      return true;
+    }
     if (head === "/clear") {
       this.state = { ...this.state, transcript: [], toolEvents: [], alerts: [] };
       renderTui(this.state);
@@ -382,8 +392,8 @@ export class TuiController {
       this.pushSystemMessage(
         `Commands: ${cmds}\n` +
         `Shell: !<cmd> to run, !! to inject output\n` +
-        `TUI: /branches [browse|checkout|merge], /steps, /settings, /hooks [status|errors|slow|plugins]\n` +
-        `Hotkeys: Ctrl+G step navigator, Ctrl+O quick settings`
+        `TUI: /cancel (stop active run), /branches [browse|checkout|merge], /steps, /settings, /hooks [status|errors|slow|plugins]\n` +
+        `Hotkeys: Ctrl+C cancel in-flight run, Ctrl+G step navigator, Ctrl+O quick settings`
       );
       return true;
     }
@@ -441,14 +451,25 @@ export class TuiController {
   }
 
   private async submitInput(text: string): Promise<void> {
-    if (!this.session || this.inFlight) return;
+    if (!this.session) return;
     const trimmed = text.trim();
     if (!trimmed) return;
 
-    // Slash commands: route through registry instead of agent
+    // Slash commands: route through registry instead of agent.
+    // While a generation is in-flight, only /cancel is accepted immediately.
     if (trimmed.startsWith("/")) {
+      const head = (splitTokens(trimmed)[0] || '').toLowerCase();
+      if (this.inFlight && head !== '/cancel') {
+        this.dispatch({ type: 'ALERT_PUSH', id: `busy_${Date.now()}`, level: 'warn', text: 'Generation in progress. Use /cancel first.' });
+        return;
+      }
       this.dispatch({ type: "USER_INPUT_SUBMIT", text: trimmed });
       await this.handleSlashCommand(trimmed);
+      return;
+    }
+
+    if (this.inFlight) {
+      this.dispatch({ type: 'ALERT_PUSH', id: `busy_${Date.now()}`, level: 'warn', text: 'Generation in progress. Use /cancel first.' });
       return;
     }
 
