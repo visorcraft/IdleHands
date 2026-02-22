@@ -26,7 +26,7 @@ import {
   sanitizePathsInMessage,
   digestToolResult,
 } from './agent/formatting.js';
-import { parseToolCallsFromContent, getMissingRequiredParams, getArgValidationIssues, stripMarkdownFences } from './agent/tool-calls.js';
+import { parseToolCallsFromContent, getMissingRequiredParams, getArgValidationIssues, stripMarkdownFences, parseJsonArgs } from './agent/tool-calls.js';
 import { ToolError, ValidationError } from './tools/tool-error.js';
 import { ToolLoopGuard } from './agent/tool-loop-guard.js';
 export { parseToolCallsFromContent };
@@ -2918,7 +2918,7 @@ export async function createSession(opts: {
             for (const tc of toolCallsArr) {
               const n = tc.function?.name ?? '';
               let argCount = 0;
-              try { argCount = Object.keys(JSON.parse(tc.function?.arguments ?? '{}')).length; } catch { }
+              try { argCount = Object.keys(parseJsonArgs(tc.function?.arguments ?? '{}')).length; } catch { }
               if (!byName.has(n)) byName.set(n, []);
               byName.get(n)!.push({ tc, argCount });
             }
@@ -3272,7 +3272,7 @@ export async function createSession(opts: {
 
             let args: any;
             try {
-              args = rawArgs ? JSON.parse(rawArgs) : {};
+              args = rawArgs ? parseJsonArgs(rawArgs) : {};
             } catch {
               // Respect harness retry limit for malformed JSON (§4i)
               malformedCount++;
@@ -3654,7 +3654,7 @@ export async function createSession(opts: {
               if (blockedMatch) {
                 const reason = (blockedMatch[1] || blockedMatch[2] || 'blocked command').trim();
                 let parsedArgs: any = {};
-                try { parsedArgs = JSON.parse(tc.function.arguments ?? '{}'); } catch { }
+                try { parsedArgs = parseJsonArgs(tc.function.arguments ?? '{}'); } catch { }
                 const cmd = tc.function.name === 'exec'
                   ? String(parsedArgs?.command ?? '')
                   : String(parsedArgs?.task ?? '');
@@ -3688,7 +3688,7 @@ export async function createSession(opts: {
 
             let parsedArgs: Record<string, unknown> = {};
             try {
-              const parsed = JSON.parse(tc.function.arguments ?? '{}');
+              const parsed = parseJsonArgs(tc.function.arguments ?? '{}');
               if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
                 parsedArgs = parsed as Record<string, unknown>;
               }

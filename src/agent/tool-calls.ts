@@ -9,7 +9,7 @@ export type ArgValidationIssue = {
 /** @internal Exported for testing. Parses tool calls from model content when tool_calls array is empty. */
 export function parseToolCallsFromContent(content: string): ToolCall[] | null {
   // Fallback parser: if model printed JSON tool_calls in content.
-  const trimmed = content.trim();
+  const trimmed = stripMarkdownFences(content.trim()).trim();
 
   const tryParse = (s: string) => {
     try {
@@ -531,31 +531,71 @@ export function stripMarkdownFences(s: string): string {
 }
 
 function parseFunctionTagToolCalls(content: string): ToolCall[] | null {
-  const m = content.match(/<function=([\w.-]+)>([\s\S]*?)<\/function>/i);
-  if (!m) return null;
+  const matches = [...content.matchAll(/<function=([\w.-]+)>([\s\S]*?)<\/function>/gi)];
+  if (!matches.length) return null;
 
-  const name = m[1];
-  const body = (m[2] ?? '').trim();
+  const calls: ToolCall[] = [];
+  for (let i = 0; i < matches.length; i++) {
+    const m = matches[i];
+    const name = m[1];
+    const body = (m[2] ?? '').trim();
 
-  // If body contains JSON object, use it as arguments; else empty object.
-  let args = '{}';
-  const jsonStart = body.indexOf('{');
-  const jsonEnd = body.lastIndexOf('}');
-  if (jsonStart !== -1 && jsonEnd > jsonStart) {
-    const sub = body.slice(jsonStart, jsonEnd + 1);
-    try {
-      JSON.parse(sub);
-      args = sub;
-    } catch {
-      // keep {}
+    // If body contains JSON object, use it as arguments; else empty object.
+    let args = '{}';
+    const jsonStart = body.indexOf('{');
+    const jsonEnd = body.lastIndexOf('}');
+    if (jsonStart !== -1 && jsonEnd > jsonStart) {
+      const sub = body.slice(jsonStart, jsonEnd + 1);
+      try {
+        JSON.parse(sub);
+        args = sub;
+      } catch {
+        // keep {}
+      }
     }
-  }
 
-  return [
-    {
-      id: 'call_0',
+    calls.push({
+      id: `call_${i}`,
       type: 'function',
       function: { name, arguments: args },
-    },
-  ];
+    });
+  }
+
+  return calls;
+}
+
+/** 
+ * robustly parse JSON from raw argument strings, applying basic heuristic repairs
+ * for common model hallucinations such as trailing commas and unescaped newlines.
+ */
+export function parseJsonArgs(raw: string): any {
+  if (!raw || !raw.trim()) return {};
+
+  let cleaned = stripMarkdownFences(raw).trim();
+
+  try {
+    return JSON.parse(cleaned);
+  } catch (err) {
+    // Attempt basic repairs
+    let repaired = cleaned;
+
+    // 1. Remove trailing commas
+    repaired = repaired.replace(/,\s*([}\]])/g, '$1');
+
+    // 2. Unescape unescaped newlines inside strings (simple heuristic)
+    // This is a naive regex replacing raw \n with \\n when it appears between quotes.
+    // It is not perfect for JSON but handles the common case where models forget to escape a multiline string.
+    repaired = repaired.replace(/(?<="[^"]*)\n(?=[^"]*")/g, '\\n');
+
+    // 3. Unescaped tabs inside strings
+    repaired = repaired.replace(/(?<="[^"]*)\t(?=[^"]*")/g, '\\t');
+
+    // Ensure if we had a single literal string wrapped in quotes but containing unescaped breaks
+    try {
+      return JSON.parse(repaired);
+    } catch {
+      // Re-throw the original error if repairs fail to keep validation errors cleanly reported
+      throw err;
+    }
+  }
 }
