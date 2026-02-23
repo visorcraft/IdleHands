@@ -8,3 +8,4 @@ AGENTS.md
 docs/node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
+.release/*.tar.gz

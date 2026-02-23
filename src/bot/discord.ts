@@ -787,7 +787,7 @@ When you escalate, your request will be re-run on a more capable model.`;
             option.setName('model').setDescription('Model name or "next"').setRequired(false)
           ),
         new SlashCommandBuilder().setName('deescalate').setDescription('Return to base model'),
-        new SlashCommandBuilder().setName('restart-bot').setDescription('Restart the bot service'),
+        new SlashCommandBuilder().setName('restart_bot').setDescription('Restart the bot service'),
       ].map((cmd) => cmd.toJSON());
 
       const rest = new REST({ version: '10' }).setToken(token);
@@ -863,7 +863,7 @@ When you escalate, your request will be re-run on a more capable model.`;
           '/agents — List all configured agents',
           '/cancel — Abort running task',
           '/reset — Full session reset',
-          '/restart-bot — Restart the bot service',
+          '/restart_bot — Restart the bot service',
         ];
         await interaction.reply(lines.join('\n'));
         break;
@@ -1029,7 +1029,7 @@ When you escalate, your request will be re-run on a more capable model.`;
         await interaction.reply(`✅ Returned to base model: \`${baseModel}\``);
         break;
       }
-      case 'restart-bot': {
+      case 'restart_bot': {
         const { spawn } = await import('node:child_process');
         await interaction.reply('🔄 Restarting idlehands-bot service...');
         spawn('systemctl', ['--user', 'restart', 'idlehands-bot'], {

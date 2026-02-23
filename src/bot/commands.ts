@@ -93,7 +93,7 @@ export async function handleHelp({ ctx }: CommandContext): Promise<void> {
     '/anton status — Show task runner progress',
     '/anton stop — Stop task runner',
     '/anton last — Show last run results',
-    '/restart-bot — Restart the bot service',
+    '/restart_bot — Restart the bot service',
     '',
     'Or just send any text as a coding task.',
   ];
