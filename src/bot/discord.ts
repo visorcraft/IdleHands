@@ -1187,6 +1187,7 @@ When you escalate, your request will be re-run on a more capable model.`;
         '/escalate [model] — Use larger model for next message',
         '/deescalate — Return to base model',
         '/dir [path] — Get/set working directory',
+        '/pin — Pin current working directory',
         '/model — Show current model',
         '/approval [mode] — Get/set approval mode',
         '/mode [code|sys] — Get/set mode',
@@ -1269,6 +1270,39 @@ When you escalate, your request will be re-run on a more capable model.`;
         () => { }
       );
       return;
+    }
+
+    if (content === '/pin' || content.startsWith('/pin ')) {
+      const arg = content.slice('/pin'.length).trim();
+      const currentDir = managed.config.dir || defaultDir;
+      if (!arg) {
+        const resolvedDir = path.resolve(expandHome(currentDir));
+        if (!isPathAllowed(resolvedDir, managed.allowedDirs)) {
+          await sendUserVisible(
+            msg,
+            `❌ Directory not allowed. Allowed roots: ${managed.allowedDirs.map((d) => `\`${d}\``).join(', ')}`
+          ).catch(() => { });
+          return;
+        }
+
+        const repoCandidates = await detectRepoCandidates(resolvedDir, managed.allowedDirs).catch(
+          () => managed.repoCandidates
+        );
+        const cfg: IdlehandsConfig = {
+          ...managed.config,
+          dir: resolvedDir,
+          allowed_write_roots: managed.allowedDirs,
+          dir_pinned: true,
+          repo_candidates: repoCandidates,
+        };
+        await recreateSession(managed, cfg);
+        managed.dirPinned = true;
+        managed.repoCandidates = repoCandidates;
+        await sendUserVisible(msg, `✅ Working directory pinned to \`${resolvedDir}\``).catch(
+          () => { }
+        );
+        return;
+      }
     }
 
     if (content === '/approval' || content.startsWith('/approval ')) {

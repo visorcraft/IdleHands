@@ -83,8 +83,9 @@ export async function handleHelp({ ctx }: CommandContext): Promise<void> {
     '/agents — List all configured agents',
     '/escalate [model] — Use larger model for next message',
     '/deescalate — Return to base model',
-    '/dir [path] — Get/set working directory',
-    '/model — Show current model',
+     '/dir [path] — Get/set working directory',
+     '/pin — Pin current working directory',
+     '/model — Show current model',
     '/approval [mode] — Get/set approval mode',
     '/mode [code|sys] — Get/set mode',
     '/compact — Trigger context compaction',
@@ -231,6 +232,35 @@ export async function handleDir({ ctx, sessions }: CommandContext): Promise<void
     const updated = sessions.get(chatId);
     const resolved = updated?.workingDir ?? arg;
     await ctx.reply(`✅ Working directory pinned to <code>${escapeHtml(resolved)}</code>`, {
+      parse_mode: 'HTML',
+    });
+  } else {
+    await ctx.reply(
+      '❌ Directory not allowed or session error. Check bot.telegram.allowed_dirs / persona.allowed_dirs.'
+    );
+  }
+}
+
+export async function handlePin({ ctx, sessions }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  const managed = sessions.get(chatId);
+  if (!managed) {
+    await ctx.reply('No active session. Send a message to start one.');
+    return;
+  }
+
+  const currentDir = managed.workingDir;
+  if (!currentDir) {
+    await ctx.reply('No working directory set. Use /dir to set one first.');
+    return;
+  }
+
+  // Re-use setDir logic to pin the current directory
+  const ok = await sessions.setDir(chatId, currentDir);
+  if (ok) {
+    await ctx.reply(`✅ Working directory pinned to <code>${escapeHtml(currentDir)}</code>`, {
       parse_mode: 'HTML',
     });
   } else {
