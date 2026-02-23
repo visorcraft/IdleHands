@@ -1,3 +1,4 @@
+import { truncate } from '../shared/strings.js';
 import type { ToolCallEvent, ToolResultEvent } from '../types.js';
 
 import type { TuiEvent } from './events.js';
@@ -10,10 +11,6 @@ export interface AgentBridgeHooks {
   onStreamDone(id: string): void;
   onToolCall(call: ToolCallEvent): void;
   onToolResult(result: ToolResultEvent): void;
-}
-
-function truncate(s: string, n: number): string {
-  return s.length <= n ? s : `${s.slice(0, Math.max(0, n - 1))}…`;
 }
 
 function summarizeArgs(args: Record<string, unknown>): string {

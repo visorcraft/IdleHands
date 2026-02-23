@@ -31,10 +31,6 @@ export function irLine(text: string, style: IRSpan['style'] = 'plain'): IRLine {
   return { spans: [{ text: String(text ?? ''), style }] };
 }
 
-export function irJoinLines(lines: string[], style: IRSpan['style'] = 'plain'): IRLine[] {
-  return (lines ?? []).map((l) => irLine(l, style));
-}
-
 export function irKvItem(
   key: string,
   value: string,

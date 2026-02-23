@@ -51,147 +51,10 @@ import {
 } from './format.js';
 import { SessionManager, type ManagedSession } from './session-manager.js';
 import { isToolLoopBreak, formatAutoContinueNotice, AUTO_CONTINUE_PROMPT } from './auto-continue.js';
+import { registerRuntimeCommands, handleModelSelectCallback } from './telegram-commands.js';
 
-// ---------------------------------------------------------------------------
-// Escalation helpers (mirrored from discord.ts)
-// ---------------------------------------------------------------------------
-
-/**
- * Check if the model response contains an escalation request.
- * Returns { escalate: true, reason: string } if escalation marker found at start of response.
- */
-function detectEscalation(text: string): { escalate: boolean; reason?: string } {
-  const trimmed = text.trim();
-  const match = trimmed.match(/^\[ESCALATE:\s*([^\]]+)\]/i);
-  if (match) {
-    return { escalate: true, reason: match[1].trim() };
-  }
-  return { escalate: false };
-}
-
-/** Keyword presets for common escalation triggers */
-const KEYWORD_PRESETS: Record<string, string[]> = {
-  coding: [
-    'build',
-    'implement',
-    'create',
-    'develop',
-    'architect',
-    'refactor',
-    'debug',
-    'fix',
-    'code',
-    'program',
-    'write',
-  ],
-  planning: ['plan', 'design', 'roadmap', 'strategy', 'analyze', 'research', 'evaluate', 'compare'],
-  complex: [
-    'full',
-    'complete',
-    'comprehensive',
-    'multi-step',
-    'integrate',
-    'migration',
-    'overhaul',
-    'entire',
-    'whole',
-  ],
-};
-
-/**
- * Check if text matches a set of keywords.
- * Returns matched keywords or empty array if none match.
- */
-function matchKeywords(text: string, keywords: string[], presets?: string[]): string[] {
-  const allKeywords: string[] = [...keywords];
-
-  // Add preset keywords
-  if (presets) {
-    for (const preset of presets) {
-      const presetWords = KEYWORD_PRESETS[preset];
-      if (presetWords) allKeywords.push(...presetWords);
-    }
-  }
-
-  if (allKeywords.length === 0) return [];
-
-  const lowerText = text.toLowerCase();
-  const matched: string[] = [];
-
-  for (const kw of allKeywords) {
-    if (kw.startsWith('re:')) {
-      // Regex pattern
-      try {
-        const regex = new RegExp(kw.slice(3), 'i');
-        if (regex.test(text)) matched.push(kw);
-      } catch {
-        // Invalid regex, skip
-      }
-    } else {
-      // Word boundary match (case-insensitive)
-      const wordRegex = new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
-      if (wordRegex.test(lowerText)) matched.push(kw);
-    }
-  }
-
-  return matched;
-}
-
-/**
- * Check if user message matches keyword escalation triggers.
- * Returns { escalate: true, tier: number, reason: string } if keywords match.
- * Tier indicates which model index to escalate to (highest matching tier wins).
- */
-function checkKeywordEscalation(
-  text: string,
-  escalation: ModelEscalation | undefined
-): { escalate: boolean; tier?: number; reason?: string } {
-  if (!escalation) return { escalate: false };
-
-  // Tiered keyword escalation
-  if (escalation.tiers && escalation.tiers.length > 0) {
-    let highestTier = -1;
-    let highestReason = '';
-
-    // Check each tier, highest matching tier wins
-    for (let i = 0; i < escalation.tiers.length; i++) {
-      const tier = escalation.tiers[i];
-      const matched = matchKeywords(
-        text,
-        tier.keywords || [],
-        tier.keyword_presets as string[] | undefined
-      );
-
-      if (matched.length > 0 && i > highestTier) {
-        highestTier = i;
-        highestReason = `tier ${i} keyword match: ${matched.slice(0, 3).join(', ')}${matched.length > 3 ? '...' : ''}`;
-      }
-    }
-
-    if (highestTier >= 0) {
-      return { escalate: true, tier: highestTier, reason: highestReason };
-    }
-
-    return { escalate: false };
-  }
-
-  // Legacy flat keywords (treated as tier 0)
-  const matched = matchKeywords(
-    text,
-    escalation.keywords || [],
-    escalation.keyword_presets as string[] | undefined
-  );
-
-  if (matched.length > 0) {
-    return {
-      escalate: true,
-      tier: 0,
-      reason: `keyword match: ${matched.slice(0, 3).join(', ')}${matched.length > 3 ? '...' : ''}`,
-    };
-  }
-
-  return { escalate: false };
-}
+// Escalation helpers shared with Discord bot
+import { detectEscalation, checkKeywordEscalation } from './discord-routing.js';
 
 // ---------------------------------------------------------------------------
 // Streaming message helper
@@ -542,224 +405,19 @@ export async function startTelegramBot(
   bot.command('restart_bot', (ctx) => handleRestartBot(cmdCtx(ctx)));
   bot.command('git_status', (ctx) => handleGitStatus(cmdCtx(ctx)));
 
-  bot.command('hosts', async (ctx) => {
-    try {
-      const { loadRuntimes, redactConfig } = await import('../runtime/store.js');
-      const config = await loadRuntimes();
-      const redacted = redactConfig(config);
-      if (!redacted.hosts.length) {
-        await ctx.reply('No hosts configured. Use `idlehands hosts add` in CLI.');
-        return;
-      }
-      const lines = redacted.hosts.map(
-        (h) =>
-          `${h.enabled ? '🟢' : '🔴'} *${h.display_name}* (\`${h.id}\`)\n  Transport: ${h.transport}`
-      );
-      await ctx.reply(lines.join('\n\n'), { parse_mode: 'Markdown' });
-    } catch (e: any) {
-      await ctx.reply(`❌ Failed to load hosts: ${e?.message ?? String(e)}`);
-    }
-  });
-
-  bot.command('backends', async (ctx) => {
-    try {
-      const { loadRuntimes, redactConfig } = await import('../runtime/store.js');
-      const config = await loadRuntimes();
-      const redacted = redactConfig(config);
-      if (!redacted.backends.length) {
-        await ctx.reply('No backends configured. Use `idlehands backends add` in CLI.');
-        return;
-      }
-      const lines = redacted.backends.map(
-        (b) => `${b.enabled ? '🟢' : '🔴'} *${b.display_name}* (\`${b.id}\`)\n  Type: ${b.type}`
-      );
-      await ctx.reply(lines.join('\n\n'), { parse_mode: 'Markdown' });
-    } catch (e: any) {
-      await ctx.reply(`❌ Failed to load backends: ${e?.message ?? String(e)}`);
-    }
-  });
-
-  const handleRuntimeModels = async (ctx: any) => {
-    try {
-      const { loadRuntimes } = await import('../runtime/store.js');
-      const config = await loadRuntimes();
-      if (!config.models.length) {
-        await ctx.reply('No runtime models configured.');
-        return;
-      }
-
-      // Show enabled models with inline buttons for selection
-      const enabledModels = config.models.filter((m: any) => m.enabled);
-      if (!enabledModels.length) {
-        await ctx.reply('No enabled runtime models. Use `idlehands models enable <id>` in CLI.');
-        return;
-      }
-
-      // Create inline keyboard with model buttons (max 8 per row, 2 columns)
-      const buttons = enabledModels.map((m: any) => [{
-        text: `🟢 ${m.display_name}`,
-        callback_data: `model_select:${m.id}`,
-      }]);
-
-      // Split into rows of 2
-      const keyboard: any[][] = [];
-      for (let i = 0; i < buttons.length; i += 2) {
-        const row = buttons.slice(i, i + 2).flat();
-        keyboard.push(row);
-      }
-
-      await ctx.reply('📋 *Select a model to switch to:*', {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: keyboard },
-      });
-    } catch (e: any) {
-      await ctx.reply(`❌ Failed to load runtime models: ${e?.message ?? String(e)}`);
-    }
-  };
-
-  // Preferred name: /models (keep /rtmodels as backward-compatible alias)
-  bot.command('models', handleRuntimeModels);
-  bot.command('rtmodels', handleRuntimeModels);
-
-  bot.command('rtstatus', async (ctx) => {
-    try {
-      const { loadActiveRuntime } = await import('../runtime/executor.js');
-      const active = await loadActiveRuntime();
-      if (!active) {
-        await ctx.reply('No active runtime.');
-        return;
-      }
-
-      const lines = [
-        '*Active Runtime*',
-        `Model: \`${active.modelId}\``,
-        `Backend: \`${active.backendId ?? 'none'}\``,
-        `Hosts: ${active.hostIds.map((id) => `\`${id}\``).join(', ') || 'none'}`,
-        `Healthy: ${active.healthy ? '✅ yes' : '❌ no'}`,
-        `Endpoint: \`${active.endpoint ?? 'unknown'}\``,
-        `Started: \`${active.startedAt}\``,
-      ];
-      await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
-    } catch (e: any) {
-      await ctx.reply(`❌ Failed to read runtime status: ${e?.message ?? String(e)}`);
-    }
-  });
-
-  bot.command('switch', async (ctx) => {
-    try {
-      const modelId = ctx.match?.trim();
-      if (!modelId) {
-        await ctx.reply('Usage: /switch <model-id>');
-        return;
-      }
-
-      const { plan } = await import('../runtime/planner.js');
-      const { execute, loadActiveRuntime } = await import('../runtime/executor.js');
-      const { loadRuntimes } = await import('../runtime/store.js');
-
-      const rtConfig = await loadRuntimes();
-      const active = await loadActiveRuntime();
-      const result = plan({ modelId, mode: 'live' }, rtConfig, active);
-
-      if (!result.ok) {
-        await ctx.reply(`❌ Plan failed: ${result.reason}`);
-        return;
-      }
-
-      if (result.reuse) {
-        await ctx.reply('✅ Runtime already active and healthy.');
-        return;
-      }
-
-      const statusMsg = await ctx.reply(`⏳ Switching to *${result.model.display_name}*...`, {
-        parse_mode: 'Markdown',
-      });
-
-      const execResult = await execute(result, {
-        onStep: async (step, status) => {
-          if (status === 'done') {
-            await ctx.api
-              .editMessageText(ctx.chat.id, statusMsg.message_id, `⏳ ${step.description}... ✓`)
-              .catch(() => { });
-          }
-        },
-        confirm: async (prompt) => {
-          await ctx.reply(`⚠️ ${prompt}\nAuto-approving for bot context.`);
-          return true;
-        },
-      });
-
-      if (execResult.ok) {
-        await ctx.reply(`✅ Switched to *${result.model.display_name}*`, {
-          parse_mode: 'Markdown',
-        });
-      } else {
-        await ctx.reply(`❌ Switch failed: ${execResult.error || 'unknown error'}`);
-      }
-    } catch (e: any) {
-      await ctx.reply(`❌ Switch failed: ${e?.message ?? String(e)}`);
-    }
-  });
+  // Runtime command handlers (hosts, backends, models, rtstatus, switch)
+  registerRuntimeCommands(bot);
 
   // ---------------------------------------------------------------------------
   // Callback query handler (inline button presses for confirmations + model selection)
   // ---------------------------------------------------------------------------
 
   bot.on('callback_query:data', async (ctx) => {
-    const data = ctx.callbackQuery.data;
     const chatId = ctx.chat?.id;
     if (!chatId) return;
 
-    // Handle model selection callback
-    if (data.startsWith('model_select:')) {
-      const modelId = data.slice('model_select:'.length);
-      await ctx.answerCallbackQuery({ text: `Switching to ${modelId}...` }).catch(() => {});
-
-      try {
-        const { plan } = await import('../runtime/planner.js');
-        const { execute, loadActiveRuntime } = await import('../runtime/executor.js');
-        const { loadRuntimes } = await import('../runtime/store.js');
-
-        const rtConfig = await loadRuntimes();
-        const active = await loadActiveRuntime();
-        const result = plan({ modelId, mode: 'live' }, rtConfig, active);
-
-        if (!result.ok) {
-          await ctx.editMessageText(`❌ Plan failed: ${result.reason}`).catch(() => {});
-          return;
-        }
-
-        if (result.reuse) {
-          await ctx.editMessageText(`✅ Already using *${result.model.display_name}*`, {
-            parse_mode: 'Markdown',
-          }).catch(() => {});
-          return;
-        }
-
-        const execResult = await execute(result, {
-          onStep: async (step, status) => {
-            if (status === 'done') {
-              await ctx.editMessageText(`⏳ ${step.description}... ✓`).catch(() => {});
-            }
-          },
-          confirm: async (prompt) => {
-            await ctx.reply(`⚠️ ${prompt}\nAuto-approving for bot context.`);
-            return true;
-          },
-        });
-
-        if (execResult.ok) {
-          await ctx.editMessageText(`✅ Switched to *${result.model.display_name}*`, {
-            parse_mode: 'Markdown',
-          }).catch(() => {});
-        } else {
-          await ctx.editMessageText(`❌ Switch failed: ${execResult.error || 'unknown error'}`).catch(() => {});
-        }
-      } catch (e: any) {
-        await ctx.editMessageText(`❌ Switch failed: ${e?.message ?? String(e)}`).catch(() => {});
-      }
-      return;
-    }
+    // Handle model selection callback (delegated to telegram-commands)
+    if (await handleModelSelectCallback(ctx)) return;
 
     // Handle confirmation callbacks
     const managed = sessions.get(chatId);
@@ -769,7 +427,7 @@ export async function startTelegramBot(
     }
 
     const provider = managed.confirmProvider as TelegramConfirmProvider;
-    const handled = await provider.handleCallback(data);
+    const handled = await provider.handleCallback(ctx.callbackQuery.data);
     await ctx
       .answerCallbackQuery(handled ? undefined : { text: 'Unknown action.' })
       .catch(() => { });

@@ -4,6 +4,7 @@
  * The controller NEVER builds display strings itself. All formatting happens here.
  */
 
+import { formatDurationMs } from '../shared/format.js';
 import type {
   AntonRunResult,
   AntonProgress,
@@ -14,27 +15,7 @@ import type {
   DetectedCommands,
 } from './types.js';
 
-/**
- * Format duration as human-readable string.
- * e.g. "2m 30s", "45s", "1h 5m"
- */
-function formatDuration(ms: number): string {
-  const sec = Math.round(ms / 1000);
-  if (sec < 60) return `${sec}s`;
-
-  const min = Math.floor(sec / 60);
-  const remainSec = sec % 60;
-  if (min < 60) {
-    return remainSec > 0 ? `${min}m ${remainSec}s` : `${min}m`;
-  }
-
-  const hr = Math.floor(min / 60);
-  const remainMin = min % 60;
-  if (remainMin > 0) {
-    return `${hr}h ${remainMin}m`;
-  }
-  return `${hr}h`;
-}
+const formatDuration = formatDurationMs;
 
 /**
  * Format tokens with k/M suffixes.
