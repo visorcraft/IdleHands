@@ -519,6 +519,11 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           } else if (agentResult.status === 'blocked' || agentResult.status === 'failed') {
             status = agentResult.status;
 
+            if (status === 'blocked') {
+              console.error(
+                `[anton] Task "${currentTask.text.slice(0, 50)}" agent reported blocked: ${agentResult.reason || 'No reason given'}`
+              );
+            }
             if (status === 'failed') {
               console.error(
                 `[anton] Task "${currentTask.text.slice(0, 50)}" agent reported failure: ${agentResult.reason || 'No reason given'}`
