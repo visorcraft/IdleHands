@@ -58,6 +58,8 @@ export interface AntonRunConfig {
   maxRetriesPerTask: number;
   /** Max total iterations across all tasks. */
   maxIterations: number;
+  /** Max iterations per individual task attempt. */
+  taskMaxIterations: number;
   /** Timeout per task attempt in seconds. */
   taskTimeoutSec: number;
   /** Total time budget in seconds. */

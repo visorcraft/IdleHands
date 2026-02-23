@@ -188,6 +188,7 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
     projectDir: cwd,
     maxRetriesPerTask: parsed.maxRetries ?? defaults.max_retries ?? 3,
     maxIterations: parsed.maxIterations ?? defaults.max_iterations ?? 200,
+    taskMaxIterations: defaults.task_max_iterations ?? 50,
     taskTimeoutSec: parsed.taskTimeout ?? defaults.task_timeout_sec ?? 600,
     totalTimeoutSec: parsed.totalTimeout ?? defaults.total_timeout_sec ?? 7200,
     maxTotalTokens: parsed.maxTokens ?? defaults.max_total_tokens ?? Infinity,

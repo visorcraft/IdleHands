@@ -1858,6 +1858,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       projectDir: defaults.project_dir || cwd,
       maxRetriesPerTask: defaults.max_retries ?? 3,
       maxIterations: defaults.max_iterations ?? 200,
+      taskMaxIterations: defaults.task_max_iterations ?? 50,
       taskTimeoutSec: defaults.task_timeout_sec ?? 600,
       totalTimeoutSec: defaults.total_timeout_sec ?? 7200,
       maxTotalTokens: defaults.max_total_tokens ?? Infinity,
