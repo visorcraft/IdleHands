@@ -455,9 +455,22 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
 
           let result: Awaited<ReturnType<AgentSession['ask']>>;
           let recoveredInfra = false;
+          const askHooks = {
+            signal: controller.signal,
+            onToolLoop: (event: { level: string; toolName: string; count: number; message: string }) => {
+              try { progress.onToolLoop?.(currentTask.text, event); } catch { /* best effort */ }
+            },
+            onCompaction: (event: { droppedMessages: number; freedTokens: number; summaryUsed: boolean }) => {
+              try { progress.onCompaction?.(currentTask.text, event); } catch { /* best effort */ }
+            },
+            onTurnEnd: (stats: { turn: number; toolCalls: number }) => {
+              const tokens = session ? (session.usage.prompt + session.usage.completion) : 0;
+              console.error(`[anton:turn] task="${currentTask.text.slice(0, 40)}" turn=${stats.turn} toolCalls=${stats.toolCalls} tokens=${tokens}`);
+            },
+          };
           while (true) {
             try {
-              result = await session.ask(prompt, { signal: controller.signal } as any);
+              result = await session.ask(prompt, askHooks as any);
               break;
             } catch (e) {
               const infraKind = classifyInfraError(e);
@@ -491,6 +504,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
 
           // Parse structured result
           const agentResult = parseAntonResult(result.text);
+          console.error(`[anton:result] task="${currentTask.text.slice(0, 50)}" status=${agentResult.status} reason=${agentResult.reason ?? 'none'} subtasks=${agentResult.subtasks.length} tokens=${tokensUsed} duration=${Math.round(durationMs / 1000)}s`);
           if (isComplexDecompose) {
             console.error(`[anton:debug] decompose result: status=${agentResult.status} subtasks=${agentResult.subtasks.length} reason=${agentResult.reason ?? 'none'}`);
             if (agentResult.status === 'blocked' && agentResult.reason === 'Agent did not emit structured result') {
@@ -570,6 +584,13 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                 }
                 : undefined,
             });
+
+            // Log verification details
+            console.error(`[anton:verify] task="${currentTask.text.slice(0, 50)}" passed=${verification.passed} l1_build=${verification.l1_build ?? 'n/a'} l1_test=${verification.l1_test ?? 'n/a'} l1_lint=${verification.l1_lint ?? 'n/a'} l2_ai=${verification.l2_ai ?? 'n/a'}`);
+            if (verification.l2_reason) {
+              console.error(`[anton:verify] L2 reason: ${verification.l2_reason.slice(0, 200)}`);
+            }
+            try { progress.onVerification?.(currentTask.text, verification); } catch { /* best effort */ }
 
             if (verification.passed) {
               status = 'passed';

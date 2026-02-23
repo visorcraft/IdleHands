@@ -297,6 +297,8 @@ export type IdlehandsConfig = {
     approval_mode?: string;
     verbose?: boolean;
     auto_commit?: boolean;
+    /** Send Discord/Telegram messages for mid-task events (tool loops, compaction, verification). Default: true. */
+    progress_events?: boolean;
   };
 
   // Bot frontends

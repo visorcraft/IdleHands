@@ -239,6 +239,12 @@ export interface AntonProgressCallback {
   onRunComplete(result: AntonRunResult): void;
   onAgentToken?(token: string): void;
   onHeartbeat?(): void;
+  /** Tool loop detected during task execution. */
+  onToolLoop?(taskText: string, event: { level: string; toolName: string; count: number; message: string }): void;
+  /** Auto-compaction occurred during task execution. */
+  onCompaction?(taskText: string, event: { droppedMessages: number; freedTokens: number; summaryUsed: boolean }): void;
+  /** Verification completed for a task attempt. */
+  onVerification?(taskText: string, verification: AntonVerificationResult): void;
 }
 
 // ─── Structured agent result ────────────────────────────────────

@@ -10,6 +10,7 @@ import type {
   AntonTask,
   AntonAttempt,
   AntonTaskFile,
+  AntonVerificationResult,
   DetectedCommands,
 } from './types.js';
 
@@ -169,4 +170,44 @@ export function formatDryRunPlan(taskFile: AntonTaskFile, commands: DetectedComm
   }
 
   return lines.join('\n');
+}
+
+/**
+ * Format tool loop event message for Discord.
+ */
+export function formatToolLoopEvent(
+  taskText: string,
+  event: { level: string; toolName: string; count: number; message: string }
+): string {
+  const emoji = event.level === 'critical' ? '🔴' : '🟡';
+  const task = taskText.length > 60 ? taskText.slice(0, 60) + '...' : taskText;
+  return `${emoji} Tool loop ${event.level}: \`${event.toolName}\` called ${event.count}x during "${task}"`;
+}
+
+/**
+ * Format compaction event message for Discord.
+ */
+export function formatCompactionEvent(
+  taskText: string,
+  event: { droppedMessages: number; freedTokens: number; summaryUsed: boolean }
+): string {
+  const task = taskText.length > 60 ? taskText.slice(0, 60) + '...' : taskText;
+  return `📦 Compacted ${event.droppedMessages} msgs (~${formatTokens(event.freedTokens)} tokens freed${event.summaryUsed ? ', summary injected' : ''}) during "${task}"`;
+}
+
+/**
+ * Format verification detail message for Discord.
+ */
+export function formatVerificationDetail(
+  taskText: string,
+  v: AntonVerificationResult
+): string {
+  const task = taskText.length > 60 ? taskText.slice(0, 60) + '...' : taskText;
+  const parts: string[] = [];
+  if (v.l1_build !== undefined) parts.push(`build:${v.l1_build ? '✅' : '❌'}`);
+  if (v.l1_test !== undefined) parts.push(`test:${v.l1_test ? '✅' : '❌'}`);
+  if (v.l1_lint !== undefined) parts.push(`lint:${v.l1_lint ? '✅' : '❌'}`);
+  if (v.l2_ai !== undefined) parts.push(`AI:${v.l2_ai ? '✅' : '❌'}`);
+  const emoji = v.passed ? '✅' : '❌';
+  return `${emoji} Verify "${task}": ${parts.join(' ')}`;
 }

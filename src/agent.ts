@@ -679,6 +679,7 @@ export type AgentHooks = {
   onToolStream?: (ev: ToolStreamEvent) => void | Promise<void>;
   onToolResult?: (result: ToolResultEvent) => void | Promise<void>;
   onToolLoop?: (event: ToolLoopEvent) => void | Promise<void>;
+  onCompaction?: (event: { droppedMessages: number; freedTokens: number; summaryUsed: boolean }) => void | Promise<void>;
   onTurnEnd?: (stats: TurnEndEvent) => void | Promise<void>;
 };
 
@@ -2713,6 +2714,7 @@ export async function createSession(opts: {
 
           messages = compacted;
 
+          let summaryUsed = false;
           if (dropped.length) {
             const droppedTokens = estimateTokensFromMessages(dropped as ChatMessage[]);
             if (cfg.compact_summary !== false && droppedTokens > 200) {
@@ -2731,6 +2733,7 @@ export async function createSession(opts: {
                 });
                 const summary = resp.choices?.[0]?.message?.content ?? '';
                 if (summary.trim()) {
+                  summaryUsed = true;
                   messages.push({
                     role: 'system',
                     content: `[Compacted ${dropped.length} messages (~${droppedTokens} tokens). Progress summary:]\n${summary.trim()}\n[Continue from where you left off. Do not repeat completed work.]`,
@@ -2750,10 +2753,20 @@ export async function createSession(opts: {
           currentContextTokens = estimateTokensFromMessages(messages);
 
           const afterTokens = estimateTokensFromMessages(compacted);
+          const freedTokens = Math.max(0, beforeTokens - afterTokens);
+
+          // Emit compaction event for callers (e.g. Anton controller → Discord)
+          if (dropped.length) {
+            try {
+              await hookObj.onCompaction?.({ droppedMessages: dropped.length, freedTokens, summaryUsed });
+            } catch { /* best effort */ }
+            console.error(`[compaction] auto: dropped=${dropped.length} msgs, freed=~${freedTokens} tokens, summary=${summaryUsed}, remaining=${messages.length} msgs (~${currentContextTokens} tokens)`);
+          }
+
           return {
             beforeMessages: beforeMsgs.length,
             afterMessages: compacted.length,
-            freedTokens: Math.max(0, beforeTokens - afterTokens),
+            freedTokens,
             archivedToolMessages: dropped.filter((m) => m.role === 'tool').length,
             droppedMessages: dropped.length,
             dryRun: false,

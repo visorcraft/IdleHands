@@ -16,6 +16,9 @@ import {
   formatTaskStart,
   formatTaskEnd,
   formatTaskSkip,
+  formatToolLoopEvent,
+  formatCompactionEvent,
+  formatVerificationDetail,
 } from '../anton/reporter.js';
 import type { AntonRunConfig, AntonProgressCallback } from '../anton/types.js';
 import { firstToken } from '../cli/command-utils.js';
@@ -653,6 +656,24 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
     },
     onHeartbeat() {
       session.lastActivity = Date.now();
+    },
+    onToolLoop(taskText, event) {
+      session.lastActivity = Date.now();
+      if (defaults.progress_events !== false) {
+        ctx.reply(formatToolLoopEvent(taskText, event)).catch(() => { });
+      }
+    },
+    onCompaction(taskText, event) {
+      session.lastActivity = Date.now();
+      if (defaults.progress_events !== false && event.droppedMessages >= 5) {
+        ctx.reply(formatCompactionEvent(taskText, event)).catch(() => { });
+      }
+    },
+    onVerification(taskText, verification) {
+      session.lastActivity = Date.now();
+      if (defaults.progress_events !== false && !verification.passed) {
+        ctx.reply(formatVerificationDetail(taskText, verification)).catch(() => { });
+      }
     },
   };
 
