@@ -1044,6 +1044,61 @@ When you escalate, your request will be re-run on a more capable model.`;
     }
   });
 
+  // Handle button interactions (model selection, etc.)
+  client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isButton()) return;
+    if (!allowedUsers.has(interaction.user.id)) {
+      await interaction.reply({ content: '⚠️ Not authorized.', ephemeral: true });
+      return;
+    }
+
+    const customId = interaction.customId;
+    if (!customId.startsWith('model_switch:')) return;
+
+    const modelId = customId.slice('model_switch:'.length);
+    await interaction.deferUpdate();
+
+    try {
+      const { plan } = await import('../runtime/planner.js');
+      const { execute, loadActiveRuntime } = await import('../runtime/executor.js');
+      const { loadRuntimes } = await import('../runtime/store.js');
+
+      const rtConfig = await loadRuntimes();
+      const active = await loadActiveRuntime();
+      const result = plan({ modelId, mode: 'live' }, rtConfig, active);
+
+      if (!result.ok) {
+        await interaction.editReply({ content: `❌ Plan failed: ${result.reason}`, components: [] });
+        return;
+      }
+
+      if (result.reuse) {
+        await interaction.editReply({ content: `✅ Already using \`${result.model.display_name}\``, components: [] });
+        return;
+      }
+
+      const execResult = await execute(result, {
+        onStep: async (step, status) => {
+          if (status === 'done') {
+            await interaction.editReply({ content: `⏳ ${step.description}... ✓`, components: [] }).catch(() => {});
+          }
+        },
+        confirm: async (prompt) => {
+          await interaction.followUp(`⚠️ ${prompt}\nAuto-approving for bot context.`);
+          return true;
+        },
+      });
+
+      if (execResult.ok) {
+        await interaction.editReply({ content: `✅ Switched to \`${result.model.display_name}\``, components: [] });
+      } else {
+        await interaction.editReply({ content: `❌ Switch failed: ${execResult.error || 'unknown error'}`, components: [] });
+      }
+    } catch (e: any) {
+      await interaction.editReply({ content: `❌ Switch failed: ${e?.message ?? String(e)}`, components: [] });
+    }
+  });
+
   client.on(Events.MessageCreate, async (msg) => {
     if (msg.author.bot) return;
     if (!allowedUsers.has(msg.author.id)) return;
@@ -1671,16 +1726,38 @@ When you escalate, your request will be re-run on a more capable model.`;
           return;
         }
 
-        const lines = config.models.map(
-          (m) =>
-            `${m.enabled ? '🟢' : '🔴'} ${m.display_name} (\`${m.id}\`)\n  Source: \`${m.source}\``
-        );
-
-        const chunks = splitDiscord(lines.join('\n\n'));
-        for (const [i, chunk] of chunks.entries()) {
-          if (i === 0) await sendUserVisible(msg, chunk).catch(() => { });
-          else await (msg.channel as any).send(chunk).catch(() => { });
+        const enabledModels = config.models.filter((m) => m.enabled);
+        if (!enabledModels.length) {
+          await sendUserVisible(msg, 'No enabled runtime models. Use `idlehands models enable <id>` in CLI.').catch(() => { });
+          return;
         }
+
+        // Create buttons for model selection (Discord max 5 buttons per row, 5 rows)
+        const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
+        const rows: any[] = [];
+        let currentRow = new ActionRowBuilder<any>();
+
+        for (const m of enabledModels) {
+          const btn = new ButtonBuilder()
+            .setCustomId(`model_switch:${m.id}`)
+            .setLabel(m.display_name.slice(0, 80))
+            .setStyle(ButtonStyle.Primary);
+
+          currentRow.addComponents(btn);
+
+          if (currentRow.components.length >= 5) {
+            rows.push(currentRow);
+            currentRow = new ActionRowBuilder<any>();
+          }
+        }
+        if (currentRow.components.length > 0) {
+          rows.push(currentRow);
+        }
+
+        await (msg.channel as any).send({
+          content: '📋 **Select a model to switch to:**',
+          components: rows.slice(0, 5), // Discord max 5 rows
+        }).catch(() => { });
       } catch (e: any) {
         await sendUserVisible(
           msg,

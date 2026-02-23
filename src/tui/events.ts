@@ -80,4 +80,18 @@ export type TuiEvent =
       lines: string[];
     }
   | { type: 'HOOKS_INSPECTOR_MOVE'; delta: number }
-  | { type: 'HOOKS_INSPECTOR_CLOSE' };
+  | { type: 'HOOKS_INSPECTOR_CLOSE' }
+  | {
+      type: 'MODEL_PICKER_OPEN';
+      models: import('./types.js').ModelPickerItem[];
+      query?: string;
+    }
+  | {
+      type: 'MODEL_PICKER_FILTER';
+      filtered: import('./types.js').ModelPickerItem[];
+      query: string;
+      selectedIndex: number;
+      offset: number;
+    }
+  | { type: 'MODEL_PICKER_MOVE'; delta: number }
+  | { type: 'MODEL_PICKER_CLOSE' };
