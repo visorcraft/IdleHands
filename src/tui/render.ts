@@ -1,3 +1,4 @@
+import { truncate } from '../shared/strings.js';
 import { calculateLayout } from './layout.js';
 import { clearScreen } from './screen.js';
 import { resolveTuiTheme, type TuiColors } from './theme.js';
@@ -9,11 +10,6 @@ let C: TuiColors = resolveTuiTheme('default');
 /** Call once at TUI startup to apply the active theme to all rendering. */
 export function setRenderTheme(name?: string): void {
   C = resolveTuiTheme(name);
-}
-
-function truncate(s: string, n: number): string {
-  if (n <= 0) return '';
-  return s.length <= n ? s : `${s.slice(0, Math.max(0, n - 1))}…`;
 }
 
 function secs(ms: number): string {

@@ -1,6 +1,7 @@
 import type { AgentHooks } from '../agent.js';
 import type { ToolCallEvent, ToolResultEvent, TurnEndEvent } from '../types.js';
 
+import { truncate } from '../shared/strings.js';
 import { formatToolCallSummary } from './tool-summary.js';
 
 export type TurnProgressPhase = 'thinking' | 'responding' | 'tool' | 'done';
@@ -67,11 +68,6 @@ function formatElapsed(ms: number): string {
   const h = Math.floor(m / 60);
   const rm = m % 60;
   return `${h}h${String(rm).padStart(2, '0')}m`;
-}
-
-function truncate(s: string, n: number): string {
-  if (n <= 0) return '';
-  return s.length <= n ? s : s.slice(0, Math.max(0, n - 1)) + '…';
 }
 
 function bucket(ms: number, bucketMs: number): number {

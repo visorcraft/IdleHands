@@ -1,4 +1,5 @@
 import type { IdlehandsConfig, ChatMessage, UserContent, ToolSchema, ToolCall, TrifectaMode, ToolCallEvent, ToolResultEvent, ToolStreamEvent, TurnEndEvent, ConfirmationProvider, PlanStep, ApprovalMode, ToolLoopEvent } from './types.js';
+import { normalizeApprovalMode } from './shared/config-utils.js';
 import { OpenAIClient } from './client.js';
 import { enforceContextBudget, stripThinking, estimateTokensFromMessages, estimateToolSchemaTokens } from './history.js';
 import * as tools from './tools.js';
@@ -243,16 +244,9 @@ const DEFAULT_SUB_AGENT_SYSTEM_PROMPT = `You are a focused coding sub-agent. Exe
 - Return a concise outcome summary.`;
 
 const DEFAULT_SUB_AGENT_RESULT_TOKEN_CAP = 4000;
-const APPROVAL_MODE_SET = new Set<ApprovalMode>(['plan', 'reject', 'default', 'auto-edit', 'yolo']);
 const LSP_TOOL_NAMES = ['lsp_diagnostics', 'lsp_symbols', 'lsp_hover', 'lsp_definition', 'lsp_references'] as const;
 const LSP_TOOL_NAME_SET = new Set<string>(LSP_TOOL_NAMES);
 const FILE_MUTATION_TOOL_SET = new Set(['edit_file', 'edit_range', 'apply_patch', 'write_file', 'insert_file']);
-
-function normalizeApprovalMode(value: unknown): ApprovalMode | undefined {
-  if (typeof value !== 'string') return undefined;
-  const mode = value.trim() as ApprovalMode;
-  return APPROVAL_MODE_SET.has(mode) ? mode : undefined;
-}
 
 /** Approval mode permissiveness ranking (lower = more restrictive). */
 const APPROVAL_MODE_RANK: Record<ApprovalMode, number> = { plan: 0, reject: 1, default: 2, 'auto-edit': 3, yolo: 4 };
@@ -722,27 +716,6 @@ export type PerfSummary = {
   avgTgTokensPerSec?: number;
 };
 
-export type CaptureRecord = {
-  timestamp: string;
-  request: {
-    model: string;
-    messages: ChatMessage[];
-    tools?: ToolSchema[];
-    temperature: number;
-    top_p: number;
-    max_tokens: number;
-    endpoint?: string;
-  };
-  response: any;
-  metrics: {
-    ttft_ms?: number;
-    tg_speed?: number;
-    total_ms: number;
-    prompt_tokens?: number;
-    completion_tokens?: number;
-  };
-};
-
 export type AgentSession = {
   model: string;
   harness: string;
@@ -828,6 +801,7 @@ export async function createSession(opts: {
   allowSpawnTask?: boolean;
 }): Promise<AgentSession> {
   const cfg = opts.config;
+  const projectDir = cfg.dir ?? process.cwd();
   let client = opts.runtime?.client ?? new OpenAIClient(cfg.endpoint, opts.apiKey, cfg.verbose);
   if (typeof (client as any).setVerbose === 'function') {
     (client as any).setVerbose(cfg.verbose);
@@ -873,7 +847,7 @@ export async function createSession(opts: {
     allowedCapabilities: Array.isArray(hookCfg.allow_capabilities) ? hookCfg.allow_capabilities as any : undefined,
     context: () => ({
       sessionId,
-      cwd: cfg.dir ?? process.cwd(),
+      cwd: projectDir,
       model,
       harness: harness.id,
       endpoint: cfg.endpoint,
@@ -891,7 +865,7 @@ export async function createSession(opts: {
   if (!opts.runtime?.hookManager && hookManager.isEnabled()) {
     const loadedPlugins = await loadHookPlugins({
       pluginPaths: Array.isArray(hookCfg.plugin_paths) ? hookCfg.plugin_paths : [],
-      cwd: cfg.dir ?? process.cwd(),
+      cwd: projectDir,
       strict: hookCfg.strict === true,
     });
     for (const loaded of loadedPlugins) {
@@ -903,7 +877,7 @@ export async function createSession(opts: {
     model,
     harness: harness.id,
     endpoint: cfg.endpoint,
-    cwd: cfg.dir ?? process.cwd(),
+    cwd: projectDir,
   });
 
   if (!cfg.i_know_what_im_doing && contextWindow > 131072) {
@@ -969,7 +943,7 @@ export async function createSession(opts: {
 
   if (lspEnabled) {
     lspManager = new LspManager({
-      rootPath: cfg.dir ?? process.cwd(),
+      rootPath: projectDir,
       severityThreshold: lspCfg?.diagnostic_severity_threshold ?? 1,
       quiet: Boolean(process.env.IDLEHANDS_QUIET_WARNINGS),
     });
@@ -1014,7 +988,7 @@ export async function createSession(opts: {
     : undefined;
   if (vault) {
     // Scope vault entries by project directory to prevent cross-project context leaks
-    vault.setProjectDir(cfg.dir ?? process.cwd());
+    vault.setProjectDir(projectDir);
   }
   if (vaultEnabled && !opts.runtime?.vault) {
     await vault?.init().catch((e: any) => {
@@ -1044,7 +1018,7 @@ export async function createSession(opts: {
     console.warn(`[warn] project context disabled for startup: ${e?.message ?? e}`);
     return '';
   });
-  const gitCtx = await loadGitContext(cfg.dir ?? process.cwd()).catch((e: any) => {
+  const gitCtx = await loadGitContext(projectDir).catch((e: any) => {
     console.warn(`[warn] git context disabled for startup: ${e?.message ?? e}`);
     return '';
   });
@@ -1052,7 +1026,7 @@ export async function createSession(opts: {
   let freshIndexSummary = '';
   if (vault) {
     try {
-      const keys = projectIndexKeys(cfg.dir ?? process.cwd());
+      const keys = projectIndexKeys(projectDir);
       const metaRow = await vault.getLatestByKey(keys.metaKey, 'system');
       if (metaRow?.value) {
         const meta = parseIndexMeta(metaRow.value);
@@ -1359,7 +1333,7 @@ export async function createSession(opts: {
         ? defaults.system_prompt.trim()
         : DEFAULT_SUB_AGENT_SYSTEM_PROMPT);
 
-    const cwd = cfg.dir ?? process.cwd();
+    const cwd = projectDir;
     const ctxFiles = await buildSubAgentContextBlock(cwd, args?.context_files);
 
     let delegatedInstruction = task;
@@ -1494,7 +1468,7 @@ export async function createSession(opts: {
       })
       : opts.confirm;
     return {
-      cwd: cfg.dir ?? process.cwd(),
+      cwd: projectDir,
       noConfirm: cfg.no_confirm || cfg.approval_mode === 'yolo',
       dryRun: cfg.dry_run,
       mode: cfg.mode ?? 'code',
@@ -1519,7 +1493,7 @@ export async function createSession(opts: {
     const semantic = await lspManager.getSymbols(filePathRaw);
     if (!lens) return semantic;
 
-    const cwd = cfg.dir ?? process.cwd();
+    const cwd = projectDir;
     const absPath = filePathRaw.startsWith('/') ? filePathRaw : path.resolve(cwd, filePathRaw);
     const body = await fs.readFile(absPath, 'utf8').catch(() => '');
     if (!body) return semantic;
@@ -2402,7 +2376,6 @@ export async function createSession(opts: {
     lastAskInstructionText = rawInstructionText;
     lastCompactionReminderObjective = '';
     await hookManager.emit('ask_start', { askId, instruction: rawInstructionText });
-    const projectDir = cfg.dir ?? process.cwd();
     const reviewKeys = reviewArtifactKeys(projectDir);
     const retrievalRequested = looksLikeReviewRetrievalRequest(rawInstructionText);
     const shouldPersistReviewArtifact = looksLikeCodeReviewRequest(rawInstructionText) && !retrievalRequested;
@@ -2665,7 +2638,7 @@ export async function createSession(opts: {
       const reason = error instanceof Error ? error.message : String(error);
       // Strip absolute paths from failure messages to prevent cross-project leaks in vault.
       // Replace /home/.../project/file.ts with just file.ts (relative to cwd) or the basename.
-      const sanitized = sanitizePathsInMessage(`agent abort: ${contextLine ?? ''} ${reason}`, cfg.dir ?? process.cwd());
+      const sanitized = sanitizePathsInMessage(`agent abort: ${contextLine ?? ''} ${reason}`, projectDir);
       const compact = lens ? await lens.summarizeFailureMessage(sanitized) : sanitized;
       try {
         await vault.note('agent failure', compact);
@@ -3469,7 +3442,7 @@ export async function createSession(opts: {
               }
             }
             if (FILE_MUTATION_TOOL_SET.has(name) && typeof args.path === 'string') {
-              const absPath = args.path.startsWith('/') ? args.path : path.resolve(cfg.dir ?? process.cwd(), args.path);
+              const absPath = args.path.startsWith('/') ? args.path : path.resolve(projectDir, args.path);
 
               // ── Pre-dispatch: block edits to files in a mutation spiral ──
               if (fileMutationBlocked.has(absPath)) {
@@ -3503,7 +3476,7 @@ export async function createSession(opts: {
 
               // Fix 2: Directory scan detection — counts unique files per dir (re-reads are OK)
               if (filePath) {
-                const absFilePath = filePath.startsWith('/') ? filePath : path.resolve(cfg.dir ?? process.cwd(), filePath);
+                const absFilePath = filePath.startsWith('/') ? filePath : path.resolve(projectDir, filePath);
                 const parentDir = path.dirname(absFilePath);
                 if (!readDirFiles.has(parentDir)) readDirFiles.set(parentDir, new Set());
                 readDirFiles.get(parentDir)!.add(absFilePath);
@@ -3731,7 +3704,7 @@ export async function createSession(opts: {
                 const mutatedPath = typeof args.path === 'string' ? args.path : '';
                 if (mutatedPath) {
                   try {
-                    const absPath = mutatedPath.startsWith('/') ? mutatedPath : path.join(cfg.dir ?? process.cwd(), mutatedPath);
+                    const absPath = mutatedPath.startsWith('/') ? mutatedPath : path.join(projectDir, mutatedPath);
                     const fileText = await fs.readFile(absPath, 'utf8');
                     await lspManager.ensureOpen(absPath, fileText);
                     await lspManager.notifyDidSave(absPath, fileText);
@@ -3757,7 +3730,7 @@ export async function createSession(opts: {
             // Track edits to the same file. If the model keeps editing the same file
             // over and over, it's likely in an edit→break→read→edit corruption spiral.
             if (FILE_MUTATION_TOOL_SET.has(name) && toolSuccess && typeof args.path === 'string') {
-              const absPath = args.path.startsWith('/') ? args.path : path.resolve(cfg.dir ?? process.cwd(), args.path);
+              const absPath = args.path.startsWith('/') ? args.path : path.resolve(projectDir, args.path);
               const basename = path.basename(absPath);
 
               // write_file = full rewrite. If the model is rewriting the file completely
@@ -3795,7 +3768,7 @@ export async function createSession(opts: {
                 const restoredFile = restoreMatch[1];
                 const absRestored = restoredFile.startsWith('/')
                   ? restoredFile
-                  : path.resolve(cfg.dir ?? process.cwd(), restoredFile);
+                  : path.resolve(projectDir, restoredFile);
                 if (fileMutationCounts.has(absRestored)) {
                   fileMutationCounts.set(absRestored, 0);
                   fileMutationWarned.delete(absRestored);

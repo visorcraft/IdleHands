@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { clamp } from './shared/math.js';
 import type { IdlehandsConfig } from './types.js';
 import { estimateTokens } from './utils.js';
 
@@ -12,10 +13,6 @@ async function readIfExists(p: string): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-function clamp(n: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, n));
 }
 
 function resolveHintPath(abs: string, cwd: string): string {

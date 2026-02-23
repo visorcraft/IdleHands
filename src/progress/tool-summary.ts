@@ -1,9 +1,6 @@
-export type AnyArgs = Record<string, any>;
+import { truncate } from '../shared/strings.js';
 
-function truncate(s: string, n: number): string {
-  const t = String(s ?? '');
-  return t.length <= n ? t : t.slice(0, Math.max(0, n - 1)) + '…';
-}
+export type AnyArgs = Record<string, any>;
 
 /**
  * Shared human summary for tool calls used by all UIs.

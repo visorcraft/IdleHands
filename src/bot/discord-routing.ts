@@ -1,7 +1,6 @@
 import type { Message } from 'discord.js';
 
 import type {
-  ApprovalMode,
   AgentPersona,
   AgentRouting,
   BotDiscordConfig,
@@ -25,16 +24,7 @@ export function parseAllowedUsers(cfg: BotDiscordConfig): Set<string> {
   return new Set(values.map((v) => String(v).trim()).filter(Boolean));
 }
 
-export function normalizeApprovalMode(
-  mode: string | undefined,
-  fallback: ApprovalMode
-): ApprovalMode {
-  const m = String(mode ?? '')
-    .trim()
-    .toLowerCase();
-  if (m === 'plan' || m === 'default' || m === 'auto-edit' || m === 'yolo') return m;
-  return fallback;
-}
+export { normalizeApprovalMode } from '../shared/config-utils.js';
 
 export function splitDiscord(text: string, limit = 1900): string[] {
   if (text.length <= limit) return [text];

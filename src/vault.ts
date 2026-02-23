@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
+import { truncate } from './shared/strings.js';
 import type { ChatMessage } from './types.js';
 import { stateDir } from './utils.js';
 
@@ -52,11 +53,6 @@ function defaultVaultPath() {
 
 function normalizeText(s: string): string {
   return s.toLowerCase().replace(/\s+/g, ' ').trim();
-}
-
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.slice(0, max - 1) + '…';
 }
 
 function nowIso() {

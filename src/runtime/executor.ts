@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { sleep } from '../shared/async.js';
 import { stateDir, shellEscape, BASH_PATH } from '../utils.js';
 import { SecretsStore, resolveSecretRef } from './secrets.js';
 
@@ -35,10 +36,6 @@ type RuntimeLock = {
   startedAt: string;
   model: string;
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function isPidAlive(pid: number): boolean {
   try {

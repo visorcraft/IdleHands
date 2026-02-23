@@ -265,10 +265,7 @@ export function execCommandFromSig(sig: string): string {
   }
 }
 
-export function formatDurationMs(ms: number): string {
-  if (!Number.isFinite(ms) || ms <= 0) return '0.0s';
-  return `${(ms / 1000).toFixed(1)}s`;
-}
+export { formatDurationMs } from '../shared/format.js';
 
 export function looksLikePlanningNarration(text: string, finishReason?: string): boolean {
   const s = String(text ?? '')

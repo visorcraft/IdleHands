@@ -1,3 +1,4 @@
+import { sleep } from '../shared/async.js';
 import type { RuntimeHost } from './types.js';
 
 export type ProbeStatus = 'ready' | 'loading' | 'down' | 'unknown';
@@ -121,7 +122,7 @@ export async function waitForModelsReady(
       // Ready server but wrong model loaded; keep waiting for expected model.
     }
 
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    await sleep(intervalMs);
   }
 
   const reasonParts = [

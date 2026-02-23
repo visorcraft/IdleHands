@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { ExecResult, type ToolStreamEvent, type ApprovalMode } from './types.js';
 import { ToolError } from './tools/tool-error.js';
@@ -10,9 +9,25 @@ import type { VaultStore } from './vault.js';
 import type { LensStore } from './lens.js';
 import { checkExecSafety, checkPathSafety, isProtectedDeleteTarget } from './safety.js';
 import { sys_context as sysContextTool } from './sys/context.js';
-import { stateDir, shellEscape, BASH_PATH } from './utils.js';
+import {
+  isWithinDir,
+  resolvePath,
+  redactPath,
+  checkCwdWarning,
+  enforceMutationWithinCwd,
+} from './tools/path-safety.js';
+import {
+  type PatchTouchInfo,
+  normalizePatchPath,
+  extractTouchedFilesFromPatch,
+} from './tools/patch.js';
+import { atomicWrite, backupFile } from './tools/undo.js';
+import { shellEscape, BASH_PATH } from './utils.js';
 
-const DEFAULT_MAX_BACKUPS_PER_FILE = 5;
+// Re-export from extracted modules so existing imports don't break
+export { atomicWrite, undo_path } from './tools/undo.js';
+
+// Backup/undo system imported from tools/undo.ts (atomicWrite, backupFile, undo_path)
 
 /**
  * Build a read-back snippet showing the region around a mutation.
@@ -120,73 +135,6 @@ function guessMimeType(filePath: string, buf: Buffer): string {
   return extMap[ext] ?? 'application/octet-stream';
 }
 
-function defaultBackupDir() {
-  return path.join(stateDir(), 'backups');
-}
-
-function sha256(s: string) {
-  return crypto.createHash('sha256').update(s).digest('hex');
-}
-
-function keyFromPath(absPath: string) {
-  return sha256(absPath);
-}
-
-function backupDirForPath(ctx: ToolContext, absPath: string) {
-  const bdir = ctx.backupDir ?? defaultBackupDir();
-  const key = keyFromPath(absPath);
-  return { bdir, key, keyDir: path.join(bdir, key) };
-}
-
-function formatBackupTs() {
-  return new Date().toISOString().replace(/[:.]/g, '-');
-}
-
-async function restoreLatestBackup(absPath: string, ctx: ToolContext): Promise<string> {
-  const { key, keyDir } = backupDirForPath(ctx, absPath);
-  const legacyDir = ctx.backupDir ?? defaultBackupDir();
-
-  const latestInDir = async (dir: string): Promise<string | undefined> => {
-    const ents = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
-    return ents
-      .filter((e) => e.isFile())
-      .map((e) => e.name)
-      .filter((n) => n.endsWith('.bak'))
-      .sort()
-      .reverse()[0];
-  };
-
-  let bakDir = keyDir;
-  let bakFile = await latestInDir(keyDir);
-
-  if (!bakFile) {
-    // Compatibility with older flat backup format (without nested key dir).
-    const ents = await fs.readdir(legacyDir, { withFileTypes: true }).catch(() => []);
-    const legacy = ents
-      .filter((e) => e.isFile())
-      .map((e) => e.name)
-      .filter((n) => n.startsWith(`${key}.`) && !n.endsWith('.json'))
-      .sort()
-      .reverse()[0];
-    if (legacy) {
-      bakFile = legacy;
-      bakDir = legacyDir;
-    }
-  }
-
-  if (!bakFile) {
-    throw new Error(`undo: no backups found for ${absPath} in ${legacyDir}`);
-  }
-
-  const bakPath = path.join(bakDir, bakFile);
-  const buf = await fs.readFile(bakPath);
-
-  // backup current file before restoring
-  await backupFile(absPath, ctx);
-  await atomicWrite(absPath, buf);
-  return `restored ${absPath} from backup ${bakPath}`;
-}
-
 function stripAnsi(s: string) {
   // eslint-disable-next-line no-control-regex
   return s
@@ -278,61 +226,6 @@ function truncateBytes(
   return { text: cut.toString('utf8') + `\n[truncated, ${total} bytes total]`, truncated: true };
 }
 
-async function rotateBackups(absPath: string, ctx: ToolContext) {
-  const { keyDir } = backupDirForPath(ctx, absPath);
-  const limit = ctx.maxBackupsPerFile ?? DEFAULT_MAX_BACKUPS_PER_FILE;
-  if (limit <= 0) return;
-
-  await fs.mkdir(keyDir, { recursive: true });
-
-  const ents = await fs.readdir(keyDir, { withFileTypes: true }).catch(() => []);
-  const backups = ents
-    .filter((e) => e.isFile())
-    .map((e) => e.name)
-    .filter((n) => n.endsWith('.bak'))
-    .sort(); // oldest → newest due to ISO timestamp
-
-  const toDelete = backups.length > limit ? backups.slice(0, backups.length - limit) : [];
-  for (const name of toDelete) {
-    const bak = path.join(keyDir, name);
-    const meta = path.join(keyDir, `${name.replace(/\.bak$/, '')}.meta.json`);
-    await fs.rm(bak, { force: true }).catch(() => { });
-    await fs.rm(meta, { force: true }).catch(() => { });
-  }
-}
-
-async function backupFile(absPath: string, ctx: ToolContext) {
-  const { bdir, keyDir } = backupDirForPath(ctx, absPath);
-  await fs.mkdir(bdir, { recursive: true });
-  await fs.mkdir(keyDir, { recursive: true });
-
-  // Auto-create .gitignore in state dir to prevent backups from being committed
-  const gitignorePath = path.join(bdir, '.gitignore');
-  await fs.writeFile(gitignorePath, '*\n', { flag: 'wx' }).catch(() => { });
-  // 'wx' flag = create only if doesn't exist, silently skip if it does
-
-  const st = await fs.stat(absPath).catch(() => null);
-  if (!st || !st.isFile()) return;
-
-  const content = await fs.readFile(absPath);
-  const hash = crypto.createHash('sha256').update(content).digest('hex');
-
-  const ts = formatBackupTs();
-  const bakName = `${ts}.bak`;
-  const metaName = `${ts}.meta.json`;
-  const bakPath = path.join(keyDir, bakName);
-  const metaPath = path.join(keyDir, metaName);
-
-  await fs.writeFile(bakPath, content);
-  await fs.writeFile(
-    metaPath,
-    JSON.stringify({ original_path: absPath, timestamp: ts, size: st.size, sha256_before: hash }, null, 2) + '\n',
-    'utf8'
-  );
-
-  await rotateBackups(absPath, ctx);
-}
-
 async function checkpointReplay(ctx: ToolContext, payload: Parameters<ReplayStore['checkpoint']>[0]): Promise<string> {
   if (!ctx.replay) return '';
 
@@ -351,42 +244,6 @@ async function checkpointReplay(ctx: ToolContext, payload: Parameters<ReplayStor
   } catch (e: any) {
     return ` replay_skipped: ${e?.message ?? String(e)}`;
   }
-}
-
-export async function atomicWrite(absPath: string, data: string | Buffer) {
-  const dir = path.dirname(absPath);
-  await fs.mkdir(dir, { recursive: true });
-
-  // Capture original permissions before overwriting
-  const origStat = await fs.stat(absPath).catch(() => null);
-  const origMode = origStat?.mode;
-
-  const tmp = path.join(dir, `.${path.basename(absPath)}.idlehands.tmp.${process.pid}.${Date.now()}`);
-  await fs.writeFile(tmp, data);
-
-  // Restore original file mode bits if the file existed
-  if (origMode != null) {
-    await fs.chmod(tmp, origMode & 0o7777).catch(() => { });
-  }
-
-  await fs.rename(tmp, absPath);
-}
-
-export async function undo_path(ctx: ToolContext, args: any) {
-  const directPath = args?.path === undefined ? undefined : String(args.path);
-  const p = directPath ? resolvePath(ctx, directPath) : ctx.lastEditedPath;
-  if (!p) throw new Error('undo: missing path');
-  const absCwd = path.resolve(ctx.cwd);
-  const redactedPath = redactPath(p, absCwd);
-  if (!ctx.noConfirm && ctx.confirm) {
-    const ok = await ctx.confirm(`Restore latest backup for:\n  ${redactedPath}\nThis will overwrite the current file. Proceed? (y/N) `);
-    if (!ok) return 'undo: cancelled';
-  }
-  if (!ctx.noConfirm && !ctx.confirm) {
-    throw new Error('undo: confirmation required (run with --no-confirm/--yolo or in interactive mode)');
-  }
-  if (ctx.dryRun) return `dry-run: would restore latest backup for ${redactedPath}`;
-  return await restoreLatestBackup(p, ctx);
 }
 
 export async function read_file(ctx: ToolContext, args: any) {
@@ -825,99 +682,8 @@ export async function edit_file(ctx: ToolContext, args: any) {
   return `edited ${redactedPath} (replace_all=${replaceAll})${replayNote}${cwdWarning}${readback}`;
 }
 
-type PatchTouchInfo = {
-  paths: string[]; // normalized relative paths
-  created: Set<string>;
-  deleted: Set<string>;
-};
-
-function normalizePatchPath(p: string): string {
-  let s = String(p ?? '').trim();
-  if (!s || s === '/dev/null') return '';
-
-  // Strip quotes some generators add
-  s = s.replace(/^"|"$/g, '');
-  // Drop common diff prefixes
-  s = s.replace(/^[ab]\//, '').replace(/^\.\/+/, '');
-  // Normalize to posix separators for diffs
-  s = s.replace(/\\/g, '/');
-
-  const norm = path.posix.normalize(s);
-  if (norm.startsWith('../') || norm === '..' || norm.startsWith('/')) {
-    throw new Error(`apply_patch: unsafe path in patch: ${JSON.stringify(s)}`);
-  }
-  return norm;
-}
-
-function extractTouchedFilesFromPatch(patchText: string): PatchTouchInfo {
-  const paths: string[] = [];
-  const created = new Set<string>();
-  const deleted = new Set<string>();
-
-  let pendingOld: string | null = null;
-  let pendingNew: string | null = null;
-
-  const seen = new Set<string>();
-  const lines = String(patchText ?? '').split(/\r?\n/);
-
-  for (const line of lines) {
-    // Primary: git-style header
-    if (line.startsWith('diff --git ')) {
-      const m = /^diff --git\s+a\/(.+?)\s+b\/(.+?)\s*$/.exec(line);
-      if (m) {
-        const aPath = normalizePatchPath(m[1]);
-        const bPath = normalizePatchPath(m[2]);
-        const use = bPath || aPath;
-        if (use && !seen.has(use)) {
-          seen.add(use);
-          paths.push(use);
-        }
-      }
-      pendingOld = null;
-      pendingNew = null;
-      continue;
-    }
-
-    // Fallback: unified diff headers
-    if (line.startsWith('--- ')) {
-      pendingOld = line.slice(4).trim();
-      continue;
-    }
-    if (line.startsWith('+++ ')) {
-      pendingNew = line.slice(4).trim();
-
-      const oldP = pendingOld ? pendingOld.replace(/^a\//, '').trim() : '';
-      const newP = pendingNew ? pendingNew.replace(/^b\//, '').trim() : '';
-
-      const oldIsDevNull = oldP === '/dev/null';
-      const newIsDevNull = newP === '/dev/null';
-
-      if (!newIsDevNull) {
-        const rel = normalizePatchPath(newP);
-        if (rel && !seen.has(rel)) {
-          seen.add(rel);
-          paths.push(rel);
-        }
-        if (oldIsDevNull) created.add(rel);
-      }
-
-      if (!oldIsDevNull && newIsDevNull) {
-        const rel = normalizePatchPath(oldP);
-        if (rel && !seen.has(rel)) {
-          seen.add(rel);
-          paths.push(rel);
-        }
-        deleted.add(rel);
-      }
-
-      pendingOld = null;
-      pendingNew = null;
-      continue;
-    }
-  }
-
-  return { paths, created, deleted };
-}
+// Patch parsing helpers imported from tools/patch.ts:
+// PatchTouchInfo, normalizePatchPath, extractTouchedFilesFromPatch
 
 async function runCommandWithStdin(
   cmd: string,
@@ -1843,89 +1609,8 @@ export async function sys_context(ctx: ToolContext, args: any) {
   return sysContextTool(ctx, args);
 }
 
-/**
- * Check if a target path is within a directory.
- * Handles the classic root directory edge case: when dir is `/`, every absolute path is valid.
- */
-function isWithinDir(target: string, dir: string): boolean {
-  if (dir === '/') return target.startsWith('/') && !target.includes('..');
-  const rel = path.relative(dir, target);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-}
-function resolvePath(ctx: ToolContext, p: any): string {
-  if (typeof p !== 'string' || !p.trim()) throw new Error('missing path');
-  return path.resolve(ctx.cwd, p);
-}
-
-/**
- * Redact a path for safe output.
- * - Paths within cwd are shown as relative paths
- * - Paths outside cwd are redacted as [outside-cwd]/basename
- */
-function redactPath(filePath: string, absCwd: string): string {
-  const resolved = path.resolve(filePath);
-  if (isWithinDir(resolved, absCwd)) {
-    return path.relative(absCwd, resolved);
-  }
-  const basename = path.basename(resolved);
-  return `[outside-cwd]/${basename}`;
-}
-
-/**
- * Check if a resolved path is outside the working directory.
- * Returns a model-visible warning string if so, empty string otherwise.
- */
-function checkCwdWarning(tool: string, resolvedPath: string, ctx: ToolContext): string {
-  const absCwd = path.resolve(ctx.cwd);
-  if (isWithinDir(resolvedPath, absCwd)) return '';
-  const warning = `\n[WARNING] Path "${resolvedPath}" is OUTSIDE the working directory "${absCwd}". You MUST use relative paths and work within the project directory. Do NOT create or edit files outside the cwd.`;
-  console.warn(`[warning] ${tool}: path "${resolvedPath}" is outside the working directory "${absCwd}".`);
-  return warning;
-}
-
-/**
- * Hard guard for mutating file tools in normal code mode.
- * In code mode, writing outside cwd is always blocked to prevent accidental edits
- * in the wrong repository. System mode keeps broader path freedom for /etc workflows.
- */
-function enforceMutationWithinCwd(tool: string, resolvedPath: string, ctx: ToolContext): void {
-  if (ctx.mode === 'sys') return;
-
-  const absTarget = path.resolve(resolvedPath);
-  const absCwd = path.resolve(ctx.cwd);
-  const roots = (ctx.allowedWriteRoots ?? []).map((r) => path.resolve(r));
-  const allowAny = roots.includes('/');
-
-  // If session requires explicit /dir pinning, block all mutations until pinned.
-  // Exception: if cwd matches one of the repo candidates, auto-allow.
-  if (ctx.requireDirPinForMutations && !ctx.dirPinned) {
-    const candidates = ctx.repoCandidates ?? [];
-    const cwdMatchesCandidate = candidates.some((c) => {
-      const absCandidate = path.resolve(c);
-      return absCwd === absCandidate || isWithinDir(absCwd, absCandidate);
-    });
-    if (!cwdMatchesCandidate) {
-      const hint = candidates.length ? ` Candidates: ${candidates.slice(0, 8).join(', ')}` : '';
-      throw new Error(`${tool}: BLOCKED — multiple repository candidates detected. Set repo root explicitly with /dir <path> before editing files.${hint}`);
-    }
-  }
-
-  // Respect allowed roots first.
-  if (roots.length > 0 && !allowAny) {
-    const inAllowed = roots.some((root) => isWithinDir(absTarget, root));
-    if (!inAllowed) {
-      throw new Error(`${tool}: BLOCKED — path "${absTarget}" is outside allowed directories: ${roots.join(', ')}`);
-    }
-  }
-
-  // If / is explicitly allowed, permit filesystem-wide writes after pin policy above.
-  if (allowAny) return;
-
-  // In code mode, keep edits scoped to current working directory unless explicitly sys mode.
-  if (!isWithinDir(absTarget, absCwd)) {
-    throw new Error(`${tool}: BLOCKED — path "${absTarget}" is outside the working directory "${absCwd}". Run /dir <project-root> first, then retry with relative paths.`);
-  }
-}
+// Path safety helpers imported from tools/path-safety.ts:
+// isWithinDir, resolvePath, redactPath, checkCwdWarning, enforceMutationWithinCwd
 
 async function hasRg() {
   const isWin = process.platform === 'win32';
