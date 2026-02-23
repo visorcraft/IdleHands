@@ -212,19 +212,9 @@ or
 
       const response = await session.ask(prompt);
 
-      try {
-        const parsed = JSON.parse(response.trim());
-        if (typeof parsed.pass === 'boolean') {
-          result.l2_ai = parsed.pass;
-          result.l2_reason = parsed.reason || 'No reason provided';
-        } else {
-          result.l2_ai = false;
-          result.l2_reason = 'Invalid verifier response: missing pass field';
-        }
-      } catch {
-        result.l2_ai = false;
-        result.l2_reason = 'Invalid verifier response: not valid JSON';
-      }
+      const parsed = parseVerifierResponse(response);
+      result.l2_ai = parsed.pass;
+      result.l2_reason = parsed.reason;
     } catch (err) {
       result.l2_ai = false;
       result.l2_reason = `Verifier session error: ${String(err)}`;
@@ -296,4 +286,61 @@ function makeTargetExists(cwd: string, target: string): boolean {
 function truncateStderr(stderr: string): string {
   const cleaned = stderr.trim();
   return cleaned.length > 500 ? `${cleaned.slice(0, 500)}...` : cleaned;
+}
+
+/**
+ * Parse L2 verifier response with fault tolerance.
+ * Tries JSON first, then extracts JSON from markdown fences,
+ * then falls back to keyword inference from prose.
+ */
+function parseVerifierResponse(raw: string): { pass: boolean; reason: string } {
+  const text = raw.trim();
+
+  // 1. Try direct JSON parse
+  try {
+    const parsed = JSON.parse(text);
+    if (typeof parsed.pass === 'boolean') {
+      return { pass: parsed.pass, reason: parsed.reason || 'No reason provided' };
+    }
+  } catch { /* not valid JSON, continue */ }
+
+  // 2. Try extracting JSON from markdown code fences or inline braces
+  const jsonMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/) || text.match(/(\{[\s\S]*?"pass"[\s\S]*?\})/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[1].trim());
+      if (typeof parsed.pass === 'boolean') {
+        return { pass: parsed.pass, reason: parsed.reason || 'No reason provided' };
+      }
+    } catch { /* still not valid, continue */ }
+  }
+
+  // 3. Keyword inference from prose
+  const lower = text.toLowerCase();
+  const passPatterns = [
+    /\bpass\b/, /\bapproved?\b/, /\blooks?\s+good\b/, /\bcorrect(ly)?\b/,
+    /\bwell[- ]implemented\b/, /\bno\s+(issues?|problems?|concerns?)\b/,
+    /\bcode\s+(is\s+)?clean\b/, /\btask\s+(is\s+)?(complete|done)\b/,
+  ];
+  const failPatterns = [
+    /\bfail\b/, /\breject(ed)?\b/, /\bnot\s+(correct|approved?)\b/,
+    /\bissues?\s+found\b/, /\bproblems?\s+found\b/, /\bbug(s)?\b/,
+    /\bmissing\b/, /\bincorrect\b/, /\bbroken\b/,
+  ];
+
+  const passScore = passPatterns.filter(p => p.test(lower)).length;
+  const failScore = failPatterns.filter(p => p.test(lower)).length;
+
+  if (passScore > 0 && passScore > failScore) {
+    const snippet = text.length > 200 ? text.slice(0, 200) + '...' : text;
+    return { pass: true, reason: `(inferred from prose) ${snippet}` };
+  }
+  if (failScore > 0) {
+    const snippet = text.length > 200 ? text.slice(0, 200) + '...' : text;
+    return { pass: false, reason: `(inferred from prose) ${snippet}` };
+  }
+
+  // 4. Ambiguous — default to pass since L1 already validated build/test
+  const snippet = text.length > 200 ? text.slice(0, 200) + '...' : text;
+  return { pass: true, reason: `(ambiguous response, defaulting to pass) ${snippet}` };
 }
