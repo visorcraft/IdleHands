@@ -21,14 +21,30 @@ export const PKG_VERSION: string = (() => {
 
 /** Resolved absolute path to bash — avoids ENOENT under restricted environments. */
 export const BASH_PATH: string = (() => {
+  const isWin = os.platform() === 'win32';
   try {
-    const r = spawnSync('which', ['bash'], { encoding: 'utf8', timeout: 1000 });
-    const p = r.stdout?.trim();
-    if (p && p.startsWith('/')) return p;
+    const selector = isWin ? 'where' : 'which';
+    const r = spawnSync(selector, ['bash'], { encoding: 'utf8', timeout: 1000 });
+    const p = r.stdout?.split(/\r?\n/)[0]?.trim();
+    if (p && (isWin || p.startsWith('/'))) return p;
+
+    if (isWin) {
+      // Common Git Bash locations if not in PATH
+      const common = [
+        'C:\\Program Files\\Git\\bin\\bash.exe',
+        'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
+        path.join(os.homedir(), 'AppData\\Local\\Programs\\Git\\bin\\bash.exe'),
+      ];
+      for (const c of common) {
+        try {
+          if (readFileSync(c)) return c;
+        } catch { /* skip */ }
+      }
+    }
   } catch {
     /* fallback */
   }
-  return '/usr/bin/bash';
+  return isWin ? 'bash' : '/usr/bin/bash';
 })();
 
 /**

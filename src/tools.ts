@@ -267,8 +267,8 @@ async function rotateBackups(absPath: string, ctx: ToolContext) {
   for (const name of toDelete) {
     const bak = path.join(keyDir, name);
     const meta = path.join(keyDir, `${name.replace(/\.bak$/, '')}.meta.json`);
-    await fs.rm(bak, { force: true }).catch(() => {});
-    await fs.rm(meta, { force: true }).catch(() => {});
+    await fs.rm(bak, { force: true }).catch(() => { });
+    await fs.rm(meta, { force: true }).catch(() => { });
   }
 }
 
@@ -279,7 +279,7 @@ async function backupFile(absPath: string, ctx: ToolContext) {
 
   // Auto-create .gitignore in state dir to prevent backups from being committed
   const gitignorePath = path.join(bdir, '.gitignore');
-  await fs.writeFile(gitignorePath, '*\n', { flag: 'wx' }).catch(() => {});
+  await fs.writeFile(gitignorePath, '*\n', { flag: 'wx' }).catch(() => { });
   // 'wx' flag = create only if doesn't exist, silently skip if it does
 
   const st = await fs.stat(absPath).catch(() => null);
@@ -337,7 +337,7 @@ export async function atomicWrite(absPath: string, data: string | Buffer) {
 
   // Restore original file mode bits if the file existed
   if (origMode != null) {
-    await fs.chmod(tmp, origMode & 0o7777).catch(() => {});
+    await fs.chmod(tmp, origMode & 0o7777).catch(() => { });
   }
 
   await fs.rename(tmp, absPath);
@@ -568,7 +568,7 @@ export async function write_file(ctx: ToolContext, args: any) {
 
   // Phase 9d: snapshot /etc/ files before editing
   if (ctx.mode === 'sys' && ctx.vault) {
-    await snapshotBeforeEdit(ctx.vault, p).catch(() => {});
+    await snapshotBeforeEdit(ctx.vault, p).catch(() => { });
   }
 
   const beforeBuf = await fs.readFile(p).catch(() => Buffer.from(''));
@@ -618,7 +618,7 @@ export async function insert_file(ctx: ToolContext, args: any) {
 
   // Phase 9d: snapshot /etc/ files before editing
   if (ctx.mode === 'sys' && ctx.vault) {
-    await snapshotBeforeEdit(ctx.vault, p).catch(() => {});
+    await snapshotBeforeEdit(ctx.vault, p).catch(() => { });
   }
 
   const beforeText = await fs.readFile(p, 'utf8').catch(() => '');
@@ -713,7 +713,7 @@ export async function edit_file(ctx: ToolContext, args: any) {
 
   // Phase 9d: snapshot /etc/ files before editing
   if (ctx.mode === 'sys' && ctx.vault) {
-    await snapshotBeforeEdit(ctx.vault, p).catch(() => {});
+    await snapshotBeforeEdit(ctx.vault, p).catch(() => { });
   }
 
   const cur = await fs.readFile(p, 'utf8').catch((e: any) => {
@@ -971,7 +971,7 @@ export async function edit_range(ctx: ToolContext, args: any) {
 
   // Phase 9d: snapshot /etc/ files before editing
   if (ctx.mode === 'sys' && ctx.vault) {
-    await snapshotBeforeEdit(ctx.vault, p).catch(() => {});
+    await snapshotBeforeEdit(ctx.vault, p).catch(() => { });
   }
 
   const beforeText = await fs.readFile(p, 'utf8').catch((e: any) => {
@@ -1087,7 +1087,7 @@ export async function apply_patch(ctx: ToolContext, args: any) {
   for (const abs of absPaths) {
     // Phase 9d: snapshot /etc/ files before editing
     if (ctx.mode === 'sys' && ctx.vault) {
-      await snapshotBeforeEdit(ctx.vault, abs).catch(() => {});
+      await snapshotBeforeEdit(ctx.vault, abs).catch(() => { });
     }
 
     const before = await fs.readFile(abs).catch(() => Buffer.from(''));
@@ -1281,7 +1281,7 @@ function safeFireAndForget(fn: (() => void | Promise<void>) | undefined): void {
   if (!fn) return;
   try {
     const r = fn();
-    if (r && typeof (r as any).catch === 'function') (r as any).catch(() => {});
+    if (r && typeof (r as any).catch === 'function') (r as any).catch(() => { });
   } catch {
     // best effort only
   }
@@ -1382,8 +1382,10 @@ export async function exec(ctx: ToolContext, args: any) {
     }
   }
   if (command) {
-    // Detect `cd /absolute/path` anywhere in the command
-    const cdPattern = /\bcd\s+(['"]?)(\/[^\s'";&|]+)\1/g;
+    // Detect absolute paths in `cd` commands
+    // - Unix: /path
+    // - Windows: C:\path or C:/path or \path
+    const cdPattern = /\bcd\s+(['"]?)(\/[^\s'";&|]+|[a-zA-Z]:[\\/][^\s'";&|]*)\1/g;
     let cdMatch: RegExpExecArray | null;
     while ((cdMatch = cdPattern.exec(command)) !== null) {
       const cdTarget = path.resolve(cdMatch[2]);
@@ -1395,8 +1397,7 @@ export async function exec(ctx: ToolContext, args: any) {
       }
     }
     // Detect absolute paths in file-creating commands (mkdir, cat >, tee, touch, etc.)
-    // that target directories outside cwd — HARD BLOCK unless yolo/auto-edit
-    const absPathPattern = /(?:mkdir|cat\s*>|tee|touch|cp|mv)\s+(?:-\S+\s+)*(['"]?)(\/[^\s'";&|]+)\1/g;
+    const absPathPattern = /(?:mkdir|cat\s*>|tee|touch|cp|mv|rm|rmdir)\s+(?:-\S+\s+)*(['"]?)(\/[^\s'";&|]+|[a-zA-Z]:[\\/][^\s'";&|]*)\1/g;
     let apMatch: RegExpExecArray | null;
     while ((apMatch = absPathPattern.exec(command)) !== null) {
       const absTarget = path.resolve(apMatch[2]);
@@ -1518,7 +1519,7 @@ export async function exec(ctx: ToolContext, args: any) {
       // detached:true places the shell in its own process group.
       process.kill(-pid, 'SIGKILL');
     } catch {
-      try { child.kill('SIGKILL'); } catch {}
+      try { child.kill('SIGKILL'); } catch { }
     }
   };
 
@@ -1620,7 +1621,7 @@ export async function exec(ctx: ToolContext, args: any) {
 
   // Phase 9d: auto-note system changes in sys mode
   if (ctx.mode === 'sys' && ctx.vault && rc === 0) {
-    autoNoteSysChange(ctx.vault, command, outText).catch(() => {});
+    autoNoteSysChange(ctx.vault, command, outText).catch(() => { });
   }
 
   return JSON.stringify(result);
@@ -1785,8 +1786,9 @@ export async function sys_context(ctx: ToolContext, args: any) {
  * Handles the classic root directory edge case: when dir is `/`, every absolute path is valid.
  */
 function isWithinDir(target: string, dir: string): boolean {
-  if (dir === '/') return target.startsWith('/');
-  return target === dir || target.startsWith(dir + path.sep);
+  if (dir === '/') return target.startsWith('/') && !target.includes('..');
+  const rel = path.relative(dir, target);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 function resolvePath(ctx: ToolContext, p: any): string {
   if (typeof p !== 'string' || !p.trim()) throw new Error('missing path');
@@ -1864,17 +1866,24 @@ function enforceMutationWithinCwd(tool: string, resolvedPath: string, ctx: ToolC
 }
 
 async function hasRg() {
-  try {
-    await fs.access('/usr/bin/rg');
-    return true;
-  } catch {
-    // try PATH
-    return await new Promise<boolean>((resolve) => {
-      const c = spawn(BASH_PATH, ['-c', 'command -v rg >/dev/null 2>&1'], { stdio: 'ignore' });
-      c.on('error', () => resolve(false));
-      c.on('close', (code) => resolve(code === 0));
-    });
+  const isWin = process.platform === 'win32';
+  if (!isWin) {
+    try {
+      await fs.access('/usr/bin/rg');
+      return true;
+    } catch { /* skip */ }
   }
+
+  // try PATH
+  return await new Promise<boolean>((resolve) => {
+    const selector = isWin ? 'where' : 'command -v';
+    const sub = isWin ? ['rg'] : ['-c', `${selector} rg >/dev/null 2>&1`];
+    const cmd = isWin ? selector : BASH_PATH;
+
+    const c = spawn(cmd, sub, { stdio: 'ignore' });
+    c.on('error', () => resolve(false));
+    c.on('close', (code) => resolve(code === 0));
+  });
 }
 
 /** Sørensen-Dice coefficient on character bigrams. Returns 0–1. */

@@ -1162,10 +1162,6 @@ export async function createSession(opts: {
       } catch { }
     }
   }
-  if (harness.systemPromptSuffix) {
-    sessionMeta += '\n\n' + harness.systemPromptSuffix;
-  }
-
   // Phase 9: sys-eager — inject full system snapshot into first message
   if (cfg.sys_eager && cfg.mode === 'sys') {
     try {
@@ -1177,32 +1173,42 @@ export async function createSession(opts: {
   }
 
 
-  const defaultSystemPrompt = SYSTEM_PROMPT;
-  let activeSystemPrompt = (cfg.system_prompt_override ?? '').trim() || defaultSystemPrompt;
+  const defaultSystemPromptBase = SYSTEM_PROMPT;
+  let activeSystemPromptBase = (cfg.system_prompt_override ?? '').trim() || defaultSystemPromptBase;
+
+  const buildEffectiveSystemPrompt = () => {
+    let p = activeSystemPromptBase;
+    if (harness.systemPromptSuffix) {
+      p += '\n\n' + harness.systemPromptSuffix;
+    }
+    return p;
+  };
 
   let messages: ChatMessage[] = [
-    { role: 'system', content: activeSystemPrompt }
+    { role: 'system', content: buildEffectiveSystemPrompt() }
   ];
   let sessionMetaPending: string | null = sessionMeta;
 
   const setSystemPrompt = (prompt: string) => {
     const next = String(prompt ?? '').trim();
     if (!next) throw new Error('system prompt cannot be empty');
-    activeSystemPrompt = next;
+    activeSystemPromptBase = next;
+    const effective = buildEffectiveSystemPrompt();
     if (messages.length > 0 && messages[0].role === 'system') {
-      messages[0] = { role: 'system', content: activeSystemPrompt };
+      messages[0] = { role: 'system', content: effective };
     } else {
-      messages.unshift({ role: 'system', content: activeSystemPrompt });
+      messages.unshift({ role: 'system', content: effective });
     }
   };
 
   const resetSystemPrompt = () => {
-    setSystemPrompt(defaultSystemPrompt);
+    setSystemPrompt(defaultSystemPromptBase);
   };
 
   const reset = () => {
+    const effective = buildEffectiveSystemPrompt();
     messages = [
-      { role: 'system', content: activeSystemPrompt }
+      { role: 'system', content: effective }
     ];
     sessionMetaPending = sessionMeta;
     lastEditedPath = undefined;
@@ -1218,7 +1224,10 @@ export async function createSession(opts: {
       throw new Error('restore: first message must be system');
     }
     messages = next;
-    activeSystemPrompt = String(next[0].content ?? defaultSystemPrompt);
+    activeSystemPromptBase = String(next[0].content ?? defaultSystemPromptBase);
+    // Note: we don't force buildEffectiveSystemPrompt() here because the restore
+    // data might already have a customized system prompt we want to respect.
+
 
     if (mcpManager) {
       const usedMcpTool = next.some((msg: any) => {
@@ -2061,6 +2070,11 @@ export async function createSession(opts: {
       baseMaxTokens: BASE_MAX_TOKENS,
     }));
 
+    // Update system prompt for the new model/harness
+    if (messages.length > 0 && messages[0].role === 'system') {
+      messages[0].content = buildEffectiveSystemPrompt();
+    }
+
     emitDetached(hookManager.emit('model_changed', {
       previousModel,
       nextModel: model,
@@ -2295,6 +2309,10 @@ export async function createSession(opts: {
       } catch {
         // best effort
       }
+    };
+
+    const isReadOnlyToolDynamic = (toolName: string) => {
+      return isReadOnlyTool(toolName) || LSP_TOOL_NAME_SET.has(toolName) || Boolean(mcpManager?.isToolReadOnly(toolName));
     };
 
     const emitToolResult = async (result: ToolResultEvent): Promise<void> => {
@@ -2995,10 +3013,7 @@ export async function createSession(opts: {
             },
           });
 
-          const isReadOnlyToolDynamic = (toolName: string) => {
-            return isReadOnlyTool(toolName) || LSP_TOOL_NAME_SET.has(toolName) || Boolean(mcpManager?.isToolReadOnly(toolName));
-          };
-
+          // Tool-call argument parsing and validation logic
           const fileMutationsInTurn = toolCallsArr.filter((tc) => FILE_MUTATION_TOOL_SET.has(tc.function?.name)).length;
           if (fileMutationsInTurn >= 3 && isGitDirty(ctx.cwd)) {
             const shouldStash = confirmBridge
@@ -4058,7 +4073,7 @@ export async function createSession(opts: {
     get capturePath() {
       return capturePath;
     },
-    getSystemPrompt: () => activeSystemPrompt,
+    getSystemPrompt: () => messages[0]?.role === 'system' ? String(messages[0].content) : activeSystemPromptBase,
     setSystemPrompt,
     resetSystemPrompt,
     listMcpServers,
