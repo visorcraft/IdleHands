@@ -188,6 +188,10 @@ export type IdlehandsConfig = {
   timeout: number;
   max_iterations: number;
   tool_loop_detection?: ToolLoopDetectionConfig;
+  tool_loop_auto_continue?: {
+    enabled?: boolean;
+    max_retries?: number; // default 5
+  };
 
   // network
   response_timeout: number; // seconds to wait for model server responses (default 600)

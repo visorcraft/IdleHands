@@ -46,6 +46,7 @@ import type {
   AntonAttemptStatus,
 } from './types.js';
 import { detectVerificationCommands, runVerification } from './verifier.js';
+import { isToolLoopBreak, AUTO_CONTINUE_PROMPT } from '../bot/auto-continue.js';
 
 export interface RunAntonOpts {
   config: AntonRunConfig;
@@ -471,7 +472,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
 
         try {
           // Build prompt and ask session
-          const prompt = await buildAntonPrompt({
+          let prompt = await buildAntonPrompt({
             task: currentTask,
             taskFile,
             taskFilePath: config.taskFile,
@@ -506,11 +507,29 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               console.error(`[anton:turn] task="${currentTask.text.slice(0, 40)}" turn=${stats.turn} toolCalls=${stats.toolCalls} tokens=${tokens}`);
             },
           };
+          let toolLoopRetries = 0;
+          const toolLoopMaxRetries = idlehandsConfig.tool_loop_auto_continue?.enabled !== false
+            ? (idlehandsConfig.tool_loop_auto_continue?.max_retries ?? 5)
+            : 0;
           while (true) {
             try {
               result = await session.ask(prompt, askHooks as any);
               break;
             } catch (e) {
+              // Auto-continue on tool-loop breaks (AgentLoopBreak)
+              if (
+                isToolLoopBreak(e) &&
+                toolLoopRetries < toolLoopMaxRetries &&
+                !abortSignal.aborted &&
+                !controller.signal.aborted
+              ) {
+                toolLoopRetries++;
+                console.error(`[anton] tool-loop auto-continue (retry ${toolLoopRetries}/${toolLoopMaxRetries}) task="${currentTask.text.slice(0, 40)}"`);
+                try { progress.onToolLoop?.(currentTask.text, { level: 'critical', toolName: 'unknown', count: toolLoopRetries, message: `Auto-continuing (retry ${toolLoopRetries}/${toolLoopMaxRetries})` }); } catch { /* best effort */ }
+                prompt = AUTO_CONTINUE_PROMPT;
+                continue;
+              }
+
               const infraKind = classifyInfraError(e);
               if (
                 !runtimeResilienceEnabled ||

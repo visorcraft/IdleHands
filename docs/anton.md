@@ -152,6 +152,15 @@ Task attempt fails
   └── otherwise → retry with full error context
 ```
 
+### Tool loop auto-continue
+
+Anton handles tool loops internally without requiring orchestrator intervention. When
+the agent hits a critical tool loop during a task, Anton automatically re-prompts with
+a continuation message — up to `tool_loop_auto_continue.max_retries` times (default 5).
+
+Progress is reported via the `onToolLoop` callback. If all retries are exhausted, the
+task fails normally and enters the standard retry flow above.
+
 ## Safety posture
 
 - single-run lock to prevent concurrent Anton conflicts

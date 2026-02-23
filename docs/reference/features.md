@@ -74,6 +74,42 @@ Idle Hands uses a platform-agnostic progress message renderer across all UIs:
 
 All three frontends (TUI, Telegram, Discord) share the same rendering logic, ensuring consistent progress updates across platforms.
 
+## Tool loop auto-continue
+
+Idle Hands detects when the agent gets stuck in a tool loop — repeating identical tool calls
+with no meaningful progress. Previously this required manual intervention ("Continue"). Now it
+recovers automatically.
+
+**How it works:**
+
+1. The agent's tool-loop detector identifies a critical loop and throws `AgentLoopBreak`
+2. The surface (TUI/Telegram/Discord/Anton) catches the error
+3. A user-visible notice is sent: error details + retry count
+4. The agent is re-prompted with a continuation message
+5. This repeats up to `max_retries` times (default 5)
+
+**Surface behavior:**
+
+| Surface | Notification |
+|---------|-------------|
+| TUI | Info alert in the status bar |
+| Telegram | Error-styled message with retry count |
+| Discord | Error-styled message with retry count |
+| Anton | Internal retry via `onToolLoop` callback — no orchestrator roundtrip |
+
+**Configuration:**
+
+```json
+{
+  "tool_loop_auto_continue": {
+    "enabled": true,
+    "max_retries": 5
+  }
+}
+```
+
+Set `enabled: false` to restore the previous behavior (immediate stop on tool loop).
+
 ## Capture + replay
 
 ::: code-group
