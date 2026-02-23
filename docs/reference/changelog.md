@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.4 (2026-02-23)
+
+### Vault: automatic turn action summaries
+
+- After every tool-using turn, a structured action summary is now automatically persisted to the Vault.
+- Each summary includes: the user's request, every tool action taken (human-readable), and the assistant's final response.
+- Summaries are stored as `system`-kind vault entries keyed by ask ID, using `upsertNote` to avoid duplicates.
+- Enables `vault_search` to recall prior actions even after context compaction — particularly valuable for local models with limited context windows.
+- Best-effort only: summary persistence never blocks or delays ask completion.
+
 ## 1.1.17 (2026-02-22)
 
 ### Bug fixes

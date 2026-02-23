@@ -25,9 +25,11 @@ Idle Hands is built for people who want an agent that can actually ship work, no
 
 Trifecta is the integrated core of Idle Hands:
 
-- **Vault** → persistent memory + notes (`/vault`, `/note`, `/notes`)
+- **Vault** → persistent memory + notes (`/vault`, `/note`, `/notes`) + automatic turn action summaries
 - **Replay** → file checkpoints and rewind/diff (`/checkpoints`, `/rewind`, `/diff`, `/undo`)
 - **Lens** → structural compression/indexing for better context usage
+
+Every tool-using turn is automatically summarized and persisted to the Vault, so the model can recall what it did — even after context compaction drops earlier messages. This is especially useful for local models with limited context windows.
 
 Runtime controls:
 

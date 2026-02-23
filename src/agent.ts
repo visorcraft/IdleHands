@@ -2364,6 +2364,27 @@ export async function createSession(opts: {
 
     const finalizeAsk = async (text: string): Promise<AgentResult> => {
       const finalText = ensureInformativeAssistantText(text, { toolCalls, turns });
+
+      // Auto-persist turn action summary to Vault so the model can recall what it did.
+      if (vault && toolCalls > 0) {
+        try {
+          const actions: string[] = [];
+          for (const [callId, name] of toolNameByCallId) {
+            const args = toolArgsByCallId.get(callId) ?? {};
+            actions.push(planModeSummary(name, args));
+          }
+          if (actions.length) {
+            const userPromptSnippet = rawInstructionText.length > 120
+              ? rawInstructionText.slice(0, 120) + '…'
+              : rawInstructionText;
+            const summary = `User asked: ${userPromptSnippet}\nActions (${actions.length} tool calls, ${turns} turns):\n${actions.map(a => `- ${a}`).join('\n')}\nResult: ${finalText.length > 200 ? finalText.slice(0, 200) + '…' : finalText}`;
+            await vault.upsertNote(`turn_summary_${askId}`, summary, 'system');
+          }
+        } catch {
+          // best-effort — never block ask completion for summary persistence
+        }
+      }
+
       await hookManager.emit('ask_end', { askId, text: finalText, turns, toolCalls });
       return { text: finalText, turns, toolCalls };
     };
