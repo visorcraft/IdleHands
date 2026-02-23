@@ -512,6 +512,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       antonAbortSignal: null,
       antonLastResult: null,
       antonProgress: null,
+      agentId: managed.agentId,
       agentPersona: managed.agentPersona,
       currentModelIndex: managed.currentModelIndex,
       escalationCount: managed.escalationCount,

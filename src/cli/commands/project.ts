@@ -342,18 +342,39 @@ export const projectCommands: SlashCommand[] = [
   {
     name: '/pin',
     description: 'Pin current working directory',
-    async execute(ctx) {
-      console.log(`Working directory pinned: ${ctx.S.dim(ctx.config.dir || '(not set)')}`);
+    async execute(ctx, args) {
+      const targetDir = args?.trim()
+        ? path.resolve(expandHome(args.trim()))
+        : ctx.config.dir
+          ? path.resolve(expandHome(ctx.config.dir))
+          : process.cwd();
+
+      try {
+        await fs.access(targetDir);
+      } catch {
+        console.log(`❌ Directory does not exist: ${targetDir}`);
+        return true;
+      }
+
+      ctx.config.dir = targetDir;
+      ctx.config.dir_pinned = true;
+      console.log(`✅ Working directory pinned to ${targetDir}`);
       return true;
     },
   },
   {
     name: '/unpin',
-    description: 'Unpin current working directory',
+    description: 'Unpin working directory',
     async execute(ctx) {
-      console.log(`Working directory unpinned.`);
-      // Clear the dir config to reset to default
+      if (!ctx.config.dir_pinned) {
+        console.log('Directory is not pinned.');
+        return true;
+      }
+
+      const previousDir = ctx.config.dir || '(none)';
+      ctx.config.dir_pinned = false;
       ctx.config.dir = undefined;
+      console.log(`✅ Directory unpinned (was: ${previousDir}). Working directory reset to default.`);
       return true;
     },
   },
