@@ -1,0 +1,11 @@
+{
+  "name": "smoke_ok_compare",
+  "engine": "both",
+  "workspace": { "kind": "temp", "prefix": "idlehands-bench-smoke-" },
+  "setup": [],
+  "instruction": "Reply with exactly: OK",
+  "success": { "type": "equals", "value": "OK" },
+  "repetitions": 1,
+  "max_tokens": 64,
+  "model": "Qwen3-Coder-Next-Q4_K_M.gguf"
+}

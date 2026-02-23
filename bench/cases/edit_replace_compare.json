@@ -1,0 +1,11 @@
+{
+  "name": "edit_replace_compare",
+  "engine": "both",
+  "workspace": { "kind": "temp", "prefix": "idlehands-edit-replace-compare-" },
+  "setup": ["printf 'hello\n' > hello.txt"],
+  "instruction": "Replace the text 'hello' with 'hi' in hello.txt. Use the smallest change possible.",
+  "success": { "type": "exec", "command": "cat hello.txt", "stdoutEquals": "hi" },
+  "repetitions": 5,
+  "max_tokens": 1024,
+  "model": "Qwen3-Coder-Next-Q4_K_M.gguf"
+}
