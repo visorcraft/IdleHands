@@ -100,15 +100,15 @@ export type UXEventPROGRESS = UXEventBase & {
 // ---------------------------------------------------------------------------
 
 /**
- * Non-blocking warning that requires user attention but doesn't stop execution.
+ * Non-blocking issue requiring user attention.
  */
 export type UXEventWARNING = UXEventBase & {
   category: 'WARNING';
   message: string;
-  /** Optional warning code for programmatic handling */
+  /** Optional warning code or category */
   code?: string;
-  /** Optional remediation guidance */
-  guidance?: string;
+  /** Optional hint for resolution */
+  hint?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -116,18 +116,18 @@ export type UXEventWARNING = UXEventBase & {
 // ---------------------------------------------------------------------------
 
 /**
- * Blocking error that requires user intervention.
+ * Blocking error requiring user action.
  */
 export type UXEventERROR = UXEventBase & {
   category: 'ERROR';
   message: string;
-  /** Optional error code for programmatic handling */
+  /** Optional error code */
   code?: string;
-  /** Optional detailed error info */
+  /** Optional error details */
   details?: string;
   /** Whether the error is retryable */
   retryable?: boolean;
-  /** Optional remediation guidance */
+  /** Optional guidance for user */
   guidance?: string;
 };
 
@@ -140,13 +140,12 @@ export type UXEventERROR = UXEventBase & {
  */
 export type UXEventRESULT = UXEventBase & {
   category: 'RESULT';
-  /** Result summary */
   summary: string;
-  /** Optional structured result data */
+  /** Optional structured data */
   data?: Record<string, unknown>;
-  /** Optional success flag (defaults to true if not specified) */
+  /** Whether the operation succeeded */
   success?: boolean;
-  /** Optional metrics/stats */
+  /** Optional statistics */
   stats?: {
     durationMs?: number;
     tokensUsed?: number;
@@ -159,32 +158,24 @@ export type UXEventRESULT = UXEventBase & {
 // ---------------------------------------------------------------------------
 
 /**
- * Available actions the user can take.
- * Typically sent with RESULT or ERROR events.
+ * Action buttons/commands available to user.
  */
 export type UXActionType =
-  | 'retry_fast' // Retry with fast model
-  | 'retry_heavy' // Retry with heavy model
+  | 'retry_fast' // Quick retry (e.g., same parameters, faster model)
+  | 'retry_heavy' // Full retry (e.g., different parameters, heavier model)
   | 'cancel' // Cancel current operation
-  | 'show_diff' // Show diff for file changes
-  | 'apply' // Apply suggested changes
-  | 'anton_stop' // Stop anton autonomous agent
-  | 'escalate' // Escalate to higher model
-  | 'deescalate' // Deescalate to lower model
-  | 'watchdog_compact' // Trigger watchdog compaction
-  | 'custom'; // Custom action (requires label)
+  | 'show_diff' // Show diff of changes
+  | 'apply' // Apply proposed changes
+  | 'anton_stop'; // Stop Anton completely
 
 /**
- * A single actionable button/command.
+ * Action available to user.
  */
 export type UXAction = {
   type: UXActionType;
-  /** Label to display on the button */
   label: string;
-  /** Payload to send when action is triggered */
-  payload: Record<string, unknown>;
-  /** Optional hint for the action */
-  hint?: string;
+  /** Optional payload for the action */
+  payload?: Record<string, unknown>;
 };
 
 /**
@@ -193,7 +184,7 @@ export type UXAction = {
 export type UXEventACTIONS = UXEventBase & {
   category: 'ACTIONS';
   actions: UXAction[];
-  /** Optional message to accompany actions */
+  /** Optional message describing available actions */
   message?: string;
 };
 
@@ -202,7 +193,7 @@ export type UXEventACTIONS = UXEventBase & {
 // ---------------------------------------------------------------------------
 
 /**
- * All possible UX event types.
+ * All UX event types.
  */
 export type UXEvent =
   | UXEventACK
@@ -213,7 +204,7 @@ export type UXEvent =
   | UXEventACTIONS;
 
 // ---------------------------------------------------------------------------
-// Helper Functions
+// Factory Functions
 // ---------------------------------------------------------------------------
 
 /**
@@ -284,7 +275,7 @@ export function createWARNINGEvent(
   message: string,
   opts?: {
     code?: string;
-    guidance?: string;
+    hint?: string;
     timestamp?: number;
   }
 ): UXEventWARNING {
@@ -297,7 +288,7 @@ export function createWARNINGEvent(
     sequence,
     message,
     code: opts?.code,
-    guidance: opts?.guidance,
+    hint: opts?.hint,
   };
 }
 
@@ -389,6 +380,10 @@ export function createACTIONSEvent(
     message: opts?.message,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Utility Functions
+// ---------------------------------------------------------------------------
 
 /**
  * Check if an event is retryable.
