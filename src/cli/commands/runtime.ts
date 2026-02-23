@@ -65,7 +65,7 @@ export const runtimeCommands: SlashCommand[] = [
     },
   },
   {
-    name: '/restart-bot',
+    name: '/restart_bot',
     description: 'Restart the idlehands-bot service',
     async execute() {
       const { spawn } = await import('node:child_process');
