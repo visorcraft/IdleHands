@@ -44,4 +44,4 @@ jobs:
         run: npm ci --include=dev --no-audit --no-fund
 
       - name: Run repository security/privacy sweep
-        run: ./scripts/security-sweep.sh
+        run: bash ./scripts/security-sweep.sh
