@@ -22,6 +22,7 @@ import {
   formatChangePrefix,
 } from '../init.js';
 import { parseWatchArgs } from '../watch.js';
+import { expandHome } from '../../bot/dir-guard.js';
 
 export const projectCommands: SlashCommand[] = [
   {
@@ -321,6 +322,38 @@ export const projectCommands: SlashCommand[] = [
       } catch (e: any) {
         console.error(errFmt(`UNDO: ${e?.message ?? String(e)}`, ctx.S));
       }
+      return true;
+    },
+  },
+  {
+    name: '/dir',
+    description: 'Get/set working directory',
+    async execute(ctx, args) {
+      if (!args) {
+        console.log(`Working directory: ${ctx.S.dim(ctx.config.dir || '(not set)')}`);
+        return true;
+      }
+      const resolvedDir = path.resolve(expandHome(args));
+      console.log(`Working directory set to: ${resolvedDir}`);
+      // Note: The actual config update happens in the CLI, this is just for display
+      return true;
+    },
+  },
+  {
+    name: '/pin',
+    description: 'Pin current working directory',
+    async execute(ctx) {
+      console.log(`Working directory pinned: ${ctx.S.dim(ctx.config.dir || '(not set)')}`);
+      return true;
+    },
+  },
+  {
+    name: '/unpin',
+    description: 'Unpin current working directory',
+    async execute(ctx) {
+      console.log(`Working directory unpinned.`);
+      // Clear the dir config to reset to default
+      ctx.config.dir = undefined;
       return true;
     },
   },

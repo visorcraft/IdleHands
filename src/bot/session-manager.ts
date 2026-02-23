@@ -512,6 +512,58 @@ When you escalate, your request will be re-run on a more capable model.`;
       antonAbortSignal: null,
       antonLastResult: null,
       antonProgress: null,
+      agentPersona: managed.agentPersona,
+      currentModelIndex: managed.currentModelIndex,
+      escalationCount: managed.escalationCount,
+      pendingEscalation: managed.pendingEscalation,
+      pendingEscalationEndpoint: managed.pendingEscalationEndpoint,
+      watchdogCompactAttempts: 0,
+    });
+    return true;
+  }
+
+  /** Unpin the current directory for a session. */
+  async unpin(chatId: number): Promise<boolean> {
+    const managed = this.sessions.get(chatId);
+    if (!managed) return false;
+    // Re-create session with dir_pinned: false and cleared dir
+    this.destroy(chatId);
+    const config: IdlehandsConfig = {
+      ...managed.config,
+      dir: undefined,
+      no_confirm: managed.approvalMode === 'yolo',
+      approval_mode: managed.approvalMode as any,
+      allowed_write_roots: managed.allowedDirs,
+      require_dir_pin_for_mutations: managed.config.require_dir_pin_for_mutations ?? false,
+      dir_pinned: false,
+      repo_candidates: managed.repoCandidates,
+    };
+    const confirmProvider = this.makeConfirmProvider?.(chatId, managed.userId);
+    const session = await createSession({ config, confirmProvider });
+
+    this.sessions.set(chatId, {
+      session,
+      config,
+      confirmProvider,
+      chatId,
+      userId: managed.userId,
+      createdAt: Date.now(),
+      lastActivity: Date.now(),
+      workingDir: managed.workingDir,
+      allowedDirs: managed.allowedDirs,
+      dirPinned: false,
+      repoCandidates: managed.repoCandidates,
+      approvalMode: managed.approvalMode,
+      inFlight: false,
+      pendingQueue: [],
+      state: 'idle',
+      activeTurnId: 0,
+      activeAbortController: null,
+      lastProgressAt: 0,
+      antonActive: false,
+      antonAbortSignal: null,
+      antonLastResult: null,
+      antonProgress: null,
       // Preserve multi-agent state
       agentId: managed.agentId,
       agentPersona: managed.agentPersona,
