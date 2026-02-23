@@ -1,6 +1,6 @@
 # Trifecta (Vault + Replay + Lens)
 
-Trifecta is Idle Hands’ integrated memory + reversibility + structure layer.
+Trifecta is Idle Hands' integrated memory + reversibility + structure layer.
 
 It combines three subsystems:
 
@@ -21,12 +21,25 @@ What it does:
 - Stores explicit notes (`/note`, `vault_note`)
 - Supports semantic retrieval (`/vault`, `vault_search`)
 - Archives compacted history/tool output so context can be dropped safely
+- **Auto-persists turn action summaries** so the model can recall what it did in prior turns
 
 Primary commands:
 
 - `/vault <query>`
 - `/notes`
 - `/note <key> <value>`
+
+### Automatic turn summaries
+
+When the agent completes a turn that involved tool calls, a structured summary is automatically persisted to the Vault. This summary includes:
+
+- What the user asked (truncated for efficiency)
+- Every tool action taken (e.g. `run: npx eslint --fix`, `edit src/app.ts lines 10-20`)
+- The assistant's final response
+
+This means the model can use `vault_search` to recall its own prior actions - even after context compaction has dropped the original messages. This is especially valuable for local models with limited context windows, where earlier turns are often lost.
+
+Turn summaries are stored with `system` kind and keyed by ask ID, so they don't pollute user-created notes.
 
 ---
 
@@ -59,7 +72,7 @@ What it does:
 - Helps summarization/indexing avoid token blowups
 - Improves quality when large files must be reasoned about repeatedly
 
-You usually don’t call Lens directly; it works behind the scenes and in synergy with Vault/Replay.
+You usually don't call Lens directly; it works behind the scenes and in synergy with Vault/Replay.
 
 ---
 
@@ -68,8 +81,9 @@ You usually don’t call Lens directly; it works behind the scenes and in synerg
 - **Lens → Vault**: stores compressed structural memory instead of giant blobs
 - **Replay → Vault**: failed/aborted branches can still become searchable knowledge
 - **Lens + Replay**: diffs and recovery stay actionable even in large files
+- **Turn summaries → Vault**: every tool-using turn is automatically logged, making the agent self-aware of its own history
 
-This is the core differentiator of Idle Hands vs simple “chat + tools” shells.
+This is the core differentiator of Idle Hands vs simple "chat + tools" shells.
 
 ---
 

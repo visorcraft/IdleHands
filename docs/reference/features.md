@@ -5,7 +5,7 @@
 Trifecta is the integrated subsystem that gives Idle Hands durable memory,
 checkpoint-based recovery, and context shaping.
 
-- **Vault**: persistent memory and notes (`/vault`, `/note`, `/notes`)
+- **Vault**: persistent memory and notes (`/vault`, `/note`, `/notes`), plus automatic turn action summaries
 - **Replay**: checkpoints and rewind/diff/undo (`/checkpoints`, `/rewind`, `/diff`, `/undo`)
 - **Lens**: structural analysis/projection for compact context handling
 
@@ -50,6 +50,18 @@ Recent defaults focus on reducing context blowups in long coding sessions:
   - `apply_patch` for unified diff application across files, with touched-file validation and `git apply --check`/`patch --dry-run` safety checks.
   - `edit_range` for line-range replacement in one file (including clean deletions with empty replacement).
 - Live history stores compact tool-output digests while full raw output is archived in Vault (when enabled).
+
+## Automatic turn summaries
+
+When the agent completes a turn that involved tool calls, a structured action summary is automatically persisted to the Vault. Each summary captures:
+
+- The user's request (truncated to 120 characters)
+- Every tool action in the turn (using human-readable descriptions like `run: npm test`, `edit src/app.ts lines 10-20`)
+- The assistant's final response (truncated to 200 characters)
+
+This gives the model durable self-knowledge — it can use `vault_search` to recall what it did in previous turns, even after context compaction has dropped the original messages. Particularly useful for local models with smaller context windows where earlier conversation turns are lost.
+
+Summaries are stored as `system`-kind vault entries keyed by ask ID and managed via `upsertNote`, so repeated asks update rather than duplicate.
 
 ## Shared progress rendering
 
