@@ -23,7 +23,6 @@ export function buildSessionConfig(base: IdlehandsConfig, config: AntonRunConfig
     timeout: config.taskTimeoutSec,
     compact_at: 0.65,
     compact_min_tail: 4,
-    max_read_lines: 200,
   };
 }
 
