@@ -2565,6 +2565,8 @@ export async function createSession(opts: {
     let toollessRecoveryUsed = false;
     // Prevent repeating the same "stop rerunning" reminder every turn.
     const readOnlyExecHintedSigs = new Set<string>();
+    // Tool loop recovery: poisoned results and selective tool suppression.
+    const suppressedTools = new Set<string>();
     // Keep a lightweight breadcrumb for diagnostics on partial failures.
     let lastSuccessfulTestRun: any = null;
     // One-time nudge to prevent post-success churn after green test runs.
@@ -2815,7 +2817,9 @@ export async function createSession(opts: {
         let resp;
         try {
           try {
-            const toolsForTurn = (cfg.no_tools || forceToollessRecoveryTurn) ? [] : getToolsSchema();
+            const toolsForTurn = (cfg.no_tools || forceToollessRecoveryTurn)
+              ? []
+              : getToolsSchema().filter(t => !suppressedTools.has(t.function.name));
             const toolChoiceForTurn = (cfg.no_tools || forceToollessRecoveryTurn) ? 'none' : 'auto';
             resp = await client.chatStream({
               model,
@@ -3096,6 +3100,7 @@ export async function createSession(opts: {
             onMutation: (absPath: string) => {
               lastEditedPath = absPath;
               mutationVersion++;
+              suppressedTools.clear();  // file changed, re-enable all tools
             },
           });
 
@@ -3145,6 +3150,8 @@ export async function createSession(opts: {
           const replayExecSigs = new Set<string>();
           // Repeated read_file/read_files/list_dir calls can be served from cache.
           const repeatedReadFileSigs = new Set<string>();
+          // Poisoned tool sigs: at consec >= 3, don't execute — return error instead.
+          const poisonedToolSigs = new Set<string>();
 
           let shouldForceToollessRecovery = false;
           const criticalLoopSigs = new Set<string>();
@@ -3294,20 +3301,18 @@ export async function createSession(opts: {
                 }
               }
 
-              // At 2x, serve from cache if available AND inject final warning
-              if (consec >= 2 && isReadFileTool) {
-                if (consec === 4) {
-                  let resourceType = 'resource';
-                  if (toolName === 'read_file') resourceType = 'file';
-                  else if (toolName === 'read_files') resourceType = 'files';
-                  else if (toolName === 'list_dir') resourceType = 'directory';
-
-                  messages.push({
-                    role: 'system',
-                    content: `CRITICAL: ${resourceType} unchanged. Move on NOW.`,
-                  } as ChatMessage);
+              // At consec >= 3: poison the result (don't execute, return error).
+              // At consec >= 4: also suppress the tool from the schema entirely.
+              if (consec >= 3) {
+                poisonedToolSigs.add(sig);
+                if (consec >= 4) {
+                  suppressedTools.add(toolName);
                 }
+                continue;
+              }
 
+              // At 2x, serve from cache if available
+              if (consec >= 2 && isReadFileTool) {
                 const argsForSig = sigMetaBySig.get(sig)?.args ?? {};
                 const replay = await toolLoopGuard.getReadCacheReplay(toolName, argsForSig, ctx.cwd);
                 if (replay) {
@@ -3542,6 +3547,17 @@ export async function createSession(opts: {
             }
 
             const sig = toolLoopGuard.computeSignature(name, args && typeof args === 'object' && !Array.isArray(args) ? args : {});
+
+            // Poisoned tool call: don't execute, return error-like result.
+            if (poisonedToolSigs.has(sig)) {
+              const consec = consecutiveCounts.get(sig) ?? 3;
+              const argsPreview = JSON.stringify(args).slice(0, 200);
+              return {
+                id: callId,
+                content: `ERROR: Tool call blocked — you already called ${name} with these exact arguments ${consec} times. The result has not changed. Use the information you already have and proceed to the next step. (args=${argsPreview})`,
+              };
+            }
+
             let content = '';
             let reusedCachedReadOnlyExec = false;
             let reusedCachedReadTool = false;
@@ -3955,6 +3971,23 @@ export async function createSession(opts: {
           for (const r of results) {
             const compactToolMsg = await compactToolMessageForHistory(r.id, r.content);
             messages.push(compactToolMsg as any);
+          }
+
+          // Re-enable suppressed tools if the model used a non-suppressed tool (it moved on).
+          if (suppressedTools.size > 0) {
+            const usedToolNames = new Set(toolCallsArr.map(tc => tc.function.name));
+            const usedNonSuppressed = [...usedToolNames].some(t => !suppressedTools.has(t));
+            if (usedNonSuppressed) {
+              suppressedTools.clear();
+            }
+          }
+
+          // Nudge the model when tool calls were poisoned this turn.
+          if (poisonedToolSigs.size > 0) {
+            messages.push({
+              role: 'user' as const,
+              content: '[system] Tool calls were blocked — you already have those results. Use existing information and move to the next step.',
+            });
           }
 
           if (readOnlyExecTurnHints.length) {
