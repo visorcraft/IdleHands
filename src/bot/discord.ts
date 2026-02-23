@@ -22,6 +22,9 @@ import {
   formatTaskStart,
   formatTaskEnd,
   formatTaskSkip,
+  formatToolLoopEvent,
+  formatCompactionEvent,
+  formatVerificationDetail,
 } from '../anton/reporter.js';
 import type { AntonRunConfig, AntonProgressCallback } from '../anton/types.js';
 import { firstToken } from '../cli/command-utils.js';
@@ -1987,6 +1990,26 @@ When you escalate, your request will be re-run on a more capable model.`;
       },
       onHeartbeat() {
         managed.lastActivity = Date.now();
+      },
+      onToolLoop(taskText, event) {
+        managed.lastActivity = Date.now();
+        if (defaults.progress_events !== false) {
+          channel.send(formatToolLoopEvent(taskText, event)).catch(() => { });
+        }
+      },
+      onCompaction(taskText, event) {
+        managed.lastActivity = Date.now();
+        // Only send for significant compactions to avoid noise
+        if (defaults.progress_events !== false && event.droppedMessages >= 5) {
+          channel.send(formatCompactionEvent(taskText, event)).catch(() => { });
+        }
+      },
+      onVerification(taskText, verification) {
+        managed.lastActivity = Date.now();
+        // Only send for failures — successes are already reported in onTaskEnd
+        if (defaults.progress_events !== false && !verification.passed) {
+          channel.send(formatVerificationDetail(taskText, verification)).catch(() => { });
+        }
       },
     };
 

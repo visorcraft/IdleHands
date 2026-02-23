@@ -20,6 +20,9 @@ import {
   formatTaskStart,
   formatTaskEnd,
   formatTaskSkip,
+  formatToolLoopEvent,
+  formatCompactionEvent,
+  formatVerificationDetail,
 } from '../../anton/reporter.js';
 import type { AntonRunConfig, AntonProgressCallback } from '../../anton/types.js';
 import { projectDir } from '../../utils.js';
@@ -240,6 +243,15 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
       ctx.antonAbortSignal = null;
       ctx.antonProgress = null;
       console.error(formatRunSummary(result));
+    },
+    onToolLoop(taskText, event) {
+      console.error(formatToolLoopEvent(taskText, event));
+    },
+    onCompaction(taskText, event) {
+      console.error(formatCompactionEvent(taskText, event));
+    },
+    onVerification(taskText, verification) {
+      console.error(formatVerificationDetail(taskText, verification));
     },
   };
 
