@@ -98,6 +98,52 @@ function buildBranchOverlay(state: TuiState, width: number, height: number): str
   return [`${C.bold}${top}${C.reset}`, ...mid, `${C.bold}${bot}${C.reset}`];
 }
 
+function buildModelPickerOverlay(state: TuiState, width: number, height: number): string[] {
+  const picker = state.modelPicker;
+  if (!picker) return [];
+  const inner = Math.max(20, width - 2);
+  const lines: string[] = [];
+  const pageSize = Math.max(5, height - 6);
+
+  lines.push(`${C.bold}Model Picker${C.reset}  (↑/↓ move, Enter select, type to filter, Esc cancel)`);
+  lines.push(`${C.dim}Filter:${C.reset} ${picker.query || '(type to search)'}`);
+  lines.push('');
+
+  const items = picker.filtered;
+  if (!items.length) {
+    lines.push(`${C.dim}No matching models.${C.reset}`);
+  } else {
+    const startIdx = Math.min(picker.offset, Math.max(0, items.length - pageSize));
+    const endIdx = Math.min(startIdx + pageSize, items.length);
+
+    for (let i = startIdx; i < endIdx; i += 1) {
+      const item = items[i]!;
+      const selected = i === picker.selectedIndex;
+      const prefix = selected ? `${C.cyan}❯${C.reset}` : ' ';
+      const name = selected ? `${C.bold}${item.displayName}${C.reset}` : item.displayName;
+      const status = item.enabled ? `${C.green}●${C.reset}` : `${C.red}○${C.reset}`;
+      lines.push(`${prefix} ${status} ${name}`);
+      if (selected) {
+        lines.push(`    ${C.dim}${item.source}${C.reset}`);
+      }
+    }
+
+    if (items.length > pageSize) {
+      lines.push('');
+      lines.push(`${C.dim}Showing ${startIdx + 1}-${endIdx} of ${items.length}${C.reset}`);
+    }
+  }
+
+  const contentRows = Math.max(5, height - 2);
+  const body = lines.slice(0, contentRows).map((l) => truncate(l, inner - 2));
+  while (body.length < contentRows) body.push('');
+
+  const top = `┌${'─'.repeat(inner)}┐`;
+  const mid = body.map((line) => `│ ${line.padEnd(inner - 2)} │`);
+  const bot = `└${'─'.repeat(inner)}┘`;
+  return [`${C.bold}${top}${C.reset}`, ...mid, `${C.bold}${bot}${C.reset}`];
+}
+
 function buildOverlay(state: TuiState, width: number, height: number): string[] {
   const pending = state.confirmPending;
   if (!pending) return [];
@@ -336,7 +382,13 @@ export function renderTui(state: TuiState): void {
                   Math.max(10, Math.floor(layout.transcriptRows * 0.92))
                 )
               )
-            : null;
+            : state.modelPicker
+              ? buildModelPickerOverlay(
+                  state,
+                  Math.min(Math.max(50, Math.floor(cols * 0.85)), cols - 2),
+                  Math.min(layout.transcriptRows, Math.max(10, Math.floor(layout.transcriptRows * 0.85)))
+                )
+              : null;
 
   if (activeOverlay) {
     const boxW = Math.min(Math.max(36, Math.floor(cols * 0.75)), cols - 2);
