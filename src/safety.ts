@@ -18,6 +18,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 
 import { configDir } from './utils.js';
 
@@ -410,10 +411,14 @@ export function checkPathSafety(absPath: string): SafetyVerdict {
   }
 
   // Warn on writes outside home directory (likely unintentional)
-  const home = process.env.HOME || '/home/' + process.env.USER;
-  if (!norm.startsWith(home + '/') && norm !== home) {
-    // /tmp is fine for scratch work
-    if (!norm.startsWith('/tmp/') && !norm.startsWith('/var/tmp/')) {
+  const home = os.homedir();
+  if (!norm.startsWith(home + path.sep) && norm !== home) {
+    // /tmp or Windows Temp is fine for scratch work
+    const isTemp = process.platform === 'win32'
+      ? (process.env.TEMP && norm.startsWith(path.normalize(process.env.TEMP))) || (process.env.TMP && norm.startsWith(path.normalize(process.env.TMP)))
+      : norm.startsWith('/tmp/') || norm.startsWith('/var/tmp/');
+
+    if (!isTemp) {
       if (_lockdown) {
         safetyLog('forbidden', `lockdown: write outside home: ${norm}`);
         return {
@@ -465,8 +470,8 @@ export async function checkPathTraversal(
   }
 
   // Check home directory — always allow access to files under home
-  const home = process.env.HOME || '/home/' + process.env.USER;
-  if (norm.startsWith(home + '/') || norm === home) return null;
+  const home = os.homedir();
+  if (norm.startsWith(home + path.sep) || norm === home) return null;
 
   // If path exists, check for symlink escape
   try {

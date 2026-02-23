@@ -137,6 +137,35 @@ describe('OpenAIClient retry behavior', () => {
     assert.ok(calls >= 3);
     assert.ok(threw instanceof Error);
   });
+
+  it('retries on 429 Too Many Requests status code', async () => {
+    const client: any = new OpenAIClient('http://example.invalid/v1', undefined, false);
+
+    let calls = 0;
+    client.fetchWithConnTimeout = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response('', { status: 429, statusText: 'Too Many Requests' });
+      }
+      return new Response(
+        JSON.stringify({
+          id: 'ok',
+          choices: [{ index: 0, message: { role: 'assistant', content: 'hello' } }],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    };
+
+    const resp = await client.chat({
+      model: 'fake',
+      messages: [{ role: 'user', content: 'u' }],
+    });
+
+    assert.equal(resp.choices[0].message.content, 'hello');
+    assert.equal(calls, 2);
+    assert.equal(client.rateLimiter.recentCount, 1);
+  });
 });
 
 describe('OpenAIClient request sanitization', () => {
@@ -344,37 +373,37 @@ describe('OpenAIClient SSE parsing + malformed handling', () => {
 describe('RateLimiter', () => {
   it('returns zero delay when under threshold', () => {
     const rl = new RateLimiter(60_000, 5);
-    rl.record503();
-    rl.record503();
+    rl.recordRetryableError();
+    rl.recordRetryableError();
     assert.equal(rl.getDelay(), 0);
     assert.equal(rl.recentCount, 2);
   });
 
   it('returns escalating delay after threshold exceeded', () => {
     const rl = new RateLimiter(60_000, 3);
-    rl.record503();
-    rl.record503();
-    rl.record503();
+    rl.recordRetryableError();
+    rl.recordRetryableError();
+    rl.recordRetryableError();
     const d1 = rl.getDelay();
     assert.ok(d1 > 0, `expected positive delay, got ${d1}`);
 
     // Record more → higher backoff
-    rl.record503();
+    rl.recordRetryableError();
     const d2 = rl.getDelay();
     assert.ok(d2 >= d1, `expected escalating delay: ${d2} >= ${d1}`);
   });
 
   it('caps backoff at maxBackoffMs', () => {
     const rl = new RateLimiter(60_000, 1, 5_000);
-    for (let i = 0; i < 20; i++) rl.record503();
+    for (let i = 0; i < 20; i++) rl.recordRetryableError();
     assert.ok(rl.getDelay() <= 5_000);
   });
 
   it('resets cleanly', () => {
     const rl = new RateLimiter(60_000, 2);
-    rl.record503();
-    rl.record503();
-    rl.record503();
+    rl.recordRetryableError();
+    rl.recordRetryableError();
+    rl.recordRetryableError();
     assert.ok(rl.getDelay() > 0);
     rl.reset();
     assert.equal(rl.getDelay(), 0);

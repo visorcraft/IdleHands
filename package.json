@@ -30,7 +30,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && chmod +x dist/index.js && cp src/sys/snapshot.sh dist/sys/snapshot.sh 2>/dev/null || true",
+    "build": "tsc -p tsconfig.json && node -e \"try { require('fs').chmodSync('dist/index.js', 0o755) } catch(e) {}\" && node -e \"try { require('fs').mkdirSync('dist/sys', {recursive:true}); require('fs').copyFileSync('src/sys/snapshot.sh', 'dist/sys/snapshot.sh') } catch(e) {}\"",
     "prepack": "npm run build --silent",
     "start": "node --enable-source-maps dist/index.js",
     "dev": "tsc -p tsconfig.json -w",

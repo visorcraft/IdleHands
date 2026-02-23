@@ -1175,10 +1175,11 @@ export async function createSession(opts: {
 
   const defaultSystemPromptBase = SYSTEM_PROMPT;
   let activeSystemPromptBase = (cfg.system_prompt_override ?? '').trim() || defaultSystemPromptBase;
+  let systemPromptOverridden = (cfg.system_prompt_override ?? '').trim().length > 0;
 
   const buildEffectiveSystemPrompt = () => {
     let p = activeSystemPromptBase;
-    if (harness.systemPromptSuffix) {
+    if (harness.systemPromptSuffix && !systemPromptOverridden) {
       p += '\n\n' + harness.systemPromptSuffix;
     }
     return p;
@@ -1193,6 +1194,7 @@ export async function createSession(opts: {
     const next = String(prompt ?? '').trim();
     if (!next) throw new Error('system prompt cannot be empty');
     activeSystemPromptBase = next;
+    systemPromptOverridden = true;
     const effective = buildEffectiveSystemPrompt();
     if (messages.length > 0 && messages[0].role === 'system') {
       messages[0] = { role: 'system', content: effective };
@@ -1202,6 +1204,7 @@ export async function createSession(opts: {
   };
 
   const resetSystemPrompt = () => {
+    systemPromptOverridden = false;
     setSystemPrompt(defaultSystemPromptBase);
   };
 
