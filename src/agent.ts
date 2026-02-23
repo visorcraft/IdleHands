@@ -1499,6 +1499,58 @@ export async function createSession(opts: {
     };
   };
 
+  const buildLspLensSymbolOutput = async (filePathRaw: string): Promise<string> => {
+    if (!lspManager) return '[lsp] unavailable';
+
+    const semantic = await lspManager.getSymbols(filePathRaw);
+    if (!lens) return semantic;
+
+    const cwd = cfg.dir ?? process.cwd();
+    const absPath = filePathRaw.startsWith('/') ? filePathRaw : path.resolve(cwd, filePathRaw);
+    const body = await fs.readFile(absPath, 'utf8').catch(() => '');
+    if (!body) return semantic;
+
+    const projection = await lens.projectFile(absPath, body).catch(() => '');
+    const structural = extractLensBody(projection);
+    if (!structural) return semantic;
+
+    return `${semantic}\n\n[lens] Structural skeleton:\n${structural}`;
+  };
+
+  const dispatchLspTool = async (name: string, args: any): Promise<string> => {
+    if (!lspManager) return '[lsp] unavailable';
+    switch (name) {
+      case 'lsp_diagnostics':
+        return lspManager.getDiagnostics(
+          typeof args?.path === 'string' ? args.path : undefined,
+          typeof args?.severity === 'number' ? args.severity : undefined,
+        );
+      case 'lsp_symbols':
+        return buildLspLensSymbolOutput(String(args?.path ?? ''));
+      case 'lsp_hover':
+        return lspManager.getHover(
+          String(args?.path ?? ''),
+          Number(args?.line ?? 0),
+          Number(args?.character ?? 0),
+        );
+      case 'lsp_definition':
+        return lspManager.getDefinition(
+          String(args?.path ?? ''),
+          Number(args?.line ?? 0),
+          Number(args?.character ?? 0),
+        );
+      case 'lsp_references':
+        return lspManager.getReferences(
+          String(args?.path ?? ''),
+          Number(args?.line ?? 0),
+          Number(args?.character ?? 0),
+          typeof args?.max_results === 'number' ? args.max_results : 50,
+        );
+      default:
+        throw new Error(`unknown LSP tool: ${name}`);
+    }
+  };
+
   const executePlanStep = async (index?: number): Promise<string[]> => {
     if (!planSteps.length) return ['No plan steps to execute.'];
 
@@ -1523,33 +1575,7 @@ export async function createSession(opts: {
         } else if (step.tool === 'spawn_task') {
           content = await runSpawnTaskCore(step.args, { signal: inFlight?.signal });
         } else if (LSP_TOOL_NAME_SET.has(step.tool) && lspManager) {
-          if (step.tool === 'lsp_diagnostics') {
-            content = await lspManager.getDiagnostics(
-              typeof step.args?.path === 'string' ? step.args.path : undefined,
-              typeof step.args?.severity === 'number' ? step.args.severity : undefined,
-            );
-          } else if (step.tool === 'lsp_symbols') {
-            content = await lspManager.getSymbols(String(step.args?.path ?? ''));
-          } else if (step.tool === 'lsp_hover') {
-            content = await lspManager.getHover(
-              String(step.args?.path ?? ''),
-              Number(step.args?.line ?? 0),
-              Number(step.args?.character ?? 0),
-            );
-          } else if (step.tool === 'lsp_definition') {
-            content = await lspManager.getDefinition(
-              String(step.args?.path ?? ''),
-              Number(step.args?.line ?? 0),
-              Number(step.args?.character ?? 0),
-            );
-          } else if (step.tool === 'lsp_references') {
-            content = await lspManager.getReferences(
-              String(step.args?.path ?? ''),
-              Number(step.args?.line ?? 0),
-              Number(step.args?.character ?? 0),
-              typeof step.args?.max_results === 'number' ? step.args.max_results : 50,
-            );
-          }
+          content = await dispatchLspTool(step.tool, step.args);
         } else if (mcpManager?.hasTool(step.tool)) {
           const callArgs = step.args && typeof step.args === 'object' && !Array.isArray(step.args)
             ? step.args as Record<string, unknown>
@@ -2181,27 +2207,27 @@ export async function createSession(opts: {
       let spinnerIdx = 0;
       let spinnerTimer: NodeJS.Timeout | undefined;
 
-      if (process.stderr.isTTY) {
+      if (process.stderr.isTTY && !process.env.IDLEHANDS_QUIET) {
         spinnerTimer = setInterval(() => {
           const elapsedSec = Math.floor((Date.now() - spinnerStart) / 1000);
           const frame = frames[spinnerIdx % frames.length];
           spinnerIdx++;
           process.stderr.write(`\r${frame} Server unavailable - waiting for reconnect (${elapsedSec}s)...`);
         }, 120);
-      } else {
+      } else if (!process.env.IDLEHANDS_QUIET) {
         console.warn('[model] Server unavailable - waiting for reconnect...');
       }
 
       try {
         await client.waitForReady({ timeoutMs: 120_000, pollMs: 2_000 });
         fresh = normalizeModelsResponse(await client.models());
-        console.warn('[model] Reconnected to server.');
+        if (!process.env.IDLEHANDS_QUIET) console.warn('[model] Reconnected to server.');
       } catch {
         return;
       } finally {
         if (spinnerTimer) {
           clearInterval(spinnerTimer);
-          process.stderr.write('\r\x1b[K');
+          if (process.stderr.isTTY) process.stderr.write('\r\x1b[K');
         }
       }
     }
@@ -2562,23 +2588,7 @@ export async function createSession(opts: {
       hookObj.onToken(`\n[sub-agent #${taskId}] ${status}${tail}\n`);
     };
 
-    const buildLspLensSymbolOutput = async (filePathRaw: string): Promise<string> => {
-      if (!lspManager) return '[lsp] unavailable';
 
-      const semantic = await lspManager.getSymbols(filePathRaw);
-      if (!lens) return semantic;
-
-      const cwd = cfg.dir ?? process.cwd();
-      const absPath = filePathRaw.startsWith('/') ? filePathRaw : path.resolve(cwd, filePathRaw);
-      const body = await fs.readFile(absPath, 'utf8').catch(() => '');
-      if (!body) return semantic;
-
-      const projection = await lens.projectFile(absPath, body).catch(() => '');
-      const structural = extractLensBody(projection);
-      if (!structural) return semantic;
-
-      return `${semantic}\n\n[lens] Structural skeleton:\n${structural}`;
-    };
 
     const runSpawnTask = async (args: any): Promise<string> => {
       if (delegationForbiddenByUser) {
@@ -2918,7 +2928,11 @@ export async function createSession(opts: {
             for (const tc of toolCallsArr) {
               const n = tc.function?.name ?? '';
               let argCount = 0;
-              try { argCount = Object.keys(parseJsonArgs(tc.function?.arguments ?? '{}')).length; } catch { }
+              // Extract arg count without full parse if possible
+              const argStr = tc.function?.arguments ?? '{}';
+              if (argStr.length > 2) {
+                try { argCount = Object.keys(parseJsonArgs(argStr)).length; } catch { }
+              }
               if (!byName.has(n)) byName.set(n, []);
               byName.get(n)!.push({ tc, argCount });
             }
@@ -3494,33 +3508,7 @@ export async function createSession(opts: {
                 }
               } else if (isLspTool && lspManager) {
                 // LSP tool dispatch
-                if (name === 'lsp_diagnostics') {
-                  content = await lspManager.getDiagnostics(
-                    typeof args.path === 'string' ? args.path : undefined,
-                    typeof args.severity === 'number' ? args.severity : undefined,
-                  );
-                } else if (name === 'lsp_symbols') {
-                  content = await buildLspLensSymbolOutput(String(args.path ?? ''));
-                } else if (name === 'lsp_hover') {
-                  content = await lspManager.getHover(
-                    String(args.path ?? ''),
-                    Number(args.line ?? 0),
-                    Number(args.character ?? 0),
-                  );
-                } else if (name === 'lsp_definition') {
-                  content = await lspManager.getDefinition(
-                    String(args.path ?? ''),
-                    Number(args.line ?? 0),
-                    Number(args.character ?? 0),
-                  );
-                } else if (name === 'lsp_references') {
-                  content = await lspManager.getReferences(
-                    String(args.path ?? ''),
-                    Number(args.line ?? 0),
-                    Number(args.character ?? 0),
-                    typeof args.max_results === 'number' ? args.max_results : 50,
-                  );
-                }
+                content = await dispatchLspTool(name, args);
               } else {
                 if (mcpManager == null) {
                   throw new Error(`unknown tool: ${name}`);

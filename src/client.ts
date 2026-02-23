@@ -53,9 +53,9 @@ export class RateLimiter {
     readonly windowMs = 60_000,
     readonly threshold = 5,
     readonly maxBackoffMs = 60_000
-  ) {}
+  ) { }
 
-  record503(): void {
+  recordRetryableError(): void {
     this.timestamps.push(Date.now());
     this.prune();
     if (this.timestamps.length >= this.threshold) {
@@ -248,7 +248,7 @@ export class OpenAIClient {
     private endpoint: string,
     private readonly apiKey?: string,
     private verbose: boolean = false
-  ) {}
+  ) { }
 
   /** Set the default response timeout (in seconds) for all requests. */
   setResponseTimeout(seconds: number): void {
@@ -325,7 +325,7 @@ export class OpenAIClient {
 
   private emitExchange(record: ExchangeRecord): void {
     if (!this.exchangeHook) return;
-    void Promise.resolve(this.exchangeHook(record)).catch(() => {});
+    void Promise.resolve(this.exchangeHook(record)).catch(() => { });
   }
 
   private rootEndpoint(): string {
@@ -452,8 +452,8 @@ export class OpenAIClient {
             if (fn?.name) {
               const params = fn.parameters?.properties
                 ? Object.entries(fn.parameters.properties)
-                    .map(([k, v]: [string, any]) => `${k}: ${(v as any).type ?? 'any'}`)
-                    .join(', ')
+                  .map(([k, v]: [string, any]) => `${k}: ${(v as any).type ?? 'any'}`)
+                  .join(', ')
                 : '';
               toolBlock += `- ${fn.name}(${params}): ${fn.description ?? ''}\n`;
             }
@@ -577,10 +577,10 @@ export class OpenAIClient {
     const rlDelay = this.rateLimiter.getDelay();
     if (rlDelay > 0) {
       this.log(
-        `rate-limit backoff: waiting ${rlDelay}ms (${this.rateLimiter.recentCount} 503s in window)`
+        `rate-limit backoff: waiting ${rlDelay}ms (${this.rateLimiter.recentCount} retryable errors in window)`
       );
       console.warn(
-        `[warn] server returned 503 ${this.rateLimiter.recentCount} times in 60s, backing off ${(rlDelay / 1000).toFixed(1)}s`
+        `[warn] server returned 429/503 ${this.rateLimiter.recentCount} times in 60s, backing off ${(rlDelay / 1000).toFixed(1)}s`
       );
       await delay(rlDelay);
     }
@@ -608,8 +608,8 @@ export class OpenAIClient {
           signal: timeoutAc.signal,
         });
 
-        if (res.status === 503) {
-          this.rateLimiter.record503();
+        if (res.status === 503 || res.status === 429) {
+          this.rateLimiter.recordRetryableError();
           const backoff = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
           this.log(`503 model loading, retrying in ${backoff}ms...`);
           lastErr = makeClientError(
@@ -739,10 +739,10 @@ export class OpenAIClient {
     const rlDelay = this.rateLimiter.getDelay();
     if (rlDelay > 0) {
       this.log(
-        `rate-limit backoff: waiting ${rlDelay}ms (${this.rateLimiter.recentCount} 503s in window)`
+        `rate-limit backoff: waiting ${rlDelay}ms (${this.rateLimiter.recentCount} retryable errors in window)`
       );
       console.warn(
-        `[warn] server returned 503 ${this.rateLimiter.recentCount} times in 60s, backing off ${(rlDelay / 1000).toFixed(1)}s`
+        `[warn] server returned 429/503 ${this.rateLimiter.recentCount} times in 60s, backing off ${(rlDelay / 1000).toFixed(1)}s`
       );
       await delay(rlDelay);
     }
@@ -802,8 +802,8 @@ export class OpenAIClient {
       }
 
       // HTTP 503 → retry with exponential backoff
-      if (res.status === 503) {
-        this.rateLimiter.record503();
+      if (res.status === 503 || res.status === 429) {
+        this.rateLimiter.recordRetryableError();
         const backoff = Math.pow(2, attempt + 1) * 1000;
         lastErr = makeClientError(
           `POST /chat/completions (stream) returned 503 (model loading), attempt ${attempt + 1}/3`,
@@ -921,7 +921,7 @@ ${text.slice(0, 2000)}`,
         const result = await Promise.race([readPromise, timeoutPromise]);
 
         if (result === 'TIMEOUT') {
-          reader.cancel().catch(() => {});
+          reader.cancel().catch(() => { });
 
           // If we got *some* deltas, returning partial content is usually worse UX for tool-using agents:
           // it often leaves a truncated tool call / JSON args which then fails downstream.
