@@ -24,6 +24,7 @@ import {
   handleStatus,
   handleWatchdog,
   handleDir,
+  handlePin,
   handleModel,
   handleCompact,
   handleApproval,
@@ -521,6 +522,7 @@ export async function startTelegramBot(
   bot.command('status', (ctx) => handleStatus(cmdCtx(ctx)));
   bot.command('watchdog', (ctx) => handleWatchdog(cmdCtx(ctx)));
   bot.command('dir', (ctx) => handleDir(cmdCtx(ctx)));
+  bot.command('pin', (ctx) => handlePin(cmdCtx(ctx)));
   bot.command('model', (ctx) => handleModel(cmdCtx(ctx)));
   bot.command('compact', (ctx) => handleCompact(cmdCtx(ctx)));
   bot.command('approval', (ctx) => handleApproval(cmdCtx(ctx)));
