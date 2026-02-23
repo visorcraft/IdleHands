@@ -126,6 +126,7 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
     l2_reason: undefined,
     passed: false,
     summary: '',
+    commandOutput: undefined,
   };
 
   // L0: Check agent completion status
@@ -139,6 +140,7 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
   // L1: Run build/test/lint commands
   let l1_all = true;
   const failedCommands: string[] = [];
+  const fullOutputParts: string[] = [];
 
   if (opts.commands.build !== undefined) {
     try {
@@ -146,12 +148,15 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
       result.l1_build = buildResult.exitCode === 0;
       if (!result.l1_build) {
         l1_all = false;
-        failedCommands.push(`build: ${truncateStderr(buildResult.stderr)}`);
+        const combined = combineOutput('build', buildResult.stdout, buildResult.stderr);
+        failedCommands.push(`build: ${truncateOutput(combined, 500)}`);
+        fullOutputParts.push(combined);
       }
     } catch (err) {
       result.l1_build = false;
       l1_all = false;
       failedCommands.push(`build: ${String(err)}`);
+      fullOutputParts.push(`build error: ${String(err)}`);
     }
   }
 
@@ -161,12 +166,15 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
       result.l1_test = testResult.exitCode === 0;
       if (!result.l1_test) {
         l1_all = false;
-        failedCommands.push(`test: ${truncateStderr(testResult.stderr)}`);
+        const combined = combineOutput('test', testResult.stdout, testResult.stderr);
+        failedCommands.push(`test: ${truncateOutput(combined, 500)}`);
+        fullOutputParts.push(combined);
       }
     } catch (err) {
       result.l1_test = false;
       l1_all = false;
       failedCommands.push(`test: ${String(err)}`);
+      fullOutputParts.push(`test error: ${String(err)}`);
     }
   }
 
@@ -176,12 +184,15 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
       result.l1_lint = lintResult.exitCode === 0;
       if (!result.l1_lint) {
         l1_all = false;
-        failedCommands.push(`lint: ${truncateStderr(lintResult.stderr)}`);
+        const combined = combineOutput('lint', lintResult.stdout, lintResult.stderr);
+        failedCommands.push(`lint: ${truncateOutput(combined, 500)}`);
+        fullOutputParts.push(combined);
       }
     } catch (err) {
       result.l1_lint = false;
       l1_all = false;
       failedCommands.push(`lint: ${String(err)}`);
+      fullOutputParts.push(`lint error: ${String(err)}`);
     }
   }
 
@@ -189,6 +200,7 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
   if (!l1_all) {
     result.passed = false;
     result.summary = `Command failures: ${failedCommands.join('; ')}`;
+    result.commandOutput = truncateOutput(fullOutputParts.join('\n\n'), 4000);
     return result;
   }
 
@@ -293,7 +305,18 @@ function makeTargetExists(cwd: string, target: string): boolean {
   }
 }
 
-function truncateStderr(stderr: string): string {
-  const cleaned = stderr.trim();
-  return cleaned.length > 500 ? `${cleaned.slice(0, 500)}...` : cleaned;
+function truncateOutput(text: string, maxLen: number = 2000): string {
+  const cleaned = text.trim();
+  return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen)}...` : cleaned;
+}
+
+/** Combine stdout and stderr into a single labeled output block. */
+function combineOutput(label: string, stdout: string, stderr: string): string {
+  const parts: string[] = [`=== ${label} ===`];
+  const out = stdout.trim();
+  const err = stderr.trim();
+  if (out) parts.push(`stdout:\n${out}`);
+  if (err) parts.push(`stderr:\n${err}`);
+  if (!out && !err) parts.push('(no output)');
+  return parts.join('\n');
 }

@@ -325,11 +325,16 @@ async function buildCodebaseSnapshot(projectDir: string): Promise<string> {
 }
 
 function buildRetryContextSection(retryContext: string): string {
-  return `## Previous Attempt Failed
+  return `## Previous Attempt Failed — Fix Required
 
 ${retryContext}
 
-Do not repeat the same mistake.`;
+CRITICAL RETRY RULES:
+- Your previous code changes are STILL IN PLACE — do NOT start over or rewrite files from scratch.
+- Read the error output above carefully and fix ONLY the specific issues reported.
+- If there are lint errors, run the lint command yourself first to see current errors, then fix them.
+- After fixing, verify the fix compiles/passes before emitting your result.
+- Do not repeat the same mistake.`;
 }
 
 function buildResultInstructions(decomposeEnabled: boolean): string {

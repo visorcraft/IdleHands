@@ -92,6 +92,8 @@ export interface AntonRunConfig {
   testCommand: string | undefined;
   /** Custom lint command override. undefined = auto-detect. */
   lintCommand: string | undefined;
+  /** Max consecutive identical failures before giving up on a task (dedup guard). Default 5. */
+  maxIdenticalFailures: number;
   /** Skip failed tasks and continue, or abort entirely. */
   skipOnFail: boolean;
   /** Skip blocked tasks and continue. */
@@ -133,6 +135,8 @@ export interface AntonVerificationResult {
   passed: boolean;
   /** Human-readable summary. */
   summary: string;
+  /** Full command output (stdout+stderr) from failed L1 commands. */
+  commandOutput: string | undefined;
 }
 
 // ─── Attempt tracking ───────────────────────────────────────────

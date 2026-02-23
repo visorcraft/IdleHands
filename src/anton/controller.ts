@@ -211,6 +211,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
   const attempts: AntonAttempt[] = [];
   const taskRetryCount: Map<string, number> = new Map();
   const lastFailureReason: Map<string, string> = new Map();
+  const consecutiveIdenticalCount: Map<string, number> = new Map();
   let lockHeartbeatTimer: NodeJS.Timeout | null = null;
 
   // SIGINT handler
@@ -319,6 +320,16 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           if (v.l1_test === false) parts.push('- Test command failed');
           if (v.l1_lint === false) parts.push('- Lint command failed');
           if (v.l2_ai === false && v.l2_reason) parts.push(`- AI review: ${v.l2_reason}`);
+
+          // Include full command output so the agent can see and fix the exact errors
+          if (v.commandOutput) {
+            parts.push('');
+            parts.push('=== Full error output from failed commands ===');
+            parts.push(v.commandOutput);
+            parts.push('=== End of error output ===');
+            parts.push('');
+            parts.push('IMPORTANT: Fix the errors shown above. The code from your previous attempt is still in place — do NOT rewrite it from scratch. Read the failing files and fix only the specific issues reported.');
+          }
         }
         if (lastAttempt.error) {
           parts.push(`Error: ${lastAttempt.error}`);
@@ -363,6 +374,33 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
 
       // Handle max retries
       const retries = taskRetryCount.get(currentTask.key) || 0;
+
+      // Check for consecutive identical failures (dedup guard)
+      const maxIdentical = config.maxIdenticalFailures ?? 5;
+      const identicalCount = consecutiveIdenticalCount.get(currentTask.key) || 0;
+      if (identicalCount >= maxIdentical) {
+        if (!config.skipOnFail) {
+          break mainLoop;
+        }
+
+        progress.onTaskSkip(currentTask, `${maxIdentical} consecutive identical failures`, currentProgress);
+
+        const skipAttempt: AntonAttempt = {
+          taskKey: currentTask.key,
+          taskText: currentTask.text,
+          attempt: retries + 1,
+          durationMs: 0,
+          tokensUsed: 0,
+          status: 'skipped',
+          verification: undefined,
+          error: `${maxIdentical} consecutive identical failures`,
+          commitHash: undefined,
+        };
+        attempts.push(skipAttempt);
+        taskRetryCount.set(currentTask.key, retries + 1);
+        continue;
+      }
+
       if (retries >= config.maxRetriesPerTask) {
         if (!config.skipOnFail) {
           break mainLoop;
@@ -704,16 +742,32 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
 
       // Update retry count and record failure reason for next attempt
       if (attempt.status !== 'passed' && attempt.status !== ('decomposed' as any)) {
-        if ((attempt.error ?? '').startsWith('prompt-budget-exceeded')) {
+        // Blocked tasks should NOT be retried — a blocked status means the agent
+        // cannot complete the task regardless of how many retries we give it.
+        if (attempt.status === 'blocked') {
+          // Immediately exhaust retries so the task is skipped on next loop iteration
+          taskRetryCount.set(currentTask.key, config.maxRetriesPerTask);
+        } else if ((attempt.error ?? '').startsWith('prompt-budget-exceeded')) {
           // Don't burn retries/tokens on oversized prompts.
           taskRetryCount.set(currentTask.key, config.maxRetriesPerTask);
         } else {
           taskRetryCount.set(currentTask.key, attemptNumber);
         }
-        lastFailureReason.set(
-          currentTask.key,
-          attempt.verification?.summary ?? attempt.error ?? 'unknown'
-        );
+
+        // Track consecutive identical failures for dedup guard
+        const currentReason = attempt.verification?.summary ?? attempt.error ?? 'unknown';
+        const prevReason = lastFailureReason.get(currentTask.key);
+        if (prevReason && prevReason === currentReason) {
+          consecutiveIdenticalCount.set(
+            currentTask.key,
+            (consecutiveIdenticalCount.get(currentTask.key) || 0) + 1
+          );
+        } else {
+          // Different failure — reset the consecutive counter
+          consecutiveIdenticalCount.set(currentTask.key, 1);
+        }
+
+        lastFailureReason.set(currentTask.key, currentReason);
       }
 
       // Report task end

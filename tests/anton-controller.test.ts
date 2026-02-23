@@ -134,6 +134,7 @@ function createTestConfig(overrides: Partial<AntonRunConfig> = {}): AntonRunConf
     skipOnFail: true,
     skipOnBlocked: true,
     rollbackOnFail: false,
+    maxIdenticalFailures: 5,
     approvalMode: 'yolo' as const,
     verbose: false,
     dryRun: false,
@@ -231,9 +232,9 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     let sessionCount = 0;
     const createSession = async () => {
       sessionCount++;
-      // First attempt: blocked (triggers retry). Second attempt: done.
+      // First attempt: failed (triggers retry). Second attempt: done.
       if (sessionCount === 1) {
-        return createMockSession(['<anton-result>status: blocked</anton-result>']);
+        return createMockSession(['<anton-result>status: failed\nreason: lint errors</anton-result>']);
       }
       return createMockSession(['<anton-result>status: done</anton-result>']);
     };
@@ -264,7 +265,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     const progress = createMockProgressCallback();
 
     const createSession = async () => {
-      return createMockSession(['<anton-result>status: blocked</anton-result>']);
+      return createMockSession(['<anton-result>status: failed\nreason: lint errors</anton-result>']);
     };
 
     const result = await runAnton({

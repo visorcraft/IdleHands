@@ -211,6 +211,7 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
     skipOnFail: parsed.skipOnFail ?? defaults.skip_on_fail ?? false,
     skipOnBlocked: parsed.skipOnBlocked ?? defaults.skip_on_blocked ?? true,
     rollbackOnFail: parsed.rollbackOnFail ?? defaults.rollback_on_fail ?? false,
+    maxIdenticalFailures: defaults.max_identical_failures ?? 5,
     approvalMode: (parsed.approval ??
       defaults.approval_mode ??
       'yolo') as AntonRunConfig['approvalMode'],
