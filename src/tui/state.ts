@@ -345,6 +345,63 @@ export function reduceTuiState(state: TuiState, ev: TuiEvent): TuiState {
     case 'HOOKS_INSPECTOR_CLOSE':
       return { ...state, hooksInspector: undefined };
 
+    case 'MODEL_PICKER_OPEN': {
+      const q = (ev.query ?? '').trim().toLowerCase();
+      const filtered = q
+        ? ev.models.filter(
+            (m) =>
+              m.id.toLowerCase().includes(q) ||
+              m.displayName.toLowerCase().includes(q) ||
+              m.source.toLowerCase().includes(q)
+          )
+        : [...ev.models];
+      return {
+        ...state,
+        modelPicker: {
+          models: ev.models,
+          filtered,
+          selectedIndex: 0,
+          query: ev.query ?? '',
+          offset: 0,
+        },
+        branchPicker: undefined,
+        stepNavigator: undefined,
+        settingsMenu: undefined,
+        hooksInspector: undefined,
+      };
+    }
+
+    case 'MODEL_PICKER_FILTER': {
+      if (!state.modelPicker) return state;
+      return {
+        ...state,
+        modelPicker: {
+          ...state.modelPicker,
+          filtered: ev.filtered,
+          query: ev.query,
+          selectedIndex: ev.selectedIndex,
+          offset: ev.offset,
+        },
+      };
+    }
+
+    case 'MODEL_PICKER_MOVE': {
+      if (!state.modelPicker) return state;
+      const len = state.modelPicker.filtered.length;
+      if (len === 0) return state;
+      const next = Math.max(0, Math.min(len - 1, state.modelPicker.selectedIndex + ev.delta));
+      // Adjust offset for pagination
+      const pageSize = 8;
+      const offset = Math.min(state.modelPicker.offset, Math.max(0, next - pageSize + 1));
+      return {
+        ...state,
+        modelPicker: { ...state.modelPicker, selectedIndex: next, offset: Math.max(0, offset) },
+      };
+    }
+
+    case 'MODEL_PICKER_CLOSE':
+      return { ...state, modelPicker: undefined };
+
     default:
       return state;
   }

@@ -391,6 +391,148 @@ export class TuiController {
     });
   }
 
+  /** Open the model picker overlay with all enabled models. */
+  private async openModelPicker(query = ''): Promise<void> {
+    try {
+      const { loadRuntimes } = await import('../runtime/store.js');
+      const config = await loadRuntimes();
+      const models = config.models
+        .filter((m) => m.enabled)
+        .map((m) => ({
+          id: m.id,
+          displayName: m.display_name,
+          source: m.source,
+          enabled: m.enabled,
+        }));
+
+      if (!models.length) {
+        this.dispatch({
+          type: 'ALERT_PUSH',
+          id: `mp_${Date.now()}`,
+          level: 'warn',
+          text: 'No enabled models configured.',
+        });
+        return;
+      }
+
+      this.dispatch({ type: 'MODEL_PICKER_OPEN', models, query });
+    } catch (e: any) {
+      this.dispatch({
+        type: 'ALERT_PUSH',
+        id: `mp_${Date.now()}`,
+        level: 'error',
+        text: `Failed to load models: ${e?.message ?? String(e)}`,
+      });
+    }
+  }
+
+  private modelPickerQueryAppend(text: string): void {
+    const current = this.state.modelPicker?.query ?? '';
+    const next = `${current}${text}`;
+    this.filterModelPicker(next);
+  }
+
+  private modelPickerQueryBackspace(): void {
+    const current = this.state.modelPicker?.query ?? '';
+    const next = current.slice(0, -1);
+    this.filterModelPicker(next);
+  }
+
+  private filterModelPicker(query: string): void {
+    const picker = this.state.modelPicker;
+    if (!picker) return;
+
+    const q = query.toLowerCase().trim();
+    const filtered = q
+      ? picker.models.filter(
+          (m) =>
+            m.id.toLowerCase().includes(q) ||
+            m.displayName.toLowerCase().includes(q) ||
+            m.source.toLowerCase().includes(q)
+        )
+      : [...picker.models];
+
+    this.dispatch({
+      type: 'MODEL_PICKER_FILTER',
+      filtered,
+      query,
+      selectedIndex: 0,
+      offset: 0,
+    });
+  }
+
+  private async handleModelSelect(): Promise<void> {
+    const picker = this.state.modelPicker;
+    if (!picker?.filtered.length) {
+      this.dispatch({ type: 'MODEL_PICKER_CLOSE' });
+      return;
+    }
+
+    const selected = picker.filtered[picker.selectedIndex];
+    if (!selected) {
+      this.dispatch({ type: 'MODEL_PICKER_CLOSE' });
+      return;
+    }
+
+    this.dispatch({ type: 'MODEL_PICKER_CLOSE' });
+    this.pushSystemMessage(`Switching to ${selected.displayName}...`);
+
+    try {
+      const { plan } = await import('../runtime/planner.js');
+      const { execute, loadActiveRuntime } = await import('../runtime/executor.js');
+      const { loadRuntimes } = await import('../runtime/store.js');
+
+      const rtConfig = await loadRuntimes();
+      const active = await loadActiveRuntime();
+      const result = plan({ modelId: selected.id, mode: 'live' }, rtConfig, active);
+
+      if (!result.ok) {
+        this.dispatch({
+          type: 'ALERT_PUSH',
+          id: `sw_${Date.now()}`,
+          level: 'error',
+          text: `Plan failed: ${result.reason}`,
+        });
+        return;
+      }
+
+      if (result.reuse) {
+        this.pushSystemMessage(`Already using ${result.model.display_name}`);
+        return;
+      }
+
+      const execResult = await execute(result, {
+        onStep: async (step, status) => {
+          if (status === 'done') {
+            this.pushSystemMessage(`✓ ${step.description}`);
+          }
+        },
+        confirm: async (prompt) => {
+          this.pushSystemMessage(`⚠️ ${prompt}\nAuto-approving.`);
+          return true;
+        },
+      });
+
+      if (execResult.ok) {
+        this.pushSystemMessage(`✅ Switched to ${result.model.display_name}`);
+      } else {
+        this.dispatch({
+          type: 'ALERT_PUSH',
+          id: `sw_${Date.now()}`,
+          level: 'error',
+          text: `Switch failed: ${execResult.error || 'unknown error'}`,
+        });
+      }
+    } catch (e: any) {
+      this.dispatch({
+        type: 'ALERT_PUSH',
+        id: `sw_${Date.now()}`,
+        level: 'error',
+        text: `Switch failed: ${e?.message ?? String(e)}`,
+      });
+    }
+  }
+
   /** Push a system-role transcript item and re-render. */
   private pushSystemMessage(text: string): void {
     const item: TranscriptItem = { id: `sys_${Date.now()}`, role: 'system', text, ts: Date.now() };
@@ -521,6 +663,11 @@ export class TuiController {
         return true;
       }
       this.openHooksInspector(mode);
+      return true;
+    }
+    if (head === '/models' || head === '/runtimes') {
+      const query = line.replace(/^\/(?:models|runtimes)\s*/i, '').trim();
+      await this.openModelPicker(query);
       return true;
     }
 
@@ -993,6 +1140,49 @@ export class TuiController {
             hAction === 'send'
           ) {
             this.dispatch({ type: 'HOOKS_INSPECTOR_CLOSE' });
+            continue;
+          }
+          continue;
+        }
+
+        // Model picker: type to filter, arrows to select, Enter to switch.
+        if (this.state.modelPicker) {
+          const mAction = resolveAction(key);
+          if (key.startsWith('text:')) {
+            const ch = key.slice(5);
+            if (ch === 'q' && !this.state.modelPicker.query) {
+              this.dispatch({ type: 'MODEL_PICKER_CLOSE' });
+            } else {
+              this.modelPickerQueryAppend(ch);
+            }
+            continue;
+          }
+          if (mAction === 'backspace') {
+            this.modelPickerQueryBackspace();
+            continue;
+          }
+          if (mAction === 'history_prev') {
+            this.dispatch({ type: 'MODEL_PICKER_MOVE', delta: -1 });
+            continue;
+          }
+          if (mAction === 'history_next') {
+            this.dispatch({ type: 'MODEL_PICKER_MOVE', delta: 1 });
+            continue;
+          }
+          if (mAction === 'scroll_up') {
+            this.dispatch({ type: 'MODEL_PICKER_MOVE', delta: -5 });
+            continue;
+          }
+          if (mAction === 'scroll_down') {
+            this.dispatch({ type: 'MODEL_PICKER_MOVE', delta: 5 });
+            continue;
+          }
+          if (mAction === 'send') {
+            void this.handleModelSelect();
+            continue;
+          }
+          if (mAction === 'cancel' || mAction === 'quit') {
+            this.dispatch({ type: 'MODEL_PICKER_CLOSE' });
             continue;
           }
           continue;

@@ -87,6 +87,21 @@ export interface HooksInspectorState {
   offset: number;
 }
 
+export interface ModelPickerItem {
+  id: string;
+  displayName: string;
+  source: string;
+  enabled: boolean;
+}
+
+export interface ModelPickerState {
+  models: ModelPickerItem[];
+  filtered: ModelPickerItem[];
+  selectedIndex: number;
+  query: string;
+  offset: number; // for pagination
+}
+
 export interface TuiState {
   mode: TuiMode;
   focus: PanelId;
@@ -112,6 +127,7 @@ export interface TuiState {
   stepNavigator?: StepNavigatorState;
   settingsMenu?: SettingsMenuState;
   hooksInspector?: HooksInspectorState;
+  modelPicker?: ModelPickerState;
   scroll: Record<PanelId, number>;
 }
 

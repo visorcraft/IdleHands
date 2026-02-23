@@ -582,11 +582,31 @@ export async function startTelegramBot(
         await ctx.reply('No runtime models configured.');
         return;
       }
-      const lines = config.models.map(
-        (m: any) =>
-          `${m.enabled ? '🟢' : '🔴'} *${m.display_name}* (\`${m.id}\`)\n  Source: \`${m.source}\``
-      );
-      await ctx.reply(lines.join('\n\n'), { parse_mode: 'Markdown' });
+
+      // Show enabled models with inline buttons for selection
+      const enabledModels = config.models.filter((m: any) => m.enabled);
+      if (!enabledModels.length) {
+        await ctx.reply('No enabled runtime models. Use `idlehands models enable <id>` in CLI.');
+        return;
+      }
+
+      // Create inline keyboard with model buttons (max 8 per row, 2 columns)
+      const buttons = enabledModels.map((m: any) => [{
+        text: `🟢 ${m.display_name}`,
+        callback_data: `model_select:${m.id}`,
+      }]);
+
+      // Split into rows of 2
+      const keyboard: any[][] = [];
+      for (let i = 0; i < buttons.length; i += 2) {
+        const row = buttons.slice(i, i + 2).flat();
+        keyboard.push(row);
+      }
+
+      await ctx.reply('📋 *Select a model to switch to:*', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: keyboard },
+      });
     } catch (e: any) {
       await ctx.reply(`❌ Failed to load runtime models: ${e?.message ?? String(e)}`);
     }
@@ -677,7 +697,7 @@ export async function startTelegramBot(
   });
 
   // ---------------------------------------------------------------------------
-  // Callback query handler (inline button presses for confirmations)
+  // Callback query handler (inline button presses for confirmations + model selection)
   // ---------------------------------------------------------------------------
 
   bot.on('callback_query:data', async (ctx) => {
@@ -685,6 +705,58 @@ export async function startTelegramBot(
     const chatId = ctx.chat?.id;
     if (!chatId) return;
 
+    // Handle model selection callback
+    if (data.startsWith('model_select:')) {
+      const modelId = data.slice('model_select:'.length);
+      await ctx.answerCallbackQuery({ text: `Switching to ${modelId}...` }).catch(() => {});
+
+      try {
+        const { plan } = await import('../runtime/planner.js');
+        const { execute, loadActiveRuntime } = await import('../runtime/executor.js');
+        const { loadRuntimes } = await import('../runtime/store.js');
+
+        const rtConfig = await loadRuntimes();
+        const active = await loadActiveRuntime();
+        const result = plan({ modelId, mode: 'live' }, rtConfig, active);
+
+        if (!result.ok) {
+          await ctx.editMessageText(`❌ Plan failed: ${result.reason}`).catch(() => {});
+          return;
+        }
+
+        if (result.reuse) {
+          await ctx.editMessageText(`✅ Already using *${result.model.display_name}*`, {
+            parse_mode: 'Markdown',
+          }).catch(() => {});
+          return;
+        }
+
+        const execResult = await execute(result, {
+          onStep: async (step, status) => {
+            if (status === 'done') {
+              await ctx.editMessageText(`⏳ ${step.description}... ✓`).catch(() => {});
+            }
+          },
+          confirm: async (prompt) => {
+            await ctx.reply(`⚠️ ${prompt}\nAuto-approving for bot context.`);
+            return true;
+          },
+        });
+
+        if (execResult.ok) {
+          await ctx.editMessageText(`✅ Switched to *${result.model.display_name}*`, {
+            parse_mode: 'Markdown',
+          }).catch(() => {});
+        } else {
+          await ctx.editMessageText(`❌ Switch failed: ${execResult.error || 'unknown error'}`).catch(() => {});
+        }
+      } catch (e: any) {
+        await ctx.editMessageText(`❌ Switch failed: ${e?.message ?? String(e)}`).catch(() => {});
+      }
+      return;
+    }
+
+    // Handle confirmation callbacks
     const managed = sessions.get(chatId);
     if (!managed?.confirmProvider) {
       await ctx.answerCallbackQuery({ text: 'No active session.' }).catch(() => { });
