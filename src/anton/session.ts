@@ -19,7 +19,7 @@ export function buildSessionConfig(base: IdlehandsConfig, config: AntonRunConfig
     no_confirm: config.approvalMode === 'yolo',
     verbose: false,
     quiet: true,
-    max_iterations: 50,
+    max_iterations: config.taskMaxIterations,
     timeout: config.taskTimeoutSec,
     compact_at: 0.65,
     compact_min_tail: 4,

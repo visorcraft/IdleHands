@@ -281,6 +281,7 @@ export type IdlehandsConfig = {
   anton?: {
     max_retries?: number;
     max_iterations?: number;
+    task_max_iterations?: number;
     task_timeout_sec?: number;
     total_timeout_sec?: number;
     max_total_tokens?: number;
