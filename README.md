@@ -224,6 +224,31 @@ idlehands health --scan-ports 8000-8100
 idlehands health --scan-ports 8080,8081,9000
 ```
 
+## Tool loop auto-continue
+
+When the agent hits a critical tool loop (repeated identical tool calls with no progress), Idle Hands now automatically retries instead of stopping and waiting for a manual "Continue" message.
+
+- **All surfaces**: TUI, Telegram bot, Discord bot, and Anton all support auto-continue
+- **User notification**: each retry sends a visible notice with error details and attempt count
+- **Configurable**: up to 5 retries by default (max 10), fully disableable
+
+```json
+{
+  "tool_loop_auto_continue": {
+    "enabled": true,
+    "max_retries": 5
+  }
+}
+```
+
+On each retry the user sees:
+> ⚠️ Tool loop detected: {error details}
+> 🔄 Automatically continuing the task. (retry 1 of 5)
+
+After exhausting all retries, the error surfaces normally. Anton handles this internally without orchestrator involvement.
+
+---
+
 ## Documentation map
 
 - [Getting Started](https://visorcraft.github.io/IdleHands/guide/getting-started)

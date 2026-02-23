@@ -49,6 +49,7 @@ import {
   formatToolCallSummary,
 } from './format.js';
 import { SessionManager, type ManagedSession } from './session-manager.js';
+import { isToolLoopBreak, formatAutoContinueNotice, AUTO_CONTINUE_PROMPT } from './auto-continue.js';
 
 // ---------------------------------------------------------------------------
 // Escalation helpers (mirrored from discord.ts)
@@ -1278,6 +1279,11 @@ async function processMessage(
   try {
     let askComplete = false;
     let isRetryAfterCompaction = false;
+    let isToolLoopRetry = false;
+    let toolLoopRetryCount = 0;
+    const autoContinueCfg = managed.config.tool_loop_auto_continue;
+    const autoContinueEnabled = autoContinueCfg?.enabled !== false;
+    const autoContinueMaxRetries = autoContinueCfg?.max_retries ?? 5;
     while (!askComplete) {
       const attemptController = new AbortController();
       managed.activeAbortController = attemptController;
@@ -1285,7 +1291,10 @@ async function processMessage(
 
       let askText = isRetryAfterCompaction
         ? 'Continue working on the task from where you left off. Context was compacted to free memory — do NOT restart from the beginning.'
-        : text;
+        : isToolLoopRetry
+          ? AUTO_CONTINUE_PROMPT
+          : text;
+      isToolLoopRetry = false;
 
       if (managed.antonActive) {
         askText = `${askText}\n\n[System Runtime Context: Anton task runner is CURRENTLY ACTIVE and running autonomously in the background for this project.]`;
@@ -1399,6 +1408,18 @@ async function processMessage(
           }
           isRetryAfterCompaction = true;
           continue; // retry the ask with continuation prompt
+        }
+
+        // Auto-continue on tool-loop breaks
+        if (!isAbort && isToolLoopBreak(e) && autoContinueEnabled && toolLoopRetryCount < autoContinueMaxRetries) {
+          toolLoopRetryCount++;
+          const notice = formatAutoContinueNotice(msg, toolLoopRetryCount, autoContinueMaxRetries);
+          console.error(`[bot:telegram] ${managed.chatId} tool-loop auto-continue (retry ${toolLoopRetryCount}/${autoContinueMaxRetries})`);
+          if (sessions.isTurnActive(managed.chatId, turnId)) {
+            await streaming.finalizeError(notice);
+          }
+          isToolLoopRetry = true;
+          continue; // retry the ask with auto-continue prompt
         }
 
         askComplete = true;

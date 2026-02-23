@@ -56,6 +56,7 @@ import {
   sessionKeyForMessage,
 } from './discord-routing.js';
 import { DiscordStreamingMessage } from './discord-streaming.js';
+import { isToolLoopBreak, formatAutoContinueNotice, AUTO_CONTINUE_PROMPT } from './auto-continue.js';
 
 type SessionState = 'idle' | 'running' | 'canceling' | 'resetting';
 
@@ -561,6 +562,11 @@ When you escalate, your request will be re-run on a more capable model.`;
     try {
       let askComplete = false;
       let isRetryAfterCompaction = false;
+      let isToolLoopRetry = false;
+      let toolLoopRetryCount = 0;
+      const autoContinueCfg = managed.config.tool_loop_auto_continue;
+      const autoContinueEnabled = autoContinueCfg?.enabled !== false;
+      const autoContinueMaxRetries = autoContinueCfg?.max_retries ?? 5;
       while (!askComplete) {
         // Create a fresh AbortController for each attempt (watchdog compaction aborts the previous one)
         const attemptController = new AbortController();
@@ -569,7 +575,10 @@ When you escalate, your request will be re-run on a more capable model.`;
 
         let askText = isRetryAfterCompaction
           ? 'Continue working on the task from where you left off. Context was compacted to free memory — do NOT restart from the beginning.'
-          : msg.content;
+          : isToolLoopRetry
+            ? AUTO_CONTINUE_PROMPT
+            : msg.content;
+        isToolLoopRetry = false;
 
         if (managed.antonActive) {
           askText = `${askText}\n\n[System Runtime Context: Anton task runner is CURRENTLY ACTIVE and running autonomously in the background for this project.]`;
@@ -649,6 +658,18 @@ When you escalate, your request will be re-run on a more capable model.`;
             }
             // Loop back to retry the ask with continuation prompt
             isRetryAfterCompaction = true;
+            continue;
+          }
+
+          // Auto-continue on tool-loop breaks
+          if (!isAbort && isToolLoopBreak(e) && autoContinueEnabled && toolLoopRetryCount < autoContinueMaxRetries) {
+            toolLoopRetryCount++;
+            const notice = formatAutoContinueNotice(raw, toolLoopRetryCount, autoContinueMaxRetries);
+            console.error(`[bot:discord] ${managed.userId} tool-loop auto-continue (retry ${toolLoopRetryCount}/${autoContinueMaxRetries})`);
+            if (isTurnActive(managed, turnId)) {
+              await streamer.finalizeError(notice);
+            }
+            isToolLoopRetry = true;
             continue;
           }
 
