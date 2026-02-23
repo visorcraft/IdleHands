@@ -1326,6 +1326,34 @@ When you escalate, your request will be re-run on a more capable model.`;
       }
     }
 
+    if (content === '/unpin' || content.startsWith('/unpin ')) {
+      if (!managed.dirPinned) {
+        await sendUserVisible(msg, 'Directory is not pinned.').catch(() => { });
+        return;
+      }
+
+      const currentDir = managed.config.dir || defaultDir;
+      const resolvedDir = path.resolve(expandHome(currentDir));
+
+      const repoCandidates = await detectRepoCandidates(resolvedDir, managed.allowedDirs).catch(
+        () => managed.repoCandidates
+      );
+      const cfg: IdlehandsConfig = {
+        ...managed.config,
+        dir: undefined,
+        allowed_write_roots: managed.allowedDirs,
+        dir_pinned: false,
+        repo_candidates: repoCandidates,
+      };
+      await recreateSession(managed, cfg);
+      managed.dirPinned = false;
+      managed.repoCandidates = repoCandidates;
+      await sendUserVisible(msg, `✅ Directory unpinned. Working directory remains at \`${resolvedDir}\``).catch(
+        () => { }
+      );
+      return;
+    }
+
     if (content === '/approval' || content.startsWith('/approval ')) {
       const arg = content.slice('/approval'.length).trim().toLowerCase();
       const modes = ['plan', 'default', 'auto-edit', 'yolo'] as const;

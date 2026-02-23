@@ -270,6 +270,31 @@ export async function handlePin({ ctx, sessions }: CommandContext): Promise<void
   }
 }
 
+export async function handleUnpin({ ctx, sessions }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  const managed = sessions.get(chatId);
+  if (!managed) {
+    await ctx.reply('No active session. Send a message to start one.');
+    return;
+  }
+
+  if (!managed.dirPinned) {
+    await ctx.reply('Directory is not pinned.');
+    return;
+  }
+
+  const ok = await sessions.unpin(chatId);
+  if (ok) {
+    await ctx.reply(`✅ Directory unpinned. Working directory remains at <code>${escapeHtml(managed.workingDir)}</code>`, {
+      parse_mode: 'HTML',
+    });
+  } else {
+    await ctx.reply('❌ Failed to unpinned directory.');
+  }
+}
+
 export async function handleModel({ ctx, sessions }: CommandContext): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) return;
