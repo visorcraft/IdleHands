@@ -1501,6 +1501,11 @@ export async function exec(ctx: ToolContext, args: any) {
     });
   }
 
+  // Validate cwd exists — spawn throws a cryptic ENOENT if it doesn't.
+  try { await fs.access(cwd); } catch {
+    throw new Error(`exec: working directory does not exist: ${cwd}`);
+  }
+
   // Use spawn with shell:true — lets Node.js resolve the shell internally,
   // avoiding ENOENT issues with explicit bash paths in certain environments.
   const child = spawn(command, [], {
@@ -1568,7 +1573,7 @@ export async function exec(ctx: ToolContext, args: any) {
     child.on('error', (err: NodeJS.ErrnoException) => {
       clearTimeout(killTimer);
       ctx.signal?.removeEventListener('abort', onAbort);
-      reject(new Error(`exec: failed to spawn shell: ${err.message} (${err.code ?? 'unknown'})`));
+      reject(new Error(`exec: failed to spawn shell (cwd=${cwd}): ${err.message} (${err.code ?? 'unknown'})`));
     });
     child.on('close', (code) => resolve(code ?? 0));
   });
