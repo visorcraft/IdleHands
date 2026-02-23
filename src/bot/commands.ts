@@ -142,14 +142,28 @@ export async function handleWatchdog({ ctx, sessions, botConfig }: CommandContex
 
 export async function handleDir({ ctx, sessions }: CommandContext): Promise<void> {
   const chatId = ctx.chat?.id;
+  const userId = ctx.from?.id;
   if (!chatId) return;
   const text = ctx.message?.text ?? '';
   const arg = text.replace(/^\/dir\s*/, '').trim();
 
-  const managed = sessions.get(chatId);
+  let managed = sessions.get(chatId);
 
   if (!arg) {
     await reply(ctx, dirShowCommand(managed as unknown as ManagedLike | undefined));
+    return;
+  }
+
+  // Auto-create session if none exists
+  if (!managed && userId) {
+    managed = (await sessions.getOrCreate(chatId, userId)) ?? undefined;
+    if (!managed) {
+      await ctx.reply('⚠️ Too many active sessions. Try again later.');
+      return;
+    }
+  }
+  if (!managed) {
+    await ctx.reply('No active session. Send a message to start one.');
     return;
   }
 
@@ -170,9 +184,19 @@ export async function handleDir({ ctx, sessions }: CommandContext): Promise<void
 
 export async function handlePin({ ctx, sessions }: CommandContext): Promise<void> {
   const chatId = ctx.chat?.id;
+  const userId = ctx.from?.id;
   if (!chatId) return;
 
-  const managed = sessions.get(chatId);
+  let managed = sessions.get(chatId);
+
+  // Auto-create session if none exists
+  if (!managed && userId) {
+    managed = (await sessions.getOrCreate(chatId, userId)) ?? undefined;
+    if (!managed) {
+      await ctx.reply('⚠️ Too many active sessions. Try again later.');
+      return;
+    }
+  }
   if (!managed) {
     await ctx.reply('No active session. Send a message to start one.');
     return;

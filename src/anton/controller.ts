@@ -45,7 +45,7 @@ import type {
   AntonStopReason,
   AntonAttemptStatus,
 } from './types.js';
-import { detectVerificationCommands, runVerification } from './verifier.js';
+import { captureLintBaseline, detectVerificationCommands, runVerification } from './verifier.js';
 import { isToolLoopBreak, AUTO_CONTINUE_PROMPT } from '../bot/auto-continue.js';
 
 export interface RunAntonOpts {
@@ -245,6 +245,9 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
       test: config.testCommand,
       lint: config.lintCommand,
     });
+
+    // 3b. Capture baseline lint error count so we only fail on NEW errors
+    const baselineLintErrorCount = await captureLintBaseline(commands.lint, config.projectDir);
 
     // 4. Clean-tree check (unless allowDirty)
     if (!config.allowDirty) {
@@ -673,6 +676,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               commands,
               config,
               diff,
+              baselineLintErrorCount,
               createVerifySession: config.verifyAi
                 ? async () => {
                   const verifyConfig = buildVerifyConfig(idlehandsConfig, config);

@@ -27,6 +27,9 @@ export interface VerifyOpts {
   commands: DetectedCommands;
   config: AntonRunConfig;
   diff: string;
+  /** Pre-existing lint error count captured before the run started.  If set,
+   *  lint verification passes when the error count hasn't increased. */
+  baselineLintErrorCount?: number;
   createVerifySession?: () => Promise<{
     ask: (prompt: string) => Promise<string>;
     close: () => Promise<void>;
@@ -181,8 +184,23 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
   if (opts.commands.lint !== undefined) {
     try {
       const lintResult = await runCommand(opts.commands.lint, 180_000, opts.projectDir);
-      result.l1_lint = lintResult.exitCode === 0;
-      if (!result.l1_lint) {
+      if (lintResult.exitCode === 0) {
+        result.l1_lint = true;
+      } else if (opts.baselineLintErrorCount !== undefined) {
+        // Compare against baseline: pass if we haven't introduced NEW errors.
+        const currentErrors = countLintErrors(lintResult.stdout + '\n' + lintResult.stderr);
+        if (currentErrors <= opts.baselineLintErrorCount) {
+          result.l1_lint = true;
+          console.error(`[anton:verify] lint exit≠0 but errors (${currentErrors}) <= baseline (${opts.baselineLintErrorCount}), passing`);
+        } else {
+          result.l1_lint = false;
+          l1_all = false;
+          const combined = combineOutput('lint', lintResult.stdout, lintResult.stderr);
+          failedCommands.push(`lint (${currentErrors - opts.baselineLintErrorCount} new errors): ${truncateOutput(combined, 500)}`);
+          fullOutputParts.push(combined);
+        }
+      } else {
+        result.l1_lint = false;
         l1_all = false;
         const combined = combineOutput('lint', lintResult.stdout, lintResult.stderr);
         failedCommands.push(`lint: ${truncateOutput(combined, 500)}`);
@@ -366,4 +384,51 @@ function parseVerifierResponse(raw: string): { pass: boolean; reason: string } {
   // 4. Ambiguous — default to pass since L1 already validated build/test
   const snippet = text.length > 200 ? text.slice(0, 200) + '...' : text;
   return { pass: true, reason: `(ambiguous response, defaulting to pass) ${snippet}` };
+}
+
+// ── Lint baseline helpers ───────────────────────────────────────────
+
+/**
+ * Count the number of "error" lines in lint output.
+ * Works for eslint, tsc, ruff, clippy — all emit lines containing "error".
+ */
+export function countLintErrors(output: string): number {
+  // Match lines like:
+  //   1:1  error  `./types.js` ...     (eslint)
+  //   error TS2322: ...                 (tsc)
+  //   src/foo.rs:1:1: error[E0308]: ... (clippy)
+  //   src/foo.py:1:1: E302 ...          (ruff — codes starting with E/W/F)
+  const lines = output.split('\n');
+  let count = 0;
+  for (const line of lines) {
+    // eslint: "  1:1  error  ..."
+    if (/\d+:\d+\s+error\s/.test(line)) { count++; continue; }
+    // tsc: "error TS..."  or  "file.ts(1,1): error TS..."
+    if (/\berror\s+TS\d+/.test(line)) { count++; continue; }
+    // clippy/rustc: "error[E"
+    if (/\berror\[E\d+\]/.test(line)) { count++; continue; }
+  }
+  return count;
+}
+
+/**
+ * Capture baseline lint error count before Anton starts modifying files.
+ * Returns the count, or undefined if lint is not configured or passes cleanly.
+ */
+export async function captureLintBaseline(
+  lintCommand: string | undefined,
+  projectDir: string
+): Promise<number | undefined> {
+  if (!lintCommand) return undefined;
+  try {
+    const result = await runCommand(lintCommand, 180_000, projectDir);
+    if (result.exitCode === 0) return 0; // clean baseline
+    const count = countLintErrors(result.stdout + '\n' + result.stderr);
+    if (count > 0) {
+      console.error(`[anton:baseline] pre-existing lint errors: ${count}`);
+    }
+    return count;
+  } catch {
+    return undefined;
+  }
 }
