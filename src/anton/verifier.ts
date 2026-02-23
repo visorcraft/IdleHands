@@ -142,7 +142,7 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
 
   if (opts.commands.build !== undefined) {
     try {
-      const buildResult = await runCommand(opts.commands.build, 180_000);
+      const buildResult = await runCommand(opts.commands.build, 180_000, opts.projectDir);
       result.l1_build = buildResult.exitCode === 0;
       if (!result.l1_build) {
         l1_all = false;
@@ -157,7 +157,7 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
 
   if (opts.commands.test !== undefined) {
     try {
-      const testResult = await runCommand(opts.commands.test, 180_000);
+      const testResult = await runCommand(opts.commands.test, 180_000, opts.projectDir);
       result.l1_test = testResult.exitCode === 0;
       if (!result.l1_test) {
         l1_all = false;
@@ -172,7 +172,7 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
 
   if (opts.commands.lint !== undefined) {
     try {
-      const lintResult = await runCommand(opts.commands.lint, 180_000);
+      const lintResult = await runCommand(opts.commands.lint, 180_000, opts.projectDir);
       result.l1_lint = lintResult.exitCode === 0;
       if (!result.l1_lint) {
         l1_all = false;
