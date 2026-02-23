@@ -158,15 +158,16 @@ async function acquireRuntimeLock(
 
 export async function runCommand(
   cmd: string,
-  timeoutMs: number
+  timeoutMs: number,
+  cwd?: string
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const isWin = process.platform === 'win32';
     // On Windows, use `shell: true` which delegates to cmd.exe, avoiding WSL bash issues.
     // On other platforms, explicitly use BASH_PATH for consistency.
     const child = isWin
-      ? spawn(cmd, [], { stdio: ['ignore', 'pipe', 'pipe'], shell: true })
-      : spawn(BASH_PATH, ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'] });
+      ? spawn(cmd, [], { stdio: ['ignore', 'pipe', 'pipe'], shell: true, ...(cwd ? { cwd } : {}) })
+      : spawn(BASH_PATH, ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'], ...(cwd ? { cwd } : {}) });
     let stdout = '';
     let stderr = '';
     let settled = false;

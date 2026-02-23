@@ -1855,7 +1855,7 @@ When you escalate, your request will be re-run on a more capable model.`;
     const defaults = (managed.config as any).anton || {};
     const runConfig: AntonRunConfig = {
       taskFile: filePath,
-      projectDir: cwd,
+      projectDir: defaults.project_dir || cwd,
       maxRetriesPerTask: defaults.max_retries ?? 3,
       maxIterations: defaults.max_iterations ?? 200,
       taskTimeoutSec: defaults.task_timeout_sec ?? 600,
@@ -1871,9 +1871,9 @@ When you escalate, your request will be re-run on a more capable model.`;
       decompose: defaults.decompose ?? true,
       maxDecomposeDepth: defaults.max_decompose_depth ?? 2,
       maxTotalTasks: defaults.max_total_tasks ?? 500,
-      buildCommand: undefined,
-      testCommand: undefined,
-      lintCommand: undefined,
+      buildCommand: defaults.build_command ?? undefined,
+      testCommand: defaults.test_command ?? undefined,
+      lintCommand: defaults.lint_command ?? undefined,
       skipOnFail: defaults.skip_on_fail ?? false,
       skipOnBlocked: defaults.skip_on_blocked ?? true,
       rollbackOnFail: defaults.rollback_on_fail ?? false,
