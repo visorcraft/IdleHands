@@ -93,6 +93,7 @@ export async function handleHelp({ ctx }: CommandContext): Promise<void> {
     '/anton status — Show task runner progress',
     '/anton stop — Stop task runner',
     '/anton last — Show last run results',
+    '/git_status — Show git status for working directory',
     '/restart_bot — Restart the bot service',
     '',
     'Or just send any text as a coding task.',
@@ -889,4 +890,74 @@ export async function handleRestartBot({ ctx }: CommandContext): Promise<void> {
     detached: true,
     stdio: 'ignore',
   }).unref();
+}
+
+export async function handleGitStatus({ ctx, sessions }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  const managed = sessions.get(chatId);
+  if (!managed) {
+    await ctx.reply('No active session. Send a message to start one.');
+    return;
+  }
+
+  const cwd = managed.workingDir;
+  if (!cwd) {
+    await ctx.reply('No working directory set. Use /dir to set one.');
+    return;
+  }
+
+  const { spawnSync } = await import('node:child_process');
+
+  // Run git status -s (short format)
+  const statusResult = spawnSync('git', ['status', '-s'], {
+    cwd,
+    encoding: 'utf8',
+    timeout: 5000,
+  });
+
+  if (statusResult.status !== 0) {
+    const err = String(statusResult.stderr || statusResult.error || 'Unknown error');
+    if (err.includes('not a git repository') || err.includes('not in a git')) {
+      await ctx.reply('❌ Not a git repository.');
+    } else {
+      await ctx.reply(`❌ git status failed: ${escapeHtml(err.slice(0, 200))}`);
+    }
+    return;
+  }
+
+  const statusOut = String(statusResult.stdout || '').trim();
+
+  // Also get branch info
+  const branchResult = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+    cwd,
+    encoding: 'utf8',
+    timeout: 2000,
+  });
+  const branch = branchResult.status === 0 ? String(branchResult.stdout || '').trim() : 'unknown';
+
+  if (!statusOut) {
+    await ctx.reply(
+      `📁 <b>${escapeHtml(cwd)}</b>\n🌿 Branch: <code>${escapeHtml(branch)}</code>\n\n✅ Working tree clean`,
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  const lines = statusOut.split('\n').slice(0, 30); // Limit to 30 lines
+  const truncated = statusOut.split('\n').length > 30;
+
+  const formatted = lines
+    .map((line) => {
+      const code = line.slice(0, 2);
+      const file = line.slice(3);
+      return `<code>${escapeHtml(code)}</code> ${escapeHtml(file)}`;
+    })
+    .join('\n');
+
+  await ctx.reply(
+    `📁 <b>${escapeHtml(cwd)}</b>\n🌿 Branch: <code>${escapeHtml(branch)}</code>\n\n<pre>${formatted}${truncated ? '\n...' : ''}</pre>`,
+    { parse_mode: 'HTML' }
+  );
 }
