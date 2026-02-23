@@ -20,6 +20,13 @@ import {
   isPathAllowed,
   normalizeAllowedDirs,
 } from './dir-guard.js';
+import {
+  beginTurn as _beginTurn,
+  isTurnActive as _isTurnActive,
+  markProgress as _markProgress,
+  finishTurn as _finishTurn,
+  cancelActive as _cancelActive,
+} from './turn-lifecycle.js';
 
 function pathResolveHome(input: string): string {
   return path.resolve(expandHome(input));
@@ -288,77 +295,35 @@ When you escalate, your request will be re-run on a more capable model.`;
   ): { managed: ManagedSession; turnId: number; controller: AbortController } | null {
     const managed = this.sessions.get(chatId);
     if (!managed) return null;
-    if (managed.inFlight || managed.state === 'resetting') return null;
-
-    const controller = new AbortController();
-    managed.inFlight = true;
-    managed.state = 'running';
-    managed.activeTurnId += 1;
-    managed.activeAbortController = controller;
-    managed.lastProgressAt = Date.now();
-    managed.lastActivity = Date.now();
-    managed.watchdogCompactAttempts = 0;
-
-    return { managed, turnId: managed.activeTurnId, controller };
+    const result = _beginTurn(managed);
+    if (!result) return null;
+    return { managed, ...result };
   }
 
   isTurnActive(chatId: number, turnId: number): boolean {
     const managed = this.sessions.get(chatId);
     if (!managed) return false;
-    return managed.inFlight && managed.activeTurnId === turnId && managed.state !== 'resetting';
+    return _isTurnActive(managed, turnId);
   }
 
   markProgress(chatId: number, turnId: number): void {
     const managed = this.sessions.get(chatId);
     if (!managed) return;
-    if (managed.activeTurnId !== turnId) return;
-    managed.lastProgressAt = Date.now();
-    managed.lastActivity = Date.now();
+    _markProgress(managed, turnId);
   }
 
   finishTurn(chatId: number, turnId: number): ManagedSession | undefined {
     const managed = this.sessions.get(chatId);
     if (!managed) return undefined;
     if (managed.activeTurnId !== turnId) return managed;
-
-    managed.inFlight = false;
-    managed.state = 'idle';
-    managed.activeAbortController = null;
-    managed.lastActivity = Date.now();
+    _finishTurn(managed, turnId);
     return managed;
   }
 
   cancelActive(chatId: number): { ok: boolean; message: string } {
     const managed = this.sessions.get(chatId);
     if (!managed) return { ok: false, message: 'No active session.' };
-
-    const wasRunning = managed.inFlight;
-    const queueSize = managed.pendingQueue.length;
-
-    if (!wasRunning && queueSize === 0) {
-      return { ok: false, message: 'Nothing to cancel.' };
-    }
-
-    // Always clear queued work.
-    managed.pendingQueue = [];
-
-    if (wasRunning) {
-      managed.state = 'canceling';
-      try {
-        managed.activeAbortController?.abort();
-      } catch {}
-      try {
-        managed.session.cancel();
-      } catch {}
-    }
-
-    managed.lastActivity = Date.now();
-
-    const parts: string[] = [];
-    if (wasRunning) parts.push('stopping current task');
-    if (queueSize > 0) parts.push(`cleared ${queueSize} queued task${queueSize > 1 ? 's' : ''}`);
-
-    return { ok: true, message: `⏹ Cancelled: ${parts.join(', ')}.` };
+    return _cancelActive(managed);
   }
 
   resetSession(chatId: number): { ok: boolean; message: string } {
