@@ -121,6 +121,24 @@ list entirely. The model works in single-agent mode.
 Use hooks to extend session/model/tool lifecycle behavior without modifying core files.
 See [Guide → Hooks & Plugins](/guide/hooks) for payloads and plugin examples.
 
+### `tool_loop_auto_continue`
+
+```json
+"tool_loop_auto_continue": {
+  "enabled": true,
+  "max_retries": 5
+}
+```
+
+Controls automatic retry behavior when the agent hits a critical tool loop (AgentLoopBreak).
+
+- `enabled` (default `true`): when `true`, tool-loop breaks trigger automatic retries instead of stopping.
+- `max_retries` (default `5`, range `1..10`): maximum number of auto-continue attempts before surfacing the error normally.
+
+Applies to all surfaces: TUI, Telegram bot, Discord bot, and Anton task runner.
+
+**Env:** `IDLEHANDS_TOOL_LOOP_AUTO_CONTINUE_ENABLED`, `IDLEHANDS_TOOL_LOOP_AUTO_CONTINUE_MAX_RETRIES`
+
 ### `bot`
 
 `bot.telegram` supports token, allowlists, directory restrictions, queue/session limits, approval defaults, group controls, and `reply_to_user_messages` (native Telegram reply threading toggle).
