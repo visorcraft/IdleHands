@@ -792,14 +792,27 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
       // Report task end
       progress.onTaskEnd(currentTask, attempt, currentProgress);
 
-      const isUnskippableFail = (attempt.status === 'failed' || attempt.status === 'error') && !config.skipOnFail;
       const isUnskippableBlock = attempt.status === 'blocked' && !config.skipOnBlocked;
 
-      // Break on fatal conditions if not skipped 
-      // (a timeout or unhandled exception is 'error', a test failure is 'failed') 
-      // Note: we do NOT break on 'timeout' when skipOnFail is true because that's retryable
-      if (isUnskippableFail || isUnskippableBlock) {
+      // Blocked tasks break immediately — they can't be fixed by retrying.
+      if (isUnskippableBlock) {
         break mainLoop;
+      }
+
+      // For failed/error tasks: only break if retries are exhausted.
+      // The retry loop at the top of mainLoop handles re-attempts and will
+      // break when maxRetriesPerTask is reached (if skipOnFail is false).
+      // Previously this broke immediately on the first failure, preventing
+      // the AI from fixing verification errors (e.g. lint) on retry.
+      const isFail = (attempt.status === 'failed' || attempt.status === 'error');
+      if (isFail && !config.skipOnFail) {
+        const retries = taskRetryCount.get(currentTask.key) || 0;
+        if (retries >= config.maxRetriesPerTask) {
+          break mainLoop;
+        }
+        // Otherwise, let the loop continue — the top-of-loop retry check
+        // will pick this task up again with retryContext containing the
+        // verification failure details so the AI can fix the issue.
       }
     }
 
