@@ -2374,10 +2374,19 @@ export async function createSession(opts: {
             actions.push(planModeSummary(name, args));
           }
           if (actions.length) {
-            const userPromptSnippet = rawInstructionText.length > 120
-              ? rawInstructionText.slice(0, 120) + '…'
-              : rawInstructionText;
-            const summary = `User asked: ${userPromptSnippet}\nActions (${actions.length} tool calls, ${turns} turns):\n${actions.map(a => `- ${a}`).join('\n')}\nResult: ${finalText.length > 200 ? finalText.slice(0, 200) + '…' : finalText}`;
+            // Cap action list to prevent vault bloat on long sessions
+            const MAX_SUMMARY_ACTIONS = 30;
+            const cappedActions = actions.length > MAX_SUMMARY_ACTIONS
+              ? [...actions.slice(0, MAX_SUMMARY_ACTIONS), `... and ${actions.length - MAX_SUMMARY_ACTIONS} more`]
+              : actions;
+            const userPrompt = lastAskInstructionText || '(unknown)';
+            const userPromptSnippet = userPrompt.length > 120
+              ? userPrompt.slice(0, 120) + '…'
+              : userPrompt;
+            const resultSnippet = finalText.length > 200
+              ? finalText.slice(0, 200) + '…'
+              : finalText;
+            const summary = `User asked: ${userPromptSnippet}\nActions (${actions.length} tool calls, ${turns} turns):\n${cappedActions.map(a => `- ${a}`).join('\n')}\nResult: ${resultSnippet}`;
             await vault.upsertNote(`turn_summary_${askId}`, summary, 'system');
           }
         } catch {
@@ -2529,6 +2538,16 @@ export async function createSession(opts: {
     let repromptUsed = false;
     let readBudgetWarned = false;
     let noToolNudgeUsed = false;
+
+    // ── Per-file mutation spiral detection ──
+    // Track how many times the same file is mutated within a single ask().
+    // When a file is edited too many times it usually means the model is in a
+    // corruption spiral: edit → break → read → edit → break → ...
+    const fileMutationCounts = new Map<string, number>();
+    const fileMutationWarned = new Set<string>();     // per-file warning tracking
+    const fileMutationBlocked = new Set<string>();    // per-file hard block tracking
+    const FILE_MUTATION_WARN_THRESHOLD = 4;           // soft warning appended to result
+    const FILE_MUTATION_BLOCK_THRESHOLD = 8;          // hard block: refuse further edits
     // Track blocked command loops by exact reason+command signature.
     const blockedExecAttemptsBySig = new Map<string, number>();
     // Cache successful read-only exec observations by exact signature.
@@ -3450,7 +3469,18 @@ export async function createSession(opts: {
               }
             }
             if (FILE_MUTATION_TOOL_SET.has(name) && typeof args.path === 'string') {
-              const absPath = args.path.startsWith('/') ? args.path : `${cfg.dir ?? process.cwd()}/${args.path}`;
+              const absPath = args.path.startsWith('/') ? args.path : path.resolve(cfg.dir ?? process.cwd(), args.path);
+
+              // ── Pre-dispatch: block edits to files in a mutation spiral ──
+              if (fileMutationBlocked.has(absPath)) {
+                const basename = path.basename(absPath);
+                throw new Error(
+                  `${name}: BLOCKED — ${basename} has been edited ${fileMutationCounts.get(absPath) ?? '?'} times in this session and is likely corrupted. ` +
+                  `Restore it first with: exec { "command": "git checkout -- ${args.path}" } or exec { "command": "git restore ${args.path}" }, ` +
+                  'then make ONE well-planned edit. If you cannot fix it, tell the user what went wrong.'
+                );
+              }
+
               const pv = checkPathSafety(absPath);
               if (pv.tier === 'forbidden') {
                 const reason = pv.reason || 'protected path';
@@ -3723,6 +3753,57 @@ export async function createSession(opts: {
               result: content,
             });
 
+            // ── Per-file mutation spiral detection ──
+            // Track edits to the same file. If the model keeps editing the same file
+            // over and over, it's likely in an edit→break→read→edit corruption spiral.
+            if (FILE_MUTATION_TOOL_SET.has(name) && toolSuccess && typeof args.path === 'string') {
+              const absPath = args.path.startsWith('/') ? args.path : path.resolve(cfg.dir ?? process.cwd(), args.path);
+              const basename = path.basename(absPath);
+
+              // write_file = full rewrite. If the model is rewriting the file completely
+              // after being warned, give it a fresh chance (reset counter to 1).
+              if (name === 'write_file' && fileMutationCounts.has(absPath)) {
+                fileMutationCounts.set(absPath, 1);
+                fileMutationWarned.delete(absPath);
+                fileMutationBlocked.delete(absPath);
+              } else {
+                const count = (fileMutationCounts.get(absPath) ?? 0) + 1;
+                fileMutationCounts.set(absPath, count);
+
+                if (count >= FILE_MUTATION_BLOCK_THRESHOLD) {
+                  // Mark for pre-dispatch blocking on subsequent edits
+                  fileMutationBlocked.add(absPath);
+                  content += `\n\n⚠️ BLOCKED: You have edited ${basename} ${count} times. Further edits to this file are now blocked. ` +
+                    `Restore it with: exec { "command": "git checkout -- ${args.path}" }, then make ONE complete edit.`;
+                } else if (count >= FILE_MUTATION_WARN_THRESHOLD && !fileMutationWarned.has(absPath)) {
+                  fileMutationWarned.add(absPath);
+                  content += `\n\n⚠️ WARNING: You have edited ${basename} ${count} times. ` +
+                    'If the file is broken, STOP making incremental fixes. ' +
+                    `Restore it with: exec { "command": "git checkout -- ${args.path}" }, ` +
+                    'read the original file carefully, then make ONE complete edit. Do NOT continue patching.';
+                }
+              }
+            }
+
+            // ── Detect file restores via exec (git checkout/restore) ──
+            // If the model restores a file via git, reset that file's mutation counter
+            // so it gets a fresh chance after recovery.
+            if (name === 'exec' && toolSuccess && typeof args.command === 'string') {
+              const cmd = args.command;
+              const restoreMatch = cmd.match(/git\s+(?:checkout|restore)\s+(?:--\s+)?(\S+)/);
+              if (restoreMatch) {
+                const restoredFile = restoreMatch[1];
+                const absRestored = restoredFile.startsWith('/')
+                  ? restoredFile
+                  : path.resolve(cfg.dir ?? process.cwd(), restoredFile);
+                if (fileMutationCounts.has(absRestored)) {
+                  fileMutationCounts.set(absRestored, 0);
+                  fileMutationWarned.delete(absRestored);
+                  fileMutationBlocked.delete(absRestored);
+                }
+              }
+            }
+
             return { id: callId, content };
           };
 
@@ -3927,6 +4008,28 @@ export async function createSession(opts: {
                 '[system] Tests passed successfully. If the requested work is complete, provide the final summary now and stop. ' +
                 'Only continue with additional commands if the user explicitly requested extra demos/cleanup.',
             });
+          }
+
+          // ── Per-file mutation spiral: post-turn system nudge ──
+          // If any file was just blocked this turn, inject ONE system message.
+          // fileMutationBlocked entries are only added when hitting BLOCK_THRESHOLD,
+          // so this naturally fires once per file (subsequent edits are pre-dispatch blocked).
+          for (const blockedPath of fileMutationBlocked) {
+            const count = fileMutationCounts.get(blockedPath) ?? 0;
+            // Only inject if the block was triggered THIS turn (count == BLOCK_THRESHOLD exactly)
+            if (count === FILE_MUTATION_BLOCK_THRESHOLD) {
+              const basename = path.basename(blockedPath);
+              messages.push({
+                role: 'user' as const,
+                content:
+                  `[system] CRITICAL: ${basename} has been edited ${count} times and is likely corrupted. ` +
+                  'Further edits to this file are now BLOCKED. ' +
+                  `Restore it with: exec { "command": "git checkout -- ${basename}" }, ` +
+                  'then make ONE complete, well-planned edit. ' +
+                  'If you cannot fix it in one edit, tell the user what went wrong and ask for guidance.',
+              });
+              break; // one message is enough
+            }
           }
 
           // ── Escalating cumulative read budget (§ anti-scan guardrails) ──
