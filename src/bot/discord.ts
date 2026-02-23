@@ -1209,6 +1209,7 @@ When you escalate, your request will be re-run on a more capable model.`;
         '/deescalate — Return to base model',
         '/dir [path] — Get/set working directory',
         '/pin — Pin current working directory',
+        '/unpin — Unpin working directory',
         '/model — Show current model',
         '/approval [mode] — Get/set approval mode',
         '/mode [code|sys] — Get/set mode',

@@ -85,6 +85,7 @@ export async function handleHelp({ ctx }: CommandContext): Promise<void> {
     '/deescalate — Return to base model',
      '/dir [path] — Get/set working directory',
      '/pin — Pin current working directory',
+     '/unpin — Unpin working directory',
      '/model — Show current model',
     '/approval [mode] — Get/set approval mode',
     '/mode [code|sys] — Get/set mode',
@@ -291,7 +292,7 @@ export async function handleUnpin({ ctx, sessions }: CommandContext): Promise<vo
       parse_mode: 'HTML',
     });
   } else {
-    await ctx.reply('❌ Failed to unpinned directory.');
+    await ctx.reply('❌ Failed to unpin directory.');
   }
 }
 
