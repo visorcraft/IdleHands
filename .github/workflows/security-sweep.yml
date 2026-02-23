@@ -37,9 +37,7 @@ jobs:
             | head -n1 \
             | cut -d '"' -f4)
           test -n "$URL"
-          curl -fsSL \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            "$URL" | sudo tar -xz -C /usr/local/bin gitleaks
+          curl -fsSL "$URL" | sudo tar -xz -C /usr/local/bin gitleaks
           gitleaks version
 
       - name: Install dependencies for package checks
