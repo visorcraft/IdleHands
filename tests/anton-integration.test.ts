@@ -270,7 +270,8 @@ describe('Anton Integration', { concurrency: 1 }, () => {
       createSession: async () => {
         sessionCount++;
         if (sessionCount === 1) {
-          return mockSession(['<anton-result>status: blocked</anton-result>']);
+          // Use 'failed' instead of 'blocked' — blocked now exhausts retries immediately
+          return mockSession(['<anton-result>status: failed</anton-result>']);
         }
         return mockSession(['<anton-result>status: done</anton-result>']);
       },
