@@ -97,6 +97,15 @@ export const projectCommands: SlashCommand[] = [
     },
   },
   {
+    name: '/git_status',
+    description: 'Git status (alias for /git)',
+    async execute(ctx, args) {
+      // Delegate to /git command
+      const gitCmd = projectCommands.find((c) => c.name === '/git');
+      return gitCmd!.execute(ctx, args, '/git_status');
+    },
+  },
+  {
     name: '/branch',
     description: 'Show/create git branch',
     async execute(ctx, args) {
