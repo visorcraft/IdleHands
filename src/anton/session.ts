@@ -64,6 +64,7 @@ export function buildVerifyConfig(base: IdlehandsConfig, config: AntonRunConfig)
     verbose: false,
     quiet: true,
     max_iterations: 1,
+    no_tools: true,
     trifecta: { enabled: false },
     mcp: { servers: [] },
     lsp: { enabled: false },
