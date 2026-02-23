@@ -1,0 +1,11 @@
+{
+  "name": "idlehands_realrepo_smoke_compare",
+  "engine": "both",
+  "workspace": { "kind": "fixed", "dir": "/home/user/projects/visorcraft/idlehands" },
+  "setup": ["git status -s >/dev/null 2>&1 || true"],
+  "instruction": "In this repo: run `npm run build` and fix any failures until it succeeds. Keep changes minimal.",
+  "success": { "type": "exec", "command": "npm run build", "exitCode": 0 },
+  "repetitions": 3,
+  "max_tokens": 4096,
+  "model": "Qwen3-Coder-Next-Q4_K_M.gguf"
+}
