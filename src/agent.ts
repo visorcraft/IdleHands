@@ -1608,7 +1608,7 @@ export async function createSession(opts: {
 
   const buildCompactionSystemNote = (kind: 'auto' | 'manual', dropped: number): string => {
     const prefix = kind === 'auto'
-      ? `[auto-compacted: ${dropped} old messages dropped to stay within context budget.]`
+      ? `[auto-compacted: ${dropped} old messages dropped to stay within context budget. Continue current task.]`
       : `[compacted: ${dropped} messages dropped.]`;
     const guidance = compactionVaultGuidance();
     return guidance ? `${prefix} ${guidance}` : prefix;
@@ -2430,6 +2430,8 @@ export async function createSession(opts: {
     let noToolTurns = 0;
     const NO_TOOL_REPROMPT_THRESHOLD = 2;
     let repromptUsed = false;
+    let readBudgetWarned = false;
+    let noToolNudgeUsed = false;
     // Track blocked command loops by exact reason+command signature.
     const blockedExecAttemptsBySig = new Map<string, number>();
     // Cache successful read-only exec observations by exact signature.
@@ -2651,14 +2653,13 @@ export async function createSession(opts: {
           }
 
           messages = compacted;
-          // Update current context token count after auto compaction
-          currentContextTokens = estimateTokensFromMessages(compacted);
 
           if (dropped.length) {
             messages.push({ role: 'system', content: buildCompactionSystemNote('auto', dropped.length) } as ChatMessage);
-            await injectVaultContext().catch(() => { });
-            injectCompactionReminder('auto context-budget compaction');
           }
+
+          // Update token count AFTER injections so downstream reads are accurate
+          currentContextTokens = estimateTokensFromMessages(messages);
 
           const afterTokens = estimateTokensFromMessages(compacted);
           return {
@@ -2731,8 +2732,7 @@ export async function createSession(opts: {
               messages.push({
                 role: 'system',
                 content:
-                  `[auto-recovery] Previous request exceeded model context window. Ran ${mode} compaction ` +
-                  `(freed ~${compacted.freedTokens} tokens, dropped ${compacted.droppedMessages} messages). Continue from latest state; do not restart work.`,
+                  `[auto-recovery] Context overflow. Ran ${mode} compaction (freed ~${compacted.freedTokens} tokens). Continue current work.`,
               } as ChatMessage);
               continue;
             }
@@ -2888,7 +2888,7 @@ export async function createSession(opts: {
           }
           messages.push({
             role: 'user',
-            content: '[system] Your previous response was empty (no text, no tool calls). Continue by either calling a tool with valid JSON arguments or giving a final answer.',
+            content: '[system] Empty response. Call a tool or give final answer.',
           });
           await emitTurnEnd({
             turn: turns,
@@ -3051,7 +3051,7 @@ export async function createSession(opts: {
                 });
                 messages.push({
                   role: 'system',
-                  content: `[tool-loop ${warning.level}] ${warning.message}. Stop repeating ${warning.toolName} with unchanged inputs; continue with analysis or next step.`,
+                  content: `[tool-loop ${warning.level}] ${warning.message}. Use existing results; move on.`,
                 } as ChatMessage);
               }
             }
@@ -3156,10 +3156,8 @@ export async function createSession(opts: {
               const isReadFileTool = READ_FILE_CACHE_TOOLS.has(toolName);
               const hardBreakAt = isReadFileTool ? 6 : 4;
 
-              // At 3x, inject vault context and first warning
+              // At 3x, first warning
               if (consec >= 3) {
-                await injectVaultContext().catch(() => { });
-
                 if (consec === 3) {
                   let warningMsg: string | null = null;
                   if (toolName === 'read_file') {
@@ -3173,7 +3171,7 @@ export async function createSession(opts: {
                   if (warningMsg) {
                     messages.push({
                       role: 'system',
-                      content: `${warningMsg} The content has not changed between reads. Reuse the prior result and move to the next step.`,
+                      content: `${warningMsg} Content unchanged. Reuse prior result.`,
                     } as ChatMessage);
                   }
                 }
@@ -3189,7 +3187,7 @@ export async function createSession(opts: {
 
                   messages.push({
                     role: 'system',
-                    content: `CRITICAL: DO NOT make another identical call for this ${resourceType}. It HAS NOT CHANGED. You already have the content. Move on to the NEXT step NOW.`,
+                    content: `CRITICAL: ${resourceType} unchanged. Move on NOW.`,
                   } as ChatMessage);
                 }
 
@@ -3207,8 +3205,7 @@ export async function createSession(opts: {
                 messages.push({
                   role: 'system',
                   content:
-                    `[tool-loop critical] ${toolName} repeated ${consec}x with unchanged inputs. ` +
-                    'Next turn will run with tools disabled so you must use existing results and provide a concrete next step/final response.',
+                    `[tool-loop critical] ${toolName} repeated ${consec}x unchanged. Tools disabled next turn; use existing results.`,
                 } as ChatMessage);
               }
               continue;
@@ -3241,8 +3238,7 @@ export async function createSession(opts: {
               messages.push({
                 role: 'user' as const,
                 content:
-                  '[system] Critical tool loop detected. Next turn will run with tools disabled. ' +
-                  'Use already available tool results to provide a concrete next step or final response; do not request more tools.',
+                  '[system] Tool loop detected. Tools disabled. Use existing results for next step.',
               });
 
               await emitTurnEnd({
@@ -3834,11 +3830,11 @@ export async function createSession(opts: {
 
           // ── Escalating cumulative read budget (§ anti-scan guardrails) ──
           // Warn zone: append warnings to each read result when approaching the hard cap
-          if (cumulativeReadOnlyCalls > READ_BUDGET_WARN && cumulativeReadOnlyCalls <= READ_BUDGET_HARD) {
-            const remaining = READ_BUDGET_HARD - cumulativeReadOnlyCalls;
+          if (!readBudgetWarned && cumulativeReadOnlyCalls > READ_BUDGET_WARN && cumulativeReadOnlyCalls <= READ_BUDGET_HARD) {
+            readBudgetWarned = true;
             messages.push({
               role: 'user' as const,
-              content: `[System] ⚠ Read budget: ${cumulativeReadOnlyCalls}/${READ_BUDGET_HARD}. ${remaining} reads remaining before hard stop. Use search_files or exec grep — do NOT continue reading files one at a time.`,
+              content: `[system] Read budget: ${cumulativeReadOnlyCalls}/${READ_BUDGET_HARD}. Use search_files instead of reading files individually.`,
             });
           }
 
@@ -3901,12 +3897,10 @@ export async function createSession(opts: {
               repromptUsed = true;
               noToolTurns = 0;
               const reminder = userContentToText(instruction).trim();
-              const clippedReminder = reminder.length > 4000 ? `${reminder.slice(0, 4000)}\n[truncated]` : reminder;
+              const clippedReminder = reminder.length > 1600 ? `${reminder.slice(0, 1600)}\n[truncated]` : reminder;
               messages.push({
                 role: 'user',
-                content: `[system] You seem to be stuck narrating without using tools. Resume execution now.\n` +
-                  `Original task:\n${clippedReminder}\n\n` +
-                  `Call the needed tools directly. If everything is truly complete, provide the final answer.`
+                content: `[system] Stuck narrating. Resume with tools.\nTask:\n${clippedReminder}`
               });
 
               await emitTurnEnd({
@@ -3929,11 +3923,29 @@ export async function createSession(opts: {
             );
           }
 
-          messages.push({
-            role: 'user',
-            content: '[system] Continue executing the task. Use tools now (do not just narrate plans). If complete, give the final answer.'
-          });
+          if (!noToolNudgeUsed) {
+            noToolNudgeUsed = true;
+            messages.push({
+              role: 'user',
+              content: '[system] Use tools now or give final answer.'
+            });
 
+            await emitTurnEnd({
+              turn: turns,
+              toolCalls,
+              promptTokens: cumulativeUsage.prompt,
+              completionTokens: cumulativeUsage.completion,
+              promptTokensTurn,
+              completionTokensTurn,
+              ttftMs,
+              ttcMs,
+              ppTps,
+              tgTps,
+            });
+            continue;
+          }
+          // Nudge already used — fall through to next iteration which will
+          // increment noToolTurns and hit the reprompt threshold.
           await emitTurnEnd({
             turn: turns,
             toolCalls,
