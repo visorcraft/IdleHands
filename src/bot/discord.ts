@@ -41,6 +41,13 @@ import {
 import { DiscordStreamingMessage } from './discord-streaming.js';
 import { isToolLoopBreak, formatAutoContinueNotice, AUTO_CONTINUE_PROMPT } from './auto-continue.js';
 import { handleTextCommand, type DiscordCommandContext } from './discord-commands.js';
+import {
+  beginTurn,
+  isTurnActive,
+  markProgress,
+  finishTurn,
+  cancelActive,
+} from './turn-lifecycle.js';
 
 export type SessionState = 'idle' | 'running' | 'canceling' | 'resetting';
 
@@ -308,69 +315,6 @@ When you escalate, your request will be re-run on a more capable model.`;
       }
     }
   }, 60_000);
-
-  function beginTurn(
-    managed: ManagedSession
-  ): { turnId: number; controller: AbortController } | null {
-    if (managed.inFlight || managed.state === 'resetting') return null;
-    const controller = new AbortController();
-    managed.inFlight = true;
-    managed.state = 'running';
-    managed.activeTurnId += 1;
-    managed.activeAbortController = controller;
-    managed.lastProgressAt = Date.now();
-    managed.lastActivity = Date.now();
-    managed.watchdogCompactAttempts = 0;
-    return { turnId: managed.activeTurnId, controller };
-  }
-
-  function isTurnActive(managed: ManagedSession, turnId: number): boolean {
-    return managed.inFlight && managed.activeTurnId == turnId && managed.state !== 'resetting';
-  }
-
-  function markProgress(managed: ManagedSession, turnId: number): void {
-    if (managed.activeTurnId !== turnId) return;
-    managed.lastProgressAt = Date.now();
-    managed.lastActivity = Date.now();
-  }
-
-  function finishTurn(managed: ManagedSession, turnId: number): void {
-    if (managed.activeTurnId !== turnId) return;
-    managed.inFlight = false;
-    managed.state = 'idle';
-    managed.activeAbortController = null;
-    managed.lastActivity = Date.now();
-  }
-
-  function cancelActive(managed: ManagedSession): { ok: boolean; message: string } {
-    const wasRunning = managed.inFlight;
-    const queueSize = managed.pendingQueue.length;
-
-    if (!wasRunning && queueSize === 0) {
-      return { ok: false, message: 'Nothing to cancel.' };
-    }
-
-    // Always clear queued work.
-    managed.pendingQueue = [];
-
-    if (wasRunning) {
-      managed.state = 'canceling';
-      try {
-        managed.activeAbortController?.abort();
-      } catch { }
-      try {
-        managed.session.cancel();
-      } catch { }
-    }
-
-    managed.lastActivity = Date.now();
-
-    const parts: string[] = [];
-    if (wasRunning) parts.push('stopping current task');
-    if (queueSize > 0) parts.push(`cleared ${queueSize} queued task${queueSize > 1 ? 's' : ''}`);
-
-    return { ok: true, message: `⏹ Cancelled: ${parts.join(', ')}.` };
-  }
 
   async function processMessage(managed: ManagedSession, msg: Message): Promise<void> {
     let turn = beginTurn(managed);
