@@ -14,6 +14,32 @@ import { stateDir, shellEscape, BASH_PATH } from './utils.js';
 
 const DEFAULT_MAX_BACKUPS_PER_FILE = 5;
 
+/**
+ * Build a read-back snippet showing the region around a mutation.
+ * Returns numbered lines ±contextLines around the changed area, capped to avoid bloat.
+ */
+function mutationReadback(
+  fileContent: string,
+  changedStartLine: number,
+  changedEndLine: number,
+  contextLines = 5,
+  maxLines = 40,
+): string {
+  const lines = fileContent.split(/\r?\n/);
+  const totalLines = lines.length;
+  const from = Math.max(0, changedStartLine - contextLines);
+  const to = Math.min(totalLines, changedEndLine + contextLines);
+  let slice = lines.slice(from, to);
+  let truncated = false;
+  if (slice.length > maxLines) {
+    slice = slice.slice(0, maxLines);
+    truncated = true;
+  }
+  const numbered = slice.map((l, i) => `${from + i + 1}: ${l}`).join('\n');
+  const header = `\n--- current state of lines ${from + 1}-${from + slice.length} (of ${totalLines}) ---\n`;
+  return header + numbered + (truncated ? '\n...(truncated)' : '');
+}
+
 export type ToolContext = {
   cwd: string;
   noConfirm: boolean;
@@ -586,7 +612,11 @@ export async function write_file(ctx: ToolContext, args: any) {
   const afterBuf = Buffer.from(content, 'utf8');
   const replayNote = await checkpointReplay(ctx, { op: 'write_file', filePath: p, before: beforeBuf, after: afterBuf });
 
-  return `wrote ${redactedPath} (${Buffer.byteLength(content, 'utf8')} bytes)${replayNote}${cwdWarning}`;
+  const contentLines = content.split(/\r?\n/);
+  const readback = contentLines.length <= 40
+    ? mutationReadback(content, 0, contentLines.length)
+    : mutationReadback(content, 0, 20) + '\n...\n' + mutationReadback(content, contentLines.length - 10, contentLines.length);
+  return `wrote ${redactedPath} (${Buffer.byteLength(content, 'utf8')} bytes)${replayNote}${cwdWarning}${readback}`;
 }
 
 export async function insert_file(ctx: ToolContext, args: any) {
@@ -646,7 +676,8 @@ export async function insert_file(ctx: ToolContext, args: any) {
     });
 
     const cwdWarning = checkCwdWarning('insert_file', p, ctx);
-    return `inserted into ${redactedPath} at 0${replayNote}${cwdWarning}`;
+    const readback = mutationReadback(out, 0, out.split(/\r?\n/).length);
+    return `inserted into ${redactedPath} at 0${replayNote}${cwdWarning}${readback}`;
   }
 
   const lines = beforeText.split(/\r?\n/);
@@ -680,7 +711,9 @@ export async function insert_file(ctx: ToolContext, args: any) {
   });
 
   const cwdWarning = checkCwdWarning('insert_file', p, ctx);
-  return `inserted into ${redactedPath} at ${idx}${replayNote}${cwdWarning}`;
+  const insertEndLine = idx + insertLines.length;
+  const readback = mutationReadback(out, idx, insertEndLine);
+  return `inserted into ${redactedPath} at ${idx}${replayNote}${cwdWarning}${readback}`;
 }
 
 export async function edit_file(ctx: ToolContext, args: any) {
@@ -785,7 +818,11 @@ export async function edit_file(ctx: ToolContext, args: any) {
   });
 
   const cwdWarning = checkCwdWarning('edit_file', p, ctx);
-  return `edited ${redactedPath} (replace_all=${replaceAll})${replayNote}${cwdWarning}`;
+  // Read-back: find the line range of the replacement in the new content
+  const editStartLine = next.slice(0, idx).split(/\r?\n/).length - 1;
+  const editEndLine = editStartLine + newText.split(/\r?\n/).length;
+  const readback = mutationReadback(next, editStartLine, editEndLine);
+  return `edited ${redactedPath} (replace_all=${replaceAll})${replayNote}${cwdWarning}${readback}`;
 }
 
 type PatchTouchInfo = {
@@ -1015,7 +1052,9 @@ export async function edit_range(ctx: ToolContext, args: any) {
   });
 
   const cwdWarning = checkCwdWarning('edit_range', p, ctx);
-  return `edited ${p} lines ${startLine}-${endLine}${replayNote}${cwdWarning}`;
+  const rangeEndLine = startIdx + replacementLines.length;
+  const readback = mutationReadback(out, startIdx, rangeEndLine);
+  return `edited ${p} lines ${startLine}-${endLine}${replayNote}${cwdWarning}${readback}`;
 }
 
 export async function apply_patch(ctx: ToolContext, args: any) {
@@ -1136,7 +1175,19 @@ export async function apply_patch(ctx: ToolContext, args: any) {
   }
 
   const redactedPaths = touched.paths.map((rel) => redactPath(resolvePath(ctx, rel), path.resolve(ctx.cwd)));
-  return `applied patch (${touched.paths.length} files): ${redactedPaths.join(', ')}${replayNotes}${cwdWarnings}`;
+  // Read-back for each patched file (brief, 3 context lines, max 2 files to avoid bloat)
+  let patchReadback = '';
+  for (const abs of absPaths.slice(0, 2)) {
+    try {
+      const content = await fs.readFile(abs, 'utf8');
+      const totalLines = content.split(/\r?\n/).length;
+      const rp = redactPath(abs, path.resolve(ctx.cwd));
+      patchReadback += `\n--- ${rp} (${totalLines} lines) first 20 lines ---\n`;
+      patchReadback += content.split(/\r?\n/).slice(0, 20).map((l, i) => `${i + 1}: ${l}`).join('\n');
+    } catch { /* skip unreadable */ }
+  }
+  if (absPaths.length > 2) patchReadback += `\n...(${absPaths.length - 2} more files)`;
+  return `applied patch (${touched.paths.length} files): ${redactedPaths.join(', ')}${replayNotes}${cwdWarnings}${patchReadback}`;
 }
 
 export async function list_dir(ctx: ToolContext, args: any) {
