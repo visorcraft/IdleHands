@@ -174,7 +174,7 @@ describe('Anton Verifier', () => {
       assert.ok(result.summary.includes('L2: Code has issues'));
     });
 
-    test('L2 non-JSON response → fails safe', async () => {
+    test('L2 non-JSON response → defaults to pass (ambiguous)', async () => {
       const opts = {
         agentResult: { status: 'done' as const, reason: undefined, subtasks: [] },
         task: { text: 'test task' },
@@ -191,12 +191,12 @@ describe('Anton Verifier', () => {
       const result = await runVerification(opts);
 
       assert.strictEqual(result.l0_agentDone, true);
-      assert.strictEqual(result.l2_ai, false);
-      assert.strictEqual(result.l2_reason, 'Invalid verifier response: not valid JSON');
-      assert.strictEqual(result.passed, false);
+      assert.strictEqual(result.l2_ai, true); // defaults to pass when ambiguous
+      assert.ok(result.l2_reason?.includes('ambiguous response, defaulting to pass'));
+      assert.strictEqual(result.passed, true);
     });
 
-    test('L2 JSON missing `pass` field → fails safe', async () => {
+    test('L2 JSON missing `pass` field → infers fail from "missing" keyword', async () => {
       const opts = {
         agentResult: { status: 'done' as const, reason: undefined, subtasks: [] },
         task: { text: 'test task' },
@@ -213,8 +213,9 @@ describe('Anton Verifier', () => {
       const result = await runVerification(opts);
 
       assert.strictEqual(result.l0_agentDone, true);
-      assert.strictEqual(result.l2_ai, false);
-      assert.strictEqual(result.l2_reason, 'Invalid verifier response: missing pass field');
+      assert.strictEqual(result.l2_ai, false); // infers fail from "missing" keyword
+      assert.ok(result.l2_reason?.includes('(inferred from prose)'));
+      assert.ok(result.l2_reason?.includes('Missing pass field'));
       assert.strictEqual(result.passed, false);
     });
 
