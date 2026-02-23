@@ -3131,6 +3131,8 @@ export async function createSession(opts: {
               const warningKey = `${warning.level}:${warning.detector}:${detected.signature}`;
               if (!toolLoopWarningKeys.has(warningKey)) {
                 toolLoopWarningKeys.add(warningKey);
+                const argsSnippet = JSON.stringify(args).slice(0, 300);
+                console.error(`[tool-loop] ${warning.level}: ${warning.toolName} (${warning.detector}, count=${warning.count}) args=${argsSnippet}`);
                 await emitToolLoop({
                   level: warning.level,
                   detector: warning.detector,
@@ -3322,6 +3324,7 @@ export async function createSession(opts: {
 
           if (shouldForceToollessRecovery) {
             if (!toollessRecoveryUsed) {
+              console.error(`[tool-loop] Disabling tools for one recovery turn (turn=${turns})`);
               forceToollessRecoveryTurn = true;
               toollessRecoveryUsed = true;
               messages.push({
@@ -3344,6 +3347,7 @@ export async function createSession(opts: {
               });
               continue;
             }
+            console.error(`[tool-loop] Recovery failed — model resumed looping after tools-disabled turn (turn=${turns})`);
             throw new AgentLoopBreak(
               'critical tool-loop persisted after one tools-disabled recovery turn. Stopping to avoid infinite loop.'
             );
