@@ -102,6 +102,26 @@ Notes:
 - `bot.telegram.*` / `bot.discord.*` overrides top-level values per frontend
 - if `debug_abort_reason` is true, cancel messages include raw abort details (`[debug] ...`) instead of only "Cancelled."
 
+## Tool loop auto-continue
+
+Both bots automatically recover from tool loops — no need to manually send "Continue".
+
+When a critical tool loop is detected, the bot notifies the chat and retries automatically:
+
+> ⚠️ Tool loop detected: critical tool-loop persisted after one tools-disabled recovery turn...
+> 🔄 Automatically continuing the task. (retry 1 of 5)
+
+This is enabled by default with up to 5 retries. Configure or disable via:
+
+```json
+{
+  "tool_loop_auto_continue": {
+    "enabled": true,
+    "max_retries": 5
+  }
+}
+```
+
 ## Service management
 
 Use systemd user service commands:
