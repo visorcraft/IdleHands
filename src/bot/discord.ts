@@ -1535,6 +1535,69 @@ When you escalate, your request will be re-run on a more capable model.`;
       return;
     }
 
+    // /git_status - show git status for working directory
+    if (content === '/git_status') {
+      const cwd = managed.config.dir || defaultDir;
+      if (!cwd) {
+        await sendUserVisible(msg, 'No working directory set. Use `/dir` to set one.').catch(() => { });
+        return;
+      }
+
+      try {
+        const { spawnSync } = await import('node:child_process');
+
+        // Run git status -s
+        const statusResult = spawnSync('git', ['status', '-s'], {
+          cwd,
+          encoding: 'utf8',
+          timeout: 5000,
+        });
+
+        if (statusResult.status !== 0) {
+          const err = String(statusResult.stderr || statusResult.error || 'Unknown error');
+          if (err.includes('not a git repository') || err.includes('not in a git')) {
+            await sendUserVisible(msg, '❌ Not a git repository.').catch(() => { });
+          } else {
+            await sendUserVisible(msg, `❌ git status failed: ${err.slice(0, 200)}`).catch(() => { });
+          }
+          return;
+        }
+
+        const statusOut = String(statusResult.stdout || '').trim();
+
+        // Get branch info
+        const branchResult = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+          cwd,
+          encoding: 'utf8',
+          timeout: 2000,
+        });
+        const branch = branchResult.status === 0 ? String(branchResult.stdout || '').trim() : 'unknown';
+
+        if (!statusOut) {
+          await sendUserVisible(
+            msg,
+            `📁 \`${cwd}\`\n🌿 Branch: \`${branch}\`\n\n✅ Working tree clean`
+          ).catch(() => { });
+          return;
+        }
+
+        const lines = statusOut.split('\n').slice(0, 30);
+        const truncated = statusOut.split('\n').length > 30;
+
+        const formatted = lines
+          .map((line) => `\`${line.slice(0, 2)}\` ${line.slice(3)}`)
+          .join('\n');
+
+        await sendUserVisible(
+          msg,
+          `📁 \`${cwd}\`\n🌿 Branch: \`${branch}\`\n\n\`\`\`\n${formatted}${truncated ? '\n...' : ''}\`\`\``
+        ).catch(() => { });
+      } catch (e: any) {
+        await sendUserVisible(msg, `❌ git status failed: ${e?.message ?? String(e)}`).catch(() => { });
+      }
+      return;
+    }
+
     if (content === '/hosts') {
       try {
         const { loadRuntimes, redactConfig } = await import('../runtime/store.js');
