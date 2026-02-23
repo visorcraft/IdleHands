@@ -22,6 +22,7 @@ import { renderTui, setRenderTheme } from './render.js';
 import { enterFullScreen, leaveFullScreen } from './screen.js';
 import { createInitialTuiState, reduceTuiState } from './state.js';
 import type { SettingsMenuItem, StepNavigatorItem, TranscriptItem } from './types.js';
+import { isToolLoopBreak, formatAutoContinueNotice, AUTO_CONTINUE_PROMPT } from '../bot/auto-continue.js';
 
 const THEME_OPTIONS = ['default', 'dark', 'light', 'minimal', 'hacker'] as const;
 const APPROVAL_OPTIONS = ['plan', 'default', 'auto-edit', 'yolo'] as const;
@@ -841,13 +842,21 @@ export class TuiController {
     try {
       let askComplete = false;
       let isRetryAfterCompaction = false;
+      let isToolLoopRetry = false;
+      let toolLoopRetryCount = 0;
+      const autoContinueCfg = this.config.tool_loop_auto_continue;
+      const autoContinueEnabled = autoContinueCfg?.enabled !== false;
+      const autoContinueMaxRetries = autoContinueCfg?.max_retries ?? 5;
       while (!askComplete) {
         const attemptController = new AbortController();
         this.aborter = attemptController;
 
         const askText = isRetryAfterCompaction
           ? 'Continue working on the task from where you left off. Context was compacted to free memory — do NOT restart from the beginning.'
-          : trimmed;
+          : isToolLoopRetry
+            ? AUTO_CONTINUE_PROMPT
+            : trimmed;
+        isToolLoopRetry = false;
 
         const presenterHooks = presenter.hooks();
         const uiHooks: AgentHooks = {
@@ -925,6 +934,21 @@ export class TuiController {
               await new Promise((r) => setTimeout(r, 500));
             }
             isRetryAfterCompaction = true;
+            continue;
+          }
+
+          // Auto-continue on tool-loop breaks
+          if (!isAbort && isToolLoopBreak(e) && autoContinueEnabled && toolLoopRetryCount < autoContinueMaxRetries) {
+            toolLoopRetryCount++;
+            const notice = formatAutoContinueNotice(msg, toolLoopRetryCount, autoContinueMaxRetries);
+            console.error(`[tui] tool-loop auto-continue (retry ${toolLoopRetryCount}/${autoContinueMaxRetries})`);
+            this.dispatch({
+              type: 'ALERT_PUSH',
+              id: `tool_loop_retry_${Date.now()}`,
+              level: 'info',
+              text: notice,
+            });
+            isToolLoopRetry = true;
             continue;
           }
 

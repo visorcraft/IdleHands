@@ -27,6 +27,10 @@ const DEFAULTS: IdlehandsConfig = {
     },
     per_tool: {},
   },
+  tool_loop_auto_continue: {
+    enabled: true,
+    max_retries: 5,
+  },
   response_timeout: 600,
   connection_timeout: 600,
   initial_connection_check: true,
@@ -607,6 +611,17 @@ export async function loadConfig(opts: {
     }
   }
   merged.tool_loop_detection.per_tool = perTool;
+
+  // tool_loop_auto_continue normalization
+  if (merged.tool_loop_auto_continue && typeof merged.tool_loop_auto_continue === 'object') {
+    const acEnabled = parseBoolLike(merged.tool_loop_auto_continue.enabled);
+    if (acEnabled !== undefined) merged.tool_loop_auto_continue.enabled = acEnabled;
+    if (typeof merged.tool_loop_auto_continue.max_retries === 'number') {
+      merged.tool_loop_auto_continue.max_retries = Math.max(1, Math.min(10, Math.floor(merged.tool_loop_auto_continue.max_retries)));
+    }
+  } else {
+    merged.tool_loop_auto_continue = { ...(DEFAULTS.tool_loop_auto_continue ?? { enabled: true, max_retries: 5 }) };
+  }
 
   const subAgentsEnabled = parseBoolLike(merged.sub_agents.enabled);
   if (subAgentsEnabled !== undefined) merged.sub_agents.enabled = subAgentsEnabled;
