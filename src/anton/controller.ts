@@ -471,21 +471,67 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         const taskStartMs = Date.now();
 
         try {
-          // Build prompt and ask session
-          let prompt = await buildAntonPrompt({
-            task: currentTask,
-            taskFile,
-            taskFilePath: config.taskFile,
-            projectDir: config.projectDir,
-            config,
-            retryContext,
-            vault,
-            lens,
-            maxContextTokens: idlehandsConfig.context_max_tokens || 8000,
-          });
+          // Build prompt and ask session.
+          // If the prompt exceeds budget and we have retryContext, progressively
+          // trim the retry context (which includes full command output) until it
+          // fits.  This avoids aborting retries just because the error output is
+          // too large to include verbatim.
+          let effectiveRetryContext = retryContext;
+          let prompt = '';
+          let estimatedPromptTokens = 0;
 
-          const promptText = typeof prompt === 'string' ? prompt : JSON.stringify(prompt);
-          const estimatedPromptTokens = estimateTokens(promptText);
+          for (let trimPass = 0; trimPass < 3; trimPass++) {
+            prompt = await buildAntonPrompt({
+              task: currentTask,
+              taskFile,
+              taskFilePath: config.taskFile,
+              projectDir: config.projectDir,
+              config,
+              retryContext: effectiveRetryContext,
+              vault,
+              lens,
+              maxContextTokens: idlehandsConfig.context_max_tokens || 8000,
+            });
+
+            const promptText = typeof prompt === 'string' ? prompt : JSON.stringify(prompt);
+            estimatedPromptTokens = estimateTokens(promptText);
+
+            if (estimatedPromptTokens <= config.maxPromptTokensPerAttempt) {
+              break; // fits within budget
+            }
+
+            // Over budget — try trimming retry context
+            if (effectiveRetryContext) {
+              if (trimPass === 0) {
+                // First trim: cut command output to 1000 chars
+                effectiveRetryContext = effectiveRetryContext
+                  .replace(
+                    /=== Full error output from failed commands ===[\s\S]*?=== End of error output ===/,
+                    (m) => {
+                      const inner = m.slice(m.indexOf('===\n') + 4, m.lastIndexOf('\n==='));
+                      return `=== Error output (trimmed) ===\n${inner.slice(0, 1000)}\n...(truncated)\n=== End of error output ===`;
+                    }
+                  );
+                console.error(`[anton:budget] trimPass=1: trimmed retry command output to 1000 chars`);
+              } else if (trimPass === 1) {
+                // Second trim: drop command output entirely, keep just summary
+                effectiveRetryContext = effectiveRetryContext
+                  .replace(
+                    /\n*=== (Full e|E)rror output[\s\S]*?=== End of error output ===\n*/,
+                    '\n(Full error output omitted due to prompt budget — run the lint/test command to see errors)\n'
+                  );
+                console.error(`[anton:budget] trimPass=2: dropped retry command output entirely`);
+              } else {
+                // Third trim: drop retry context entirely
+                effectiveRetryContext = undefined;
+                console.error(`[anton:budget] trimPass=3: dropped retry context entirely`);
+              }
+            } else {
+              // No retry context to trim — genuinely over budget
+              break;
+            }
+          }
+
           if (estimatedPromptTokens > config.maxPromptTokensPerAttempt) {
             throw new Error(
               `prompt-budget-exceeded: estimated=${estimatedPromptTokens} max=${config.maxPromptTokensPerAttempt}`
