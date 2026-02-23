@@ -545,13 +545,7 @@ function parseFunctionTagToolCalls(content: string): ToolCall[] | null {
     const jsonStart = body.indexOf('{');
     const jsonEnd = body.lastIndexOf('}');
     if (jsonStart !== -1 && jsonEnd > jsonStart) {
-      const sub = body.slice(jsonStart, jsonEnd + 1);
-      try {
-        JSON.parse(sub);
-        args = sub;
-      } catch {
-        // keep {}
-      }
+      args = body.slice(jsonStart, jsonEnd + 1);
     }
 
     calls.push({
@@ -579,16 +573,43 @@ export function parseJsonArgs(raw: string): any {
     // Attempt basic repairs
     let repaired = cleaned;
 
-    // 1. Remove trailing commas
+    // 1. Unescape unescaped newlines and tabs inside strings robustly
+    let stateRepaired = '';
+    let inString = false;
+    let escapeLevel = false;
+    for (let i = 0; i < repaired.length; i++) {
+      const char = repaired[i];
+      if (escapeLevel) {
+        stateRepaired += char;
+        escapeLevel = false;
+        continue;
+      }
+      if (char === '\\') {
+        stateRepaired += char;
+        escapeLevel = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = !inString;
+        stateRepaired += char;
+        continue;
+      }
+      if (inString) {
+        if (char === '\n') {
+          stateRepaired += '\\n';
+          continue;
+        }
+        if (char === '\t') {
+          stateRepaired += '\\t';
+          continue;
+        }
+      }
+      stateRepaired += char;
+    }
+    repaired = stateRepaired;
+
+    // 2. Remove trailing commas
     repaired = repaired.replace(/,\s*([}\]])/g, '$1');
-
-    // 2. Unescape unescaped newlines inside strings (simple heuristic)
-    // This is a naive regex replacing raw \n with \\n when it appears between quotes.
-    // It is not perfect for JSON but handles the common case where models forget to escape a multiline string.
-    repaired = repaired.replace(/(?<="[^"]*)\n(?=[^"]*")/g, '\\n');
-
-    // 3. Unescaped tabs inside strings
-    repaired = repaired.replace(/(?<="[^"]*)\t(?=[^"]*")/g, '\\t');
 
     // Ensure if we had a single literal string wrapped in quotes but containing unescaped breaks
     try {
