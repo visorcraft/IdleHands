@@ -659,7 +659,7 @@ describe('agent vault + replay synergy', () => {
 });
 
 describe('trifecta vault passive injection', () => {
-  it('injects passive vault context into messages before LLM call', async () => {
+  it('does not inject passive vault context during auto-compaction', async () => {
     let seenMessages: any[] = [];
 
     const fakeVault: any = {
@@ -712,7 +712,7 @@ describe('trifecta vault passive injection', () => {
       runtime: { client: fakeClient, vault: fakeVault },
     });
 
-    // Passive vault injection is triggered when compaction drops old turns.
+    // Auto-compaction should NOT inject vault context (avoids context bloat spiral).
     for (let i = 0; i < 40; i++) {
       session.messages.push({ role: 'assistant', content: `filler-${i} ${'z'.repeat(500)}` });
     }
@@ -723,7 +723,7 @@ describe('trifecta vault passive injection', () => {
     const injected = seenMessages.some(
       (m: any) => typeof m?.content === 'string' && m.content.includes('[Trifecta Vault (passive)]')
     );
-    assert.equal(injected, true, 'expected passive vault context injection');
+    assert.equal(injected, false, 'vault context should not be injected during auto-compaction');
   });
 });
 
