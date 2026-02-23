@@ -2858,6 +2858,8 @@ export async function createSession(opts: {
     let toollessRecoveryUsed = false;
     // Prevent repeating the same "stop rerunning" reminder every turn.
     const readOnlyExecHintedSigs = new Set<string>();
+    // Tool loop recovery: poisoned results and selective tool suppression.
+    const suppressedTools = new Set<string>();
     // Keep a lightweight breadcrumb for diagnostics on partial failures.
     let lastSuccessfulTestRun: any = null;
     // One-time nudge to prevent post-success churn after green test runs.
@@ -3167,7 +3169,9 @@ export async function createSession(opts: {
         let resp;
         try {
           try {
-            const toolsForTurn = cfg.no_tools || forceToollessRecoveryTurn ? [] : getToolsSchema();
+            const toolsForTurn = (cfg.no_tools || forceToollessRecoveryTurn)
+              ? []
+              : getToolsSchema().filter(t => !suppressedTools.has(t.function.name));
             const toolChoiceForTurn = cfg.no_tools || forceToollessRecoveryTurn ? 'none' : 'auto';
             resp = await client.chatStream({
               model,
@@ -3480,6 +3484,7 @@ export async function createSession(opts: {
             onMutation: (absPath: string) => {
               lastEditedPath = absPath;
               mutationVersion++;
+              suppressedTools.clear();  // file changed, re-enable all tools
             },
           });
 
@@ -3535,6 +3540,8 @@ export async function createSession(opts: {
           const replayExecSigs = new Set<string>();
           // Repeated read_file/read_files/list_dir calls can be served from cache.
           const repeatedReadFileSigs = new Set<string>();
+          // Poisoned tool sigs: at consec >= 3, don't execute — return error instead.
+          const poisonedToolSigs = new Set<string>();
 
           let shouldForceToollessRecovery = false;
           const criticalLoopSigs = new Set<string>();
@@ -3692,20 +3699,18 @@ export async function createSession(opts: {
                 }
               }
 
-              // At 2x, serve from cache if available AND inject final warning
-              if (consec >= 2 && isReadFileTool) {
-                if (consec === 4) {
-                  let resourceType = 'resource';
-                  if (toolName === 'read_file') resourceType = 'file';
-                  else if (toolName === 'read_files') resourceType = 'files';
-                  else if (toolName === 'list_dir') resourceType = 'directory';
-
-                  messages.push({
-                    role: 'system',
-                    content: `CRITICAL: ${resourceType} unchanged. Move on NOW.`,
-                  } as ChatMessage);
+              // At consec >= 3: poison the result (don't execute, return error).
+              // At consec >= 4: also suppress the tool from the schema entirely.
+              if (consec >= 3) {
+                poisonedToolSigs.add(sig);
+                if (consec >= 4) {
+                  suppressedTools.add(toolName);
                 }
+                continue;
+              }
 
+              // At 2x, serve from cache if available
+              if (consec >= 2 && isReadFileTool) {
                 const argsForSig = sigMetaBySig.get(sig)?.args ?? {};
                 const replay = await toolLoopGuard.getReadCacheReplay(
                   toolName,
@@ -4015,6 +4020,14 @@ export async function createSession(opts: {
               name,
               args && typeof args === 'object' && !Array.isArray(args) ? args : {}
             );
+
+            // Poisoned tool call: don't execute, return error-like result.
+            if (poisonedToolSigs.has(sig)) {
+              const consec = consecutiveCounts.get(sig) ?? 3;
+              const poisonMsg = `Error: This exact ${name} call has been repeated ${consec} times with identical arguments and results. The tool is temporarily disabled. Use the information you already have, or try a different approach.`;
+              return { id: callId, content: poisonMsg };
+            }
+
             let content = '';
             let reusedCachedReadOnlyExec = false;
             let reusedCachedReadTool = false;
