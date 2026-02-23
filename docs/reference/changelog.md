@@ -2,6 +2,14 @@
 
 ## 1.3.4 (2026-02-23)
 
+### Tool loop auto-continue
+
+- When the agent hits a critical tool loop, all surfaces (TUI, Telegram, Discord, Anton) now automatically retry instead of stopping.
+- Each retry sends a user-visible notification with error details and attempt count (e.g. "retry 1 of 5").
+- Configurable via `tool_loop_auto_continue.enabled` (default `true`) and `tool_loop_auto_continue.max_retries` (default `5`, range 1–10).
+- Anton handles tool-loop retries internally without orchestrator involvement, reporting via `onToolLoop` callback.
+- After exhausting all retries, the error surfaces normally.
+
 ### Vault: automatic turn action summaries
 
 - After every tool-using turn, a structured action summary is now automatically persisted to the Vault.
