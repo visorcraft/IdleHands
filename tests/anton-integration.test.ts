@@ -164,6 +164,7 @@ function defaultConfig(overrides: Partial<AntonRunConfig> = {}): AntonRunConfig 
     skipOnFail: true,
     skipOnBlocked: true,
     rollbackOnFail: false,
+    maxIdenticalFailures: 5,
     approvalMode: 'yolo' as const,
     verbose: false,
     dryRun: false,

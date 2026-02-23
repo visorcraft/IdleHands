@@ -114,15 +114,15 @@ export function formatTaskEnd(
       msg += `\n   Failed: ${failures.join(', ')}`;
     }
     if (v.summary) {
-      // Truncate long summaries
-      const summary = v.summary.length > 200 ? v.summary.slice(0, 200) + '...' : v.summary;
+      // Show more of the error summary for actionable diagnostics
+      const summary = v.summary.length > 500 ? v.summary.slice(0, 500) + '...' : v.summary;
       msg += `\n   ${summary}`;
     }
   }
 
   // Show error message if present
   if (result.error) {
-    const err = result.error.length > 200 ? result.error.slice(0, 200) + '...' : result.error;
+    const err = result.error.length > 500 ? result.error.slice(0, 500) + '...' : result.error;
     msg += `\n   Error: ${err}`;
   }
 

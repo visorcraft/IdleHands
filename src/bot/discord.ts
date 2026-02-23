@@ -1944,6 +1944,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       skipOnFail: defaults.skip_on_fail ?? false,
       skipOnBlocked: defaults.skip_on_blocked ?? true,
       rollbackOnFail: defaults.rollback_on_fail ?? false,
+      maxIdenticalFailures: defaults.max_identical_failures ?? 5,
       approvalMode: (defaults.approval_mode ?? 'yolo') as AntonRunConfig['approvalMode'],
       verbose: false,
       dryRun: false,

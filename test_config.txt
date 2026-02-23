@@ -1,0 +1,49 @@
+Γû╢ config resolution: CLI > env > file > defaults
+  Γ£ö uses defaults when no config file, env, or CLI overrides exist (2.7343ms)
+  Γ£ö file config overrides defaults (2.8432ms)
+  Γ£ö env overrides file config (2.7648ms)
+  Γ£ö CLI overrides both env and file config (2.2039ms)
+  Γ£ö env booleans parse correctly (yes/no/1/0/true/false) (0.4877ms)
+  Γ£ö invalid approval_mode in env falls back to auto-edit with warning (0.4264ms)
+  Γ£ö CLI approval_mode overrides env approval_mode (0.4597ms)
+  Γ£ö sys mode defaults approval_mode to default when approval not explicitly set (0.498ms)
+  Γ£ö sys mode keeps explicit approval_mode override (0.4978ms)
+  Γ£ö reject approval_mode is accepted via CLI (0.406ms)
+  Γ£ö reject approval_mode is accepted via env (0.4528ms)
+  Γ£ö env mode is parsed from IDLEHANDS_MODE (0.7952ms)
+  Γ£ö endpoint trailing slashes are normalized (0.4014ms)
+  Γ£ö dir is resolved to absolute path (0.5105ms)
+[warn] configured dir "C:\Users\ciamo\PhpstormProjects\IdleHands\nonexistent\ghost\path" does not exist, using cwd "C:\Users\ciamo\PhpstormProjects\IdleHands"
+  Γ£ö dir falls back to cwd when configured dir does not exist (0.9581ms)
+  Γ£ö preferCwdDir ignores stale file dir when fresh mode is requested (3.1985ms)
+  Γ£ö parses output_format from env (0.4673ms)
+  Γ£ö reads system_prompt_override from env (0.3686ms)
+  Γ£ö invalid output_format falls back to text (0.3945ms)
+  Γ£ö parses fail_on_error and diff_only booleans from env (0.4142ms)
+  Γ£ö provides sane sub_agents defaults (0.3463ms)
+  Γ£ö --no-sub-agents CLI flag disables sub-agents (0.3527ms)
+  Γ£ö IDLEHANDS_NO_SUB_AGENTS=1 env var disables sub-agents (0.3721ms)
+  Γ£ö file config sub_agents.enabled=false is respected (2.238ms)
+  Γ£ö CLI --no-sub-agents overrides file config sub_agents.enabled=true (1.697ms)
+  Γ£ö parses review artifact stale policy from env (0.3768ms)
+  Γ£ö invalid review artifact stale policy is ignored (0.327ms)
+  Γ£ö parses immutable review artifact cap from env (0.3672ms)
+  Γ£ö clamps immutable review artifact cap to at least 1 (0.314ms)
+  Γ£ö parses watchdog settings + debug abort reason from env (0.6975ms)
+  Γ£ö parses connection timeout from env (0.4535ms)
+  Γ£ö parses initial connection check options from env (0.5238ms)
+  Γ£ö parses hook system settings from env (0.8128ms)
+Γ£ö config resolution: CLI > env > file > defaults (34.8881ms)
+Γû╢ anton config
+  Γ£ö default anton config values load correctly (0.354ms)
+  Γ£ö env overrides apply (0.4257ms)
+  Γ£ö invalid values are rejected or clamped (0.3878ms)
+Γ£ö anton config (2.1418ms)
+Γä╣ tests 36
+Γä╣ suites 2
+Γä╣ pass 36
+Γä╣ fail 0
+Γä╣ cancelled 0
+Γä╣ skipped 0
+Γä╣ todo 0
+Γä╣ duration_ms 255.8203

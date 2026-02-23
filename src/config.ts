@@ -112,6 +112,7 @@ const DEFAULTS: IdlehandsConfig = {
     skip_on_fail: false,
     skip_on_blocked: true,
     rollback_on_fail: false,
+    max_identical_failures: 5,
     approval_mode: 'yolo',
     verbose: false,
     auto_commit: true,
