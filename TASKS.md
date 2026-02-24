@@ -109,7 +109,7 @@ session_persistence?: 'default' | 'sticky' | 'ephemeral';
 - [x] Create shared module `src/bot/ux/events.ts` with platform-agnostic event model (`ACK`, `PROGRESS`, `WARNING`, `ERROR`, `RESULT`, `ACTIONS`).
 - [x] Create shared module `src/bot/ux/renderer.ts` to convert event model into canonical text blocks.
 - [x] Create shared module `src/bot/ux/actions.ts` defining normalized action schema (`retry_fast`, `retry_heavy`, `cancel`, `show_diff`, `apply`, `anton_stop`).
-- [ ] Create shared module `src/bot/ux/state.ts` for per-session UX state (last event timestamp, active actions, stale detection).
+- [x] Create shared module `src/bot/ux/state.ts` for per-session UX state (last event timestamp, active actions, stale detection).
 - [ ] Create shared module `src/bot/ux/progress-throttle.ts` for unified rate-limiting and heartbeat behavior.
 - [ ] Refactor Telegram and Discord handlers to consume shared UX core instead of duplicating message composition logic.
 - [ ] Add tests: `tests/bot-ux-events.test.ts`, `tests/bot-ux-renderer.test.ts`, `tests/bot-ux-throttle.test.ts`.
