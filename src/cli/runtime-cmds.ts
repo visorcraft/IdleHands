@@ -3,7 +3,6 @@ import { stdin as input, stdout as output } from 'node:process';
 import readline from 'node:readline/promises';
 
 import { probeModelsEndpoint, waitForModelsReady } from '../runtime/health.js';
-import { HostCommandRunner } from '../runtime/host-runner.js';
 import {
   loadRuntimes,
   saveRuntimes,
@@ -24,17 +23,8 @@ import {
   runtimesFilePath,
   usage,
 } from './runtime-common.js';
+import { runHostCommand } from './runtime-host-command.js';
 import { applyDynamicProbeDefaults } from './runtime-probe-defaults.js';
-
-const hostCommandRunner = new HostCommandRunner();
-
-async function runHostCommand(
-  host: RuntimeHost,
-  command: string,
-  timeoutSec = 5
-): Promise<{ ok: boolean; code: number | null; stdout: string; stderr: string }> {
-  return await hostCommandRunner.runOnHost(host, command, timeoutSec);
-}
 
 export async function runHostsSubcommand(args: any, _config: any): Promise<void> {
   await bootstrapRuntimes();
