@@ -337,7 +337,7 @@ describe('Anton Integration', { concurrency: 1 }, () => {
     }
   });
 
-  test('J8. Malformed AI output → treated as blocked (fail-safe)', async () => {
+  test('J8. Malformed AI output → recovered via format-only followup', async () => {
     const dir = await createFixtureRepo();
     const taskFile = await writeTaskFile(dir, ['# Tasks', '- [ ] Task 1'].join('\n'));
 
@@ -353,16 +353,16 @@ describe('Anton Integration', { concurrency: 1 }, () => {
       abortSignal: { aborted: false },
       createSession: async () =>
         mockSession([
-          // Malformed — no <anton-result> block → parseAntonResult returns blocked
+          // First response malformed (no <anton-result>).
           'I completed the task successfully!',
+          // Recovery prompt response provides valid structured result.
+          '<anton-result>\nstatus: done\n</anton-result>',
         ]),
     });
 
-    // Agent emitted no structured block → parsed as blocked → verification sees
-    // agentResult.status !== 'done' → L0 fails → attempt status = 'failed'
-    // After retries exhausted, task is skipped.
-    assert.equal(result.completed, 0, 'Malformed output should not complete');
-    assert.ok(result.skipped >= 1 || result.failed >= 1, 'Task should be skipped or failed');
+    assert.equal(result.completed, 1, 'Malformed output should be repairable');
+    assert.equal(result.failed, 0);
+    assert.equal(result.stopReason, 'all_done');
   });
 
   test.skip('J9. Build + test pass (redundant with global CI build/test)', async () => {

@@ -146,6 +146,7 @@ export function buildDiscoveryPrompt(opts: {
   taskFilePath: string;
   projectDir: string;
   planFilePath: string;
+  retryHint?: string;
 }): string {
   return `You are running PRE-FLIGHT DISCOVERY for an autonomous coding orchestrator.
 
@@ -169,6 +170,8 @@ If task is already complete:
 
 If task is incomplete:
 - Create/update this markdown file path exactly: ${opts.planFilePath}
+- You MUST NOT modify any files outside: ${path.resolve(opts.projectDir, '.agents', 'tasks')}
+- DO NOT call edit_range/apply_patch on source files in discovery.
 - The markdown MUST include:
   - The FULL TASK (VERBATIM)
   - What is missing
@@ -176,6 +179,13 @@ If task is incomplete:
   - Likely files to modify/create (or explicitly state none)
 - Then return EXACT JSON only:
 {"status":"incomplete","filename":"${opts.planFilePath}"}
+
+${
+  opts.retryHint
+    ? `RETRY CONTEXT: ${opts.retryHint}
+If prior attempts failed, keep output minimal, write/update only the plan file above, and return valid JSON.`
+    : ''
+}
 
 Return JSON only. No markdown fences. No commentary.`;
 }

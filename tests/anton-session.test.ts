@@ -66,6 +66,8 @@ describe('anton session config', () => {
     assert.equal(out.max_iterations, 3);
     assert.equal(out.timeout, 120);
     assert.equal(out.no_tools, false);
+    assert.deepEqual(out.allowed_write_roots, ['/tmp/.agents/tasks']);
+    assert.equal(out.dir_pinned, true);
     assert.equal(out.trifecta?.enabled, false);
     assert.deepEqual(out.mcp?.servers, []);
   });

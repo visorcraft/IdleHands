@@ -206,6 +206,25 @@ export interface RunAntonOpts {
   createSession?: (config: IdlehandsConfig, apiKey?: string) => Promise<AgentSession>;
 }
 
+const STRUCTURED_RESULT_RECOVERY_PROMPT = `Your previous reply did not include a valid <anton-result> block.
+Do NOT call tools.
+Return ONLY this block shape and nothing else:
+<anton-result>
+status: done|failed|blocked|decompose
+reason: <optional>
+subtasks:
+- <only when status=decompose>
+</anton-result>`;
+
+function isStructuredResultParseFailure(reason?: string): boolean {
+  if (!reason) return false;
+  return (
+    reason === 'Agent did not emit structured result' ||
+    reason === 'No status line found in result block' ||
+    reason.startsWith('Unknown status:')
+  );
+}
+
 export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
   const { config, idlehandsConfig, progress, abortSignal, apiKey, vault, lens } = opts;
   const createSessionFn = opts.createSession || defaultCreateSession;
@@ -488,6 +507,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           1,
           Math.floor(config.preflightSessionMaxIterations ?? 500)
         );
+        let discoveryRetryHint: string | undefined;
 
         // Stage 1: discovery (retry discovery only).
         for (let discoveryTry = 0; discoveryTry <= preflightMaxRetries; discoveryTry++) {
@@ -513,6 +533,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               taskFilePath: config.taskFile,
               projectDir: config.projectDir,
               planFilePath: plannedFilePath,
+              retryHint: discoveryRetryHint,
             });
 
             let discoveryTimeoutHandle: NodeJS.Timeout;
@@ -582,9 +603,10 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               error: errMsg,
             });
 
-            if (discoveryTry < preflightMaxRetries) {
-              const short = errMsg.length > 180 ? `${errMsg.slice(0, 177)}...` : errMsg;
+            const short = errMsg.length > 180 ? `${errMsg.slice(0, 177)}...` : errMsg;
+            discoveryRetryHint = `Previous discovery attempt failed: ${short}. Do not edit source files. Only update ${plannedFilePath} and return strict JSON.`;
 
+            if (discoveryTry < preflightMaxRetries) {
               if (/max iterations exceeded/i.test(errMsg)) {
                 const nextCap = Math.min(
                   Math.max(discoveryIterationCap * 2, discoveryIterationCap + 2),
@@ -605,20 +627,25 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               continue;
             }
 
-            const preflightAttempt: AntonAttempt = {
-              taskKey: currentTask.key,
-              taskText: currentTask.text,
-              attempt: attemptNumber,
-              durationMs: Date.now() - stageStart,
-              tokensUsed: 0,
-              status: timeout ? 'timeout' : 'error',
-              verification: undefined,
-              error: `preflight-error(discovery): ${errMsg}`,
-              commitHash: undefined,
-            };
-            attempts.push(preflightAttempt);
-            taskRetryCount.set(currentTask.key, retries + 1);
-            if (!config.skipOnFail) break mainLoop;
+            // Final discovery failure: degrade gracefully by bootstrapping a fallback plan file
+            // so Anton can still proceed to implementation/review instead of hard-failing task 1.
+            const fallbackState = await ensurePlanFileExistsOrBootstrap({
+              absPath: plannedFilePath,
+              task: currentTask,
+              source: 'discovery',
+            });
+            if (fallbackState === 'bootstrapped') {
+              progress.onStage?.(
+                `⚠️ Discovery failed after ${preflightTotalTries} tries (${short}). Bootstrapped fallback plan and continuing: ${plannedFilePath}`
+              );
+            } else {
+              progress.onStage?.(
+                `⚠️ Discovery failed after ${preflightTotalTries} tries (${short}). Reusing existing plan and continuing: ${plannedFilePath}`
+              );
+            }
+            taskPlanByTaskKey.set(currentTask.key, plannedFilePath);
+            discoveryOk = true;
+            break;
           } finally {
             try {
               await discoverySession?.close();
@@ -999,7 +1026,38 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
 
           const taskEndMs = Date.now();
           const durationMs = taskEndMs - taskStartMs;
-          const tokensUsed = session.usage.prompt + session.usage.completion;
+          let tokensUsed = session.usage.prompt + session.usage.completion;
+
+          // Parse structured result (with one-shot recovery for format-only failures).
+          let agentResult = parseAntonResult(result.text);
+
+          if (
+            agentResult.status === 'blocked' &&
+            isStructuredResultParseFailure(agentResult.reason) &&
+            !abortSignal.aborted &&
+            !controller.signal.aborted
+          ) {
+            try {
+              progress.onStage?.(
+                '⚠️ Agent omitted structured result. Requesting format-only recovery...'
+              );
+              const repaired = await session.ask(STRUCTURED_RESULT_RECOVERY_PROMPT);
+              iterationsUsed += repaired.turns;
+              agentResult = parseAntonResult(repaired.text);
+              tokensUsed = session.usage.prompt + session.usage.completion;
+            } catch (repairErr) {
+              console.error(`[anton:result-recovery] failed: ${repairErr}`);
+            }
+          }
+
+          // If result is still parse-broken, treat as failed (retriable) instead of blocked (terminal).
+          if (agentResult.status === 'blocked' && isStructuredResultParseFailure(agentResult.reason)) {
+            agentResult = {
+              status: 'failed',
+              reason: `structured-result-parse-failure: ${agentResult.reason}`,
+              subtasks: [],
+            };
+          }
 
           // Per-attempt token cost guardrail (not just prompt size).
           if (tokensUsed > config.maxPromptTokensPerAttempt) {
@@ -1008,8 +1066,6 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             );
           }
 
-          // Parse structured result
-          const agentResult = parseAntonResult(result.text);
           console.error(
             `[anton:result] task="${currentTask.text.slice(0, 50)}" status=${agentResult.status} reason=${agentResult.reason ?? 'none'} subtasks=${agentResult.subtasks.length} tokens=${tokensUsed} duration=${Math.round(durationMs / 1000)}s`
           );
@@ -1018,8 +1074,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               `[anton:debug] decompose result: status=${agentResult.status} subtasks=${agentResult.subtasks.length} reason=${agentResult.reason ?? 'none'}`
             );
             if (
-              agentResult.status === 'blocked' &&
-              agentResult.reason === 'Agent did not emit structured result'
+              agentResult.status === 'failed' &&
+              (agentResult.reason ?? '').startsWith('structured-result-parse-failure')
             ) {
               console.error(
                 `[anton:debug] decompose raw output (first 500 chars): ${(result.text ?? '').slice(0, 500)}`
