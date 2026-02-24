@@ -192,6 +192,7 @@ task fails normally and enters the standard retry flow above.
 anton:
   max_retries: 3
   max_iterations: 200
+  task_max_iterations: 50
   task_timeout_sec: 600
   total_timeout_sec: 7200
   verify_ai: true
@@ -204,6 +205,8 @@ anton:
   max_identical_failures: 5
   approval_mode: yolo
   auto_commit: true
+  progress_events: true
+  progress_heartbeat_sec: 30
 ```
 
 ### Environment variables
@@ -212,10 +215,13 @@ anton:
 |---|---|
 | `IDLEHANDS_ANTON_MAX_RETRIES` | Max retries per task |
 | `IDLEHANDS_ANTON_MAX_ITERATIONS` | Max total iterations |
+| `IDLEHANDS_ANTON_TASK_MAX_ITERATIONS` | Max inner turns per task attempt |
 | `IDLEHANDS_ANTON_TASK_TIMEOUT_SEC` | Timeout per task attempt |
 | `IDLEHANDS_ANTON_TOTAL_TIMEOUT_SEC` | Total time budget |
 | `IDLEHANDS_ANTON_MAX_TOTAL_TOKENS` | Total token budget |
 | `IDLEHANDS_ANTON_VERIFY_AI` | Enable AI verification |
+| `IDLEHANDS_ANTON_PROGRESS_EVENTS` | Enable mid-task Telegram/Discord updates |
+| `IDLEHANDS_ANTON_PROGRESS_HEARTBEAT_SEC` | Seconds between "still working" heartbeat messages |
 
 ## Troubleshooting
 

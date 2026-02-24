@@ -385,7 +385,7 @@ export async function handleVault({ ctx, sessions }: CommandContext): Promise<vo
 
 // ── Anton ───────────────────────────────────────────────────────────
 
-const ANTON_RATE_LIMIT_MS = 10_000;
+const ANTON_RATE_LIMIT_MS = 3_000;
 
 export async function handleAnton({ ctx, sessions }: CommandContext): Promise<void> {
   const chatId = ctx.chat?.id;
@@ -395,6 +395,10 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
   const text = ctx.message?.text ?? '';
   const args = text.replace(/^\/anton\s*/, '').trim();
   const sub = firstToken(args);
+
+  const sendAntonUpdate = (t: string) => {
+    ctx.api.sendMessage(chatId, t).catch(() => {});
+  };
 
   let managed = sessions.get(chatId);
 
@@ -407,7 +411,7 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
     await reply(ctx, await antonCommand(
       managed as unknown as ManagedLike,
       args,
-      (t) => { ctx.reply(t).catch(() => {}); },
+      sendAntonUpdate,
       ANTON_RATE_LIMIT_MS,
     ));
     return;
@@ -425,7 +429,7 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
   await reply(ctx, await antonCommand(
     session as unknown as ManagedLike,
     args,
-    (t) => { ctx.reply(t).catch(() => {}); },
+    sendAntonUpdate,
     ANTON_RATE_LIMIT_MS,
   ));
 }

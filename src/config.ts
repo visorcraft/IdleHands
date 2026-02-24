@@ -106,6 +106,7 @@ const DEFAULTS: IdlehandsConfig = {
   anton: {
     max_retries: 3,
     max_iterations: 200,
+    task_max_iterations: 50,
     task_timeout_sec: 600,
     total_timeout_sec: 7200,
     max_total_tokens: undefined, // unlimited
@@ -121,6 +122,8 @@ const DEFAULTS: IdlehandsConfig = {
     approval_mode: 'yolo',
     verbose: false,
     auto_commit: true,
+    progress_events: true,
+    progress_heartbeat_sec: 30,
   },
 };
 
@@ -306,12 +309,15 @@ export async function loadConfig(opts: {
     anton: {
       max_retries: parseNum(process.env.IDLEHANDS_ANTON_MAX_RETRIES),
       max_iterations: parseNum(process.env.IDLEHANDS_ANTON_MAX_ITERATIONS),
+      task_max_iterations: parseNum(process.env.IDLEHANDS_ANTON_TASK_MAX_ITERATIONS),
       task_timeout_sec: parseNum(process.env.IDLEHANDS_ANTON_TASK_TIMEOUT_SEC),
       total_timeout_sec: parseNum(process.env.IDLEHANDS_ANTON_TOTAL_TIMEOUT_SEC),
       max_total_tokens: parseNum(process.env.IDLEHANDS_ANTON_MAX_TOTAL_TOKENS),
       verify_ai: parseBool(process.env.IDLEHANDS_ANTON_VERIFY_AI),
       verify_model: process.env.IDLEHANDS_ANTON_VERIFY_MODEL,
       verbose: parseBool(process.env.IDLEHANDS_ANTON_VERBOSE),
+      progress_events: parseBool(process.env.IDLEHANDS_ANTON_PROGRESS_EVENTS),
+      progress_heartbeat_sec: parseNum(process.env.IDLEHANDS_ANTON_PROGRESS_HEARTBEAT_SEC),
       skip_on_fail: parseBool(process.env.IDLEHANDS_ANTON_SKIP_ON_FAIL),
       skip_on_blocked: parseBool(process.env.IDLEHANDS_ANTON_SKIP_ON_BLOCKED),
       rollback_on_fail: parseBool(process.env.IDLEHANDS_ANTON_ROLLBACK_ON_FAIL),
@@ -715,6 +721,8 @@ export async function loadConfig(opts: {
     if (typeof a.max_retries === 'number') a.max_retries = Math.max(1, Math.floor(a.max_retries));
     if (typeof a.max_iterations === 'number')
       a.max_iterations = Math.max(1, Math.floor(a.max_iterations));
+    if (typeof a.task_max_iterations === 'number')
+      a.task_max_iterations = Math.max(1, Math.floor(a.task_max_iterations));
     if (typeof a.task_timeout_sec === 'number')
       a.task_timeout_sec = Math.max(10, Math.floor(a.task_timeout_sec));
     if (typeof a.total_timeout_sec === 'number')
@@ -726,6 +734,10 @@ export async function loadConfig(opts: {
       a.max_decompose_depth = Math.max(0, Math.min(5, Math.floor(a.max_decompose_depth)));
     if (typeof a.max_total_tasks === 'number')
       a.max_total_tasks = Math.max(1, Math.floor(a.max_total_tasks));
+    if (typeof a.max_prompt_tokens_per_attempt === 'number')
+      a.max_prompt_tokens_per_attempt = Math.max(1024, Math.floor(a.max_prompt_tokens_per_attempt));
+    if (typeof a.progress_heartbeat_sec === 'number')
+      a.progress_heartbeat_sec = Math.max(5, Math.min(600, Math.floor(a.progress_heartbeat_sec)));
     const validApprovalModes = ['plan', 'reject', 'default', 'auto-edit', 'yolo'];
     if (a.approval_mode && !validApprovalModes.includes(a.approval_mode)) {
       if (!process.env.IDLEHANDS_QUIET_WARNINGS) {

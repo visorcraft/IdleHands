@@ -12,6 +12,11 @@ import type { AntonRunConfig } from './types.js';
  * Build session config for main task execution sessions.
  */
 export function buildSessionConfig(base: IdlehandsConfig, config: AntonRunConfig): IdlehandsConfig {
+  const taskMaxIterations =
+    Number.isFinite(config.taskMaxIterations) && config.taskMaxIterations > 0
+      ? Math.floor(config.taskMaxIterations)
+      : 50;
+
   return {
     ...base,
     dir: config.projectDir,
@@ -19,7 +24,7 @@ export function buildSessionConfig(base: IdlehandsConfig, config: AntonRunConfig
     no_confirm: config.approvalMode === 'yolo',
     verbose: false,
     quiet: true,
-    max_iterations: config.taskMaxIterations,
+    max_iterations: taskMaxIterations,
     timeout: config.taskTimeoutSec,
     compact_at: 0.65,
     compact_min_tail: 4,
