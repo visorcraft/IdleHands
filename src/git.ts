@@ -158,6 +158,15 @@ export function removeUntrackedFiles(cwd: string, files: string[]): void {
   }
 }
 
+/** Return list of modified/added file paths relative to HEAD (working tree changes). */
+export function getChangedFiles(cwd: string): string[] {
+  if (!isInsideWorkTree(cwd)) return [];
+  const res = runGit(cwd, ['diff', '--name-only', 'HEAD'], 10000);
+  const tracked = res.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const untracked = getUntrackedFiles(cwd);
+  return [...new Set([...tracked, ...untracked])];
+}
+
 export function createBranch(cwd: string, name: string): void {
   const res = runGit(cwd, ['checkout', '-b', name], 30000);
   if (res.status !== 0) {

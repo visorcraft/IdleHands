@@ -9,8 +9,9 @@
 
 import { spawnSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, extname } from 'node:path';
 
+import { getChangedFiles } from '../git.js';
 import { runCommand } from '../runtime/executor.js';
 
 import type {
@@ -183,7 +184,15 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
 
   if (opts.commands.lint !== undefined) {
     try {
-      const lintResult = await runCommand(opts.commands.lint, 180_000, opts.projectDir);
+      let lintResult = await runCommand(opts.commands.lint, 180_000, opts.projectDir);
+      // Pre-verify autofix: if lint fails, try autofix on touched files then re-check once.
+      if (lintResult.exitCode !== 0) {
+        const autofixed = await tryAutofixChangedFiles(opts.projectDir);
+        if (autofixed) {
+          console.error(`[anton:verify] autofix ran on changed files, re-running lint`);
+          lintResult = await runCommand(opts.commands.lint, 180_000, opts.projectDir);
+        }
+      }
       if (lintResult.exitCode === 0) {
         result.l1_lint = true;
       } else if (opts.baselineLintErrorCount !== undefined) {
@@ -279,6 +288,72 @@ or
   }
 
   return result;
+}
+
+// ── Pre-verify autofix ──────────────────────────────────────────
+
+/** File extensions eligible for autoformat/autofix. */
+const AUTOFIX_EXTENSIONS = new Set([
+  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
+  '.css', '.scss', '.less', '.json', '.md', '.yaml', '.yml',
+  '.vue', '.svelte', '.html',
+]);
+
+/**
+ * Attempt to auto-fix lint/format issues on files changed in the current attempt.
+ * Runs eslint --fix and/or prettier --write on eligible changed files.
+ * Returns true if any autofix command was executed.
+ */
+export async function tryAutofixChangedFiles(projectDir: string): Promise<boolean> {
+  let changedFiles: string[];
+  try {
+    changedFiles = getChangedFiles(projectDir);
+  } catch {
+    return false;
+  }
+
+  const eligible = changedFiles.filter((f) => AUTOFIX_EXTENSIONS.has(extname(f).toLowerCase()));
+  if (eligible.length === 0) return false;
+
+  // Cap at 50 files to keep autofix bounded
+  const batch = eligible.slice(0, 50);
+  let ran = false;
+
+  // Try eslint --fix (only if eslint is available)
+  const jsFiles = batch.filter((f) => /\.[cm]?[jt]sx?$/.test(f));
+  if (jsFiles.length > 0 && isCommandAvailable('npx')) {
+    try {
+      const eslintRes = spawnSync(
+        'npx', ['eslint', '--fix', '--no-error-on-unmatched-pattern', ...jsFiles],
+        { cwd: projectDir, timeout: 60_000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+      if (eslintRes.status === 0 || eslintRes.status === 1) {
+        // exit 1 means some unfixable errors remain, but fixable ones were fixed
+        ran = true;
+        console.error(`[anton:autofix] eslint --fix ran on ${jsFiles.length} files`);
+      }
+    } catch {
+      // eslint not available or crashed — continue
+    }
+  }
+
+  // Try prettier --write (only if prettier is available)
+  if (isCommandAvailable('npx')) {
+    try {
+      const prettierRes = spawnSync(
+        'npx', ['prettier', '--write', '--ignore-unknown', ...batch],
+        { cwd: projectDir, timeout: 60_000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+      if (prettierRes.status === 0) {
+        ran = true;
+        console.error(`[anton:autofix] prettier --write ran on ${batch.length} files`);
+      }
+    } catch {
+      // prettier not available or crashed — continue
+    }
+  }
+
+  return ran;
 }
 
 // Helper functions
