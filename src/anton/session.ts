@@ -38,13 +38,16 @@ export function buildSessionConfig(base: IdlehandsConfig, config: AntonRunConfig
 export function buildPreflightConfig(
   base: IdlehandsConfig,
   config: AntonRunConfig,
-  stageTimeoutSec: number
+  stageTimeoutSec: number,
+  maxIterationsOverride?: number
 ): IdlehandsConfig {
   const preflightMaxIterations =
-    Number.isFinite(config.preflightSessionMaxIterations) &&
-    Number(config.preflightSessionMaxIterations) > 0
-      ? Math.floor(Number(config.preflightSessionMaxIterations))
-      : 3;
+    Number.isFinite(maxIterationsOverride) && Number(maxIterationsOverride) > 0
+      ? Math.floor(Number(maxIterationsOverride))
+      : Number.isFinite(config.preflightSessionMaxIterations) &&
+          Number(config.preflightSessionMaxIterations) > 0
+        ? Math.floor(Number(config.preflightSessionMaxIterations))
+        : 500;
 
   const preflightTimeoutCapSec =
     Number.isFinite(config.preflightSessionTimeoutSec) &&

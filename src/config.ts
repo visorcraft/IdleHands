@@ -129,8 +129,8 @@ const DEFAULTS: IdlehandsConfig = {
       requirements_review: true,
       discovery_timeout_sec: 600,
       review_timeout_sec: 600,
-      max_retries: 1,
-      session_max_iterations: 3,
+      max_retries: 2,
+      session_max_iterations: 500,
       session_timeout_sec: 120,
     },
   },
@@ -764,7 +764,7 @@ export async function loadConfig(opts: {
       if (typeof a.preflight.session_max_iterations === 'number') {
         a.preflight.session_max_iterations = Math.max(
           1,
-          Math.min(10, Math.floor(a.preflight.session_max_iterations))
+          Math.min(1000, Math.floor(a.preflight.session_max_iterations))
         );
       }
       if (typeof a.preflight.session_timeout_sec === 'number') {

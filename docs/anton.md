@@ -212,8 +212,8 @@ anton:
     requirements_review: true
     discovery_timeout_sec: 600
     review_timeout_sec: 600
-    max_retries: 1
-    session_max_iterations: 3
+    max_retries: 2
+    session_max_iterations: 500
     session_timeout_sec: 120
 ```
 
@@ -226,6 +226,8 @@ When preflight is enabled, Anton stores discovery/review plans under:
 Preflight retries are stage-local:
 - Discovery retries only discovery.
 - Requirements-review retries only review and reuses the existing plan file.
+- If a stage hits `max iterations exceeded`, Anton auto-increases preflight iteration cap for the next retry (bounded).
+- If a stage returns a plan filename but does not actually write it, Anton bootstraps a fallback plan file so execution can continue.
 
 These artifacts are local planning files and are ignored by git by default in this repo.
 
