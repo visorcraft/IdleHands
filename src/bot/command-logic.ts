@@ -31,6 +31,8 @@ import {
   type WatchdogSettings,
 } from '../watchdog.js';
 
+import { summarizeLoopEvent } from './anton-status-format.js';
+
 // ── Structured result types ─────────────────────────────────────────
 
 /** A key-value pair: [label, value, isCode?] */
@@ -660,24 +662,6 @@ export async function gitStatusCommand(cwd: string): Promise<CmdResult> {
 }
 
 // ── Anton ───────────────────────────────────────────────────────────
-
-function formatAgeShort(msAgo: number): string {
-  if (msAgo < 60_000) return `${Math.max(1, Math.round(msAgo / 1000))}s ago`;
-  if (msAgo < 3_600_000) return `${Math.round(msAgo / 60_000)}m ago`;
-  return `${Math.round(msAgo / 3_600_000)}h ago`;
-}
-
-function summarizeLoopEvent(ev: NonNullable<ManagedLike['antonLastLoopEvent']>): string {
-  const emoji = ev.kind === 'final-failure' ? '🔴' : ev.kind === 'auto-recovered' ? '🟠' : '🟡';
-  const kind =
-    ev.kind === 'final-failure'
-      ? 'final failure'
-      : ev.kind === 'auto-recovered'
-        ? 'auto-recovered'
-        : 'loop event';
-  const msg = ev.message.length > 120 ? ev.message.slice(0, 117) + '...' : ev.message;
-  return `${emoji} Last loop: ${kind} (${formatAgeShort(Date.now() - ev.at)})\n${msg}`;
-}
 
 export function antonStatusCommand(managed: ManagedLike): CmdResult {
   if (!managed.antonActive) return { lines: ['No Anton run in progress.'] };
