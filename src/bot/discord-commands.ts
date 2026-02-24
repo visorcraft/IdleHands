@@ -38,6 +38,7 @@ import {
   type ManagedLike,
 } from './command-logic.js';
 import { detectRepoCandidates, expandHome, isPathAllowed } from './dir-guard.js';
+import { performBotUpgrade } from './upgrade-command.js';
 import { maybeAutoPinDiscordAntonStart } from './discord-anton-autopin.js';
 import { handleDiscordAnton } from './discord-anton.js';
 import { sendDiscordResult } from './discord-result.js';
@@ -113,6 +114,31 @@ export async function handleTextCommand(
 
   if (content === '/version') {
     await sendUserVisible(msg, `Idle Hands v${PKG_VERSION}`).catch(() => {});
+    return true;
+  }
+
+  if (content === '/upgrade') {
+    const channel = msg.channel as { send: (c: string) => Promise<any> };
+    let statusMsg: any = null;
+    const progressLines: string[] = [];
+
+    const result = await performBotUpgrade(async (message) => {
+      progressLines.push(message);
+      const text = progressLines.join('\n');
+      if (statusMsg && statusMsg.edit) {
+        await statusMsg.edit(text).catch(() => {});
+      } else {
+        statusMsg = await channel.send(text).catch(() => null);
+      }
+    });
+
+    // Send final result
+    const finalText = progressLines.join('\n') + '\n\n' + result.message;
+    if (statusMsg && statusMsg.edit) {
+      await statusMsg.edit(finalText).catch(() => {});
+    } else {
+      await channel.send(finalText).catch(() => {});
+    }
     return true;
   }
 

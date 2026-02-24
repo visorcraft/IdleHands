@@ -111,6 +111,29 @@ export function registerRuntimeCommands(bot: Bot): void {
     }
   });
 
+  bot.command('upgrade', async (ctx) => {
+    try {
+      const { performBotUpgrade } = await import('./upgrade-command.js');
+      const statusMsg = await ctx.reply('🔄 Starting upgrade...');
+      const progressLines: string[] = [];
+
+      const result = await performBotUpgrade(async (message) => {
+        progressLines.push(message);
+        const text = progressLines.join('\n');
+        await ctx.api
+          .editMessageText(ctx.chat.id, statusMsg.message_id, text)
+          .catch(() => {});
+      });
+
+      const finalText = progressLines.join('\n') + '\n\n' + result.message;
+      await ctx.api
+        .editMessageText(ctx.chat.id, statusMsg.message_id, finalText)
+        .catch(() => {});
+    } catch (e: any) {
+      await ctx.reply(`❌ Upgrade failed: ${e?.message ?? String(e)}`);
+    }
+  });
+
   bot.command('switch', async (ctx) => {
     try {
       const modelId = ctx.match?.trim();

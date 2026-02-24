@@ -32,6 +32,7 @@ import { sessionCommands } from './cli/commands/session.js';
 import { toolCommands } from './cli/commands/tools.js';
 import { trifectaCommands } from './cli/commands/trifecta.js';
 import { runTui } from './cli/commands/tui.js';
+import { upgradeCommands } from './cli/commands/upgrade.js';
 import { generateInitContext, formatInitSummary } from './cli/init.js';
 import {
   readUserInput,
@@ -549,6 +550,7 @@ async function main() {
     ...toolCommands,
     ...antonCommands,
     ...secretsCommands,
+    ...upgradeCommands,
   ]);
 
   let customCommands = await loadCustomCommands(projectDir(config));
