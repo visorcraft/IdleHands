@@ -1291,6 +1291,54 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.ok(plans.some((f) => f.endsWith('.md')));
   });
 
+  test('17m. Discovery tool-loop errors degrade immediately to fallback plan', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+
+    const stageMessages: string[] = [];
+    const progress = {
+      ...createMockProgressCallback(),
+      onStage: (m: string) => stageMessages.push(m),
+    } as any;
+
+    let discoveryCalls = 0;
+    const createSession = async () =>
+      ({
+        ...createMockSession(['<anton-result>status: done</anton-result>']),
+        async ask(prompt: string) {
+          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+            discoveryCalls++;
+            throw new Error(
+              'tool edit_range: identical call repeated 3x across turns; breaking loop.'
+            );
+          }
+          return {
+            text: '<anton-result>status: done</anton-result>',
+            turns: 1,
+            toolCalls: 0,
+          } as any;
+        },
+      }) as any;
+
+    const result = await runAnton({
+      config: createTestConfig({
+        taskFile,
+        projectDir: tmpDir,
+        preflightEnabled: true,
+        preflightRequirementsReview: false,
+        preflightMaxRetries: 2,
+      } as any),
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress,
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.equal(result.completedAll, true);
+    assert.equal(discoveryCalls, 1);
+    assert.ok(stageMessages.some((m) => m.includes('invalid output')));
+  });
+
   test('17l. Missing implementation result block is repaired via format-only followup', async () => {
     const tmpDir = await createTempGitRepo();
     const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
