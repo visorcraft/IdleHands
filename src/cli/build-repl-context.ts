@@ -123,6 +123,7 @@ export function buildReplContext(deps: ReplContextDeps): ReplContext {
     antonAbortSignal: null,
     antonLastResult: null,
     antonProgress: null,
+    antonLastLoopEvent: null,
 
     confirm,
 

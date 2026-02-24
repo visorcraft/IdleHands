@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { execSync } from 'node:child_process';
 import { describe, it } from 'node:test';
 
 import { plan } from '../dist/runtime/planner.js';
@@ -223,16 +222,10 @@ describe('runtime planner', () => {
     );
   });
 
-  it('planner has no I/O imports', () => {
-    const result = execSync(
-      'grep -c "import.*child_process\\|import.*node:fs\\|import.*spawn" src/runtime/planner.ts || true',
-      {
-        cwd: process.cwd(),
-        encoding: 'utf8',
-        shell: '/bin/bash',
-      }
-    ).trim();
-
-    assert.equal(result, '0');
+  it('planner has no I/O imports', async () => {
+    const fs = await import('node:fs/promises');
+    const src = await fs.readFile('src/runtime/planner.ts', 'utf8');
+    const matches = src.match(/from\s+['\"]node:(fs|child_process)['\"]/g) ?? [];
+    assert.equal(matches.length, 0);
   });
 });

@@ -34,6 +34,15 @@ import {
   autoCompleteAncestors,
 } from './parser.js';
 import { buildAntonPrompt, parseAntonResult, classifyTaskComplexity } from './prompt.js';
+import {
+  ensureAgentsTasksDir,
+  makeUniqueTaskPlanFilename,
+  buildDiscoveryPrompt,
+  parseDiscoveryResult,
+  buildRequirementsReviewPrompt,
+  parseRequirementsReviewResult,
+  assertPlanFileExists,
+} from './preflight.js';
 import { formatDryRunPlan } from './reporter.js';
 import { buildSessionConfig, buildDecomposeConfig, buildVerifyConfig, defaultCreateSession } from './session.js';
 import type {
@@ -44,6 +53,7 @@ import type {
   AntonAttempt,
   AntonStopReason,
   AntonAttemptStatus,
+  AntonPreflightRecord,
 } from './types.js';
 import { captureLintBaseline, detectVerificationCommands, runVerification } from './verifier.js';
 import { isToolLoopBreak, AUTO_CONTINUE_PROMPT } from '../bot/auto-continue.js';
@@ -209,7 +219,10 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
   let totalTokens = 0;
   let totalCommits = 0;
   let iterationsUsed = 0;
+  let autoCompleted = 0;
   const attempts: AntonAttempt[] = [];
+  const preflightRecords: AntonPreflightRecord[] = [];
+  const taskPlanByTaskKey = new Map<string, string>();
   const taskRetryCount: Map<string, number> = new Map();
   const lastFailureReason: Map<string, string> = new Map();
   const consecutiveIdenticalCount: Map<string, number> = new Map();
@@ -272,10 +285,12 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         totalTasks: taskFile.totalCount,
         preCompleted: initialCompleted,
         completed: 0,
+        autoCompleted: 0,
         skipped: 0,
         failed: 0,
         remaining: taskFile.pending.length,
         attempts: [],
+        preflightRecords: [],
         totalDurationMs: Date.now() - startTimeMs,
         totalTokens: 0,
         totalCommits: 0,
@@ -435,6 +450,143 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
       }
 
       const attemptNumber = retries + 1;
+
+      // Optional preflight pipeline: discovery -> requirements review.
+      // Only runs on first attempt for each task; retries reuse the same plan file.
+      if (config.preflightEnabled && retries === 0) {
+        const preflightMaxRetries = Math.max(0, config.preflightMaxRetries ?? 1);
+        let preflightOk = false;
+        let preflightMarkedComplete = false;
+
+        for (let preflightTry = 0; preflightTry <= preflightMaxRetries; preflightTry++) {
+          const preflightStart = Date.now();
+          try {
+            progress.onStage?.('🔎 Discovery: checking if already done...');
+            await ensureAgentsTasksDir(config.projectDir);
+            const planFilePath = makeUniqueTaskPlanFilename(config.projectDir);
+
+            const discoverySession = await createSessionFn(buildSessionConfig(idlehandsConfig, config), apiKey);
+            const discoveryPrompt = buildDiscoveryPrompt({
+              task: currentTask,
+              taskFilePath: config.taskFile,
+              projectDir: config.projectDir,
+              planFilePath,
+            });
+
+            const discoveryTimeoutMs = (config.preflightDiscoveryTimeoutSec ?? config.taskTimeoutSec) * 1000;
+            const discoveryRes = await Promise.race([
+              discoverySession.ask(discoveryPrompt),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => {
+                  try { discoverySession.cancel(); } catch { }
+                  reject(new Error('preflight-discovery-timeout'));
+                }, discoveryTimeoutMs)
+              ),
+            ]);
+            await discoverySession.close();
+
+            const discoveryTokens = discoverySession.usage.prompt + discoverySession.usage.completion;
+            totalTokens += discoveryTokens;
+            const discovery = parseDiscoveryResult(discoveryRes.text, config.projectDir);
+            preflightRecords.push({
+              taskKey: currentTask.key,
+              stage: 'discovery',
+              durationMs: Date.now() - preflightStart,
+              tokensUsed: discoveryTokens,
+              status: discovery.status,
+              filename: discovery.filename || undefined,
+            });
+
+            if (discovery.status === 'complete') {
+              await markTaskChecked(config.taskFile, currentTask.key);
+              await autoCompleteAncestors(config.taskFile, currentTask.key);
+              autoCompleted += 1;
+              progress.onStage?.(`✅ Discovery confirmed already complete: ${currentTask.text}`);
+              preflightOk = true;
+              preflightMarkedComplete = true;
+              break;
+            }
+
+            taskPlanByTaskKey.set(currentTask.key, discovery.filename);
+            progress.onStage?.(`📝 Discovery plan file: ${discovery.filename}`);
+
+            if (config.preflightRequirementsReview) {
+              const reviewStart = Date.now();
+              progress.onStage?.('🧪 Requirements review: refining plan...');
+              const reviewSession = await createSessionFn(buildSessionConfig(idlehandsConfig, config), apiKey);
+              const reviewPrompt = buildRequirementsReviewPrompt(discovery.filename);
+              const reviewTimeoutMs = (config.preflightReviewTimeoutSec ?? config.taskTimeoutSec) * 1000;
+              const reviewRes = await Promise.race([
+                reviewSession.ask(reviewPrompt),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => {
+                    try { reviewSession.cancel(); } catch { }
+                    reject(new Error('preflight-review-timeout'));
+                  }, reviewTimeoutMs)
+                ),
+              ]);
+              await reviewSession.close();
+
+              const reviewTokens = reviewSession.usage.prompt + reviewSession.usage.completion;
+              totalTokens += reviewTokens;
+              const review = parseRequirementsReviewResult(reviewRes.text, config.projectDir);
+              await assertPlanFileExists(review.filename);
+              preflightRecords.push({
+                taskKey: currentTask.key,
+                stage: 'requirements-review',
+                durationMs: Date.now() - reviewStart,
+                tokensUsed: reviewTokens,
+                status: 'ready',
+                filename: review.filename,
+              });
+              taskPlanByTaskKey.set(currentTask.key, review.filename);
+              progress.onStage?.(`✅ Requirements review ready: ${review.filename}`);
+            }
+
+            preflightOk = true;
+            break;
+          } catch (error) {
+            const errMsg = error instanceof Error ? error.message : String(error);
+            const timeout = /timeout/.test(errMsg);
+            preflightRecords.push({
+              taskKey: currentTask.key,
+              stage: 'discovery',
+              durationMs: Date.now() - preflightStart,
+              tokensUsed: 0,
+              status: timeout ? 'timeout' : 'error',
+              error: errMsg,
+            });
+
+            if (preflightTry >= preflightMaxRetries) {
+              const preflightAttempt: AntonAttempt = {
+                taskKey: currentTask.key,
+                taskText: currentTask.text,
+                attempt: attemptNumber,
+                durationMs: Date.now() - preflightStart,
+                tokensUsed: 0,
+                status: timeout ? 'timeout' : 'error',
+                verification: undefined,
+                error: `preflight-error: ${errMsg}`,
+                commitHash: undefined,
+              };
+              attempts.push(preflightAttempt);
+              taskRetryCount.set(currentTask.key, retries + 1);
+              if (!config.skipOnFail) break mainLoop;
+            }
+          }
+        }
+
+        // Discovery already marked complete -> next task.
+        if (preflightMarkedComplete) {
+          continue;
+        }
+
+        if (!preflightOk) {
+          continue;
+        }
+      }
+
+      progress.onStage?.('🛠️ Implementation: executing vetted plan...');
       progress.onTaskStart(currentTask, attemptNumber, currentProgress);
 
       let session: AgentSession | undefined;
@@ -496,6 +648,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               projectDir: config.projectDir,
               config,
               retryContext: effectiveRetryContext,
+              taskPlanFile: taskPlanByTaskKey.get(currentTask.key),
               vault,
               lens,
               maxContextTokens: idlehandsConfig.context_max_tokens || 8000,
@@ -953,10 +1106,12 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
       totalTasks: taskFile.totalCount,
       preCompleted: initialCompleted,
       completed: finalCompleted,
+      autoCompleted,
       skipped,
       failed,
       remaining,
       attempts,
+      preflightRecords,
       totalDurationMs: Date.now() - startTimeMs,
       totalTokens,
       totalCommits,
