@@ -943,7 +943,7 @@ async function processMessage(
     let toolLoopRetryCount = 0;
     const autoContinueCfg = managed.config.tool_loop_auto_continue;
     const autoContinueEnabled = autoContinueCfg?.enabled !== false;
-    const autoContinueMaxRetries = autoContinueCfg?.max_retries ?? 5;
+    const autoContinueMaxRetries = autoContinueCfg?.max_retries ?? 3;
     while (!askComplete) {
       const attemptController = new AbortController();
       managed.activeAbortController = attemptController;

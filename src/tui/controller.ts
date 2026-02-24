@@ -846,7 +846,7 @@ export class TuiController {
       let toolLoopRetryCount = 0;
       const autoContinueCfg = this.config.tool_loop_auto_continue;
       const autoContinueEnabled = autoContinueCfg?.enabled !== false;
-      const autoContinueMaxRetries = autoContinueCfg?.max_retries ?? 5;
+      const autoContinueMaxRetries = autoContinueCfg?.max_retries ?? 3;
       while (!askComplete) {
         const attemptController = new AbortController();
         this.aborter = attemptController;

@@ -29,7 +29,7 @@ const DEFAULTS: IdlehandsConfig = {
   },
   tool_loop_auto_continue: {
     enabled: true,
-    max_retries: 5,
+    max_retries: 3,
   },
   response_timeout: 600,
   connection_timeout: 600,
@@ -109,6 +109,7 @@ const DEFAULTS: IdlehandsConfig = {
     task_timeout_sec: 600,
     total_timeout_sec: 7200,
     max_total_tokens: undefined, // unlimited
+    max_prompt_tokens_per_attempt: 64000,
     verify_ai: true,
     decompose: true,
     max_decompose_depth: 2,
@@ -116,7 +117,7 @@ const DEFAULTS: IdlehandsConfig = {
     skip_on_fail: false,
     skip_on_blocked: true,
     rollback_on_fail: false,
-    max_identical_failures: 5,
+    max_identical_failures: 3,
     approval_mode: 'yolo',
     verbose: false,
     auto_commit: true,
@@ -620,7 +621,7 @@ export async function loadConfig(opts: {
       merged.tool_loop_auto_continue.max_retries = Math.max(1, Math.min(10, Math.floor(merged.tool_loop_auto_continue.max_retries)));
     }
   } else {
-    merged.tool_loop_auto_continue = { ...(DEFAULTS.tool_loop_auto_continue ?? { enabled: true, max_retries: 5 }) };
+    merged.tool_loop_auto_continue = { ...(DEFAULTS.tool_loop_auto_continue ?? { enabled: true, max_retries: 3 }) };
   }
 
   const subAgentsEnabled = parseBoolLike(merged.sub_agents.enabled);

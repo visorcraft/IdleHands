@@ -230,7 +230,7 @@ export class ToolLoopGuard {
     }
 
     this.telemetry.readCacheHits += 1;
-    return makeCacheHint(toolName);
+    return makeCacheReplayContent(toolName, cached.content);
   }
 
   async storeReadCache(
@@ -274,10 +274,19 @@ function isReadCacheableTool(toolName: string): boolean {
 }
 
 function makeCacheHint(toolName: string): string {
-  if (toolName === 'read_file') return '[CACHE HIT] File unchanged since previous read. Use the content you already have.';
-  if (toolName === 'read_files') return '[CACHE HIT] Files unchanged since previous read. Use the content you already have.';
-  if (toolName === 'list_dir') return '[CACHE HIT] Directory unchanged since previous read. Use the content you already have.';
-  return '[CACHE HIT] Resource unchanged since previous read. Use the content you already have.';
+  if (toolName === 'read_file') return '[CACHE HIT] File unchanged since previous read. Replaying cached content below.';
+  if (toolName === 'read_files') return '[CACHE HIT] Files unchanged since previous read. Replaying cached content below.';
+  if (toolName === 'list_dir') return '[CACHE HIT] Directory unchanged since previous read. Replaying cached content below.';
+  return '[CACHE HIT] Resource unchanged since previous read. Replaying cached content below.';
+}
+
+function makeCacheReplayContent(toolName: string, content: string): string {
+  const MAX_REPLAY_CHARS = 16_000;
+  const body =
+    content.length > MAX_REPLAY_CHARS
+      ? `${content.slice(0, MAX_REPLAY_CHARS)}\n[truncated cached replay: ${content.length - MAX_REPLAY_CHARS} chars omitted]`
+      : content;
+  return `${makeCacheHint(toolName)}\n\n${body}`;
 }
 
 function resolveWithCwd(baseCwd: string, p: string): string {

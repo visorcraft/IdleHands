@@ -92,7 +92,7 @@ export interface AntonRunConfig {
   testCommand: string | undefined;
   /** Custom lint command override. undefined = auto-detect. */
   lintCommand: string | undefined;
-  /** Max consecutive identical failures before giving up on a task (dedup guard). Default 5. */
+  /** Max consecutive identical failures before giving up on a task (dedup guard). Default 3. */
   maxIdenticalFailures: number;
   /** Skip failed tasks and continue, or abort entirely. */
   skipOnFail: boolean;
