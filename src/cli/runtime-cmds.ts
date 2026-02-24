@@ -25,6 +25,7 @@ import {
 } from './runtime-common.js';
 import { runHostCommand } from './runtime-host-command.js';
 import { applyDynamicProbeDefaults } from './runtime-probe-defaults.js';
+import { parseScanPorts } from './runtime-scan-ports.js';
 
 export async function runHostsSubcommand(args: any, _config: any): Promise<void> {
   await bootstrapRuntimes();
@@ -912,34 +913,6 @@ export async function runHealthSubcommand(args: any, _config: any): Promise<void
   const enabledHosts = runtimes.hosts.filter((h) => h.enabled);
   const enabledModels = runtimes.models.filter((m) => m.enabled);
   const enabledBackends = runtimes.backends.filter((b) => b.enabled);
-
-  // Parse --scan-ports (e.g., "8000-8100" or "8080,8081,8082")
-  function parseScanPorts(input: string | undefined): number[] | null {
-    if (!input) return null;
-    const trimmed = input.trim();
-    if (!trimmed) return null;
-
-    if (/^\d+-\d+$/.test(trimmed)) {
-      const [start, end] = trimmed.split('-').map(Number);
-      if (start > end || start < 1 || end > 65535) return null;
-      const ports: number[] = [];
-      for (let p = start; p <= end; p++) ports.push(p);
-      return ports;
-    }
-
-    if (trimmed.includes(',')) {
-      const parts = trimmed
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const ports = parts.map(Number).filter((p) => Number.isFinite(p) && p >= 1 && p <= 65535);
-      return ports.length > 0 ? ports : null;
-    }
-
-    const port = Number(trimmed);
-    if (Number.isFinite(port) && port >= 1 && port <= 65535) return [port];
-    return null;
-  }
 
   const scanPortsOverride = parseScanPorts(args['scan-ports'] ?? args.scan_ports);
 
