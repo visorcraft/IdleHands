@@ -41,7 +41,7 @@ import {
   parseDiscoveryResult,
   buildRequirementsReviewPrompt,
   parseRequirementsReviewResult,
-  assertPlanFileExists,
+  ensurePlanFileExistsOrBootstrap,
 } from './preflight.js';
 import { formatDryRunPlan } from './reporter.js';
 import {
@@ -527,7 +527,17 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               break;
             }
 
-            await assertPlanFileExists(discovery.filename);
+            const discoveryPlanState = await ensurePlanFileExistsOrBootstrap({
+              absPath: discovery.filename,
+              task: currentTask,
+              source: 'discovery',
+            });
+            if (discoveryPlanState === 'bootstrapped') {
+              progress.onStage?.(
+                `⚠️ Discovery returned a filename but did not write it. Created fallback plan file: ${discovery.filename}`
+              );
+            }
+
             taskPlanByTaskKey.set(currentTask.key, discovery.filename);
             progress.onStage?.(`📝 Discovery plan file: ${discovery.filename}`);
             discoveryOk = true;
@@ -621,7 +631,17 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               const reviewTokens = reviewSession.usage.prompt + reviewSession.usage.completion;
               totalTokens += reviewTokens;
               const review = parseRequirementsReviewResult(reviewRes.text, config.projectDir);
-              await assertPlanFileExists(review.filename);
+
+              const reviewPlanState = await ensurePlanFileExistsOrBootstrap({
+                absPath: review.filename,
+                task: currentTask,
+                source: 'requirements-review',
+              });
+              if (reviewPlanState === 'bootstrapped') {
+                progress.onStage?.(
+                  `⚠️ Requirements review returned a filename but did not write it. Created fallback plan file: ${review.filename}`
+                );
+              }
 
               preflightRecords.push({
                 taskKey: currentTask.key,

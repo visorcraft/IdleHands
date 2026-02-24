@@ -44,13 +44,14 @@ describe('anton session config', () => {
     assert.equal(out.max_iterations, 17);
   });
 
-  it('builds strict no-tools preflight session config with capped timeout', () => {
+  it('builds bounded preflight session config with tools enabled', () => {
     const base = {
       endpoint: 'x',
       model: 'm',
       max_tokens: 1000,
       timeout: 999,
       max_iterations: 999,
+      no_tools: true,
     } as any;
 
     const runConfig = {
@@ -64,7 +65,7 @@ describe('anton session config', () => {
     const out = buildPreflightConfig(base, runConfig, 600);
     assert.equal(out.max_iterations, 3);
     assert.equal(out.timeout, 120);
-    assert.equal(out.no_tools, true);
+    assert.equal(out.no_tools, false);
     assert.equal(out.trifecta?.enabled, false);
     assert.deepEqual(out.mcp?.servers, []);
   });
