@@ -47,6 +47,7 @@ import {
   parseJsonArgs,
 } from './agent/tool-calls.js';
 import { ToolLoopGuard } from './agent/tool-loop-guard.js';
+import { isLspTool, isMutationTool, isReadOnlyTool, planModeSummary } from './agent/tool-policy.js';
 import { OpenAIClient } from './client.js';
 import { loadProjectContext } from './context.js';
 import { loadGitContext, isGitDirty, stashWorkingTree } from './git.js';
@@ -169,22 +170,6 @@ const DEFAULT_SUB_AGENT_SYSTEM_PROMPT = `You are a focused coding sub-agent. Exe
 - Return a concise outcome summary.`;
 
 const DEFAULT_SUB_AGENT_RESULT_TOKEN_CAP = 4000;
-const LSP_TOOL_NAMES = [
-  'lsp_diagnostics',
-  'lsp_symbols',
-  'lsp_hover',
-  'lsp_definition',
-  'lsp_references',
-] as const;
-const LSP_TOOL_NAME_SET = new Set<string>(LSP_TOOL_NAMES);
-const FILE_MUTATION_TOOL_SET = new Set([
-  'edit_file',
-  'edit_range',
-  'apply_patch',
-  'write_file',
-  'insert_file',
-]);
-
 async function buildSubAgentContextBlock(
   cwd: string,
   rawFiles: unknown
@@ -580,41 +565,6 @@ function buildToolsSchema(opts?: {
   }
 
   return schemas;
-}
-
-function isReadOnlyTool(name: string) {
-  return (
-    name === 'read_file' ||
-    name === 'read_files' ||
-    name === 'list_dir' ||
-    name === 'search_files' ||
-    name === 'vault_search' ||
-    name === 'sys_context'
-  );
-}
-
-/** Human-readable summary of what a blocked tool call would do. */
-function planModeSummary(name: string, args: Record<string, unknown>): string {
-  switch (name) {
-    case 'write_file':
-      return `write ${args.path ?? 'unknown'} (${typeof args.content === 'string' ? args.content.split('\n').length : '?'} lines)`;
-    case 'apply_patch':
-      return `apply patch to ${Array.isArray(args.files) ? args.files.length : '?'} file(s)`;
-    case 'edit_range':
-      return `edit ${args.path ?? 'unknown'} lines ${args.start_line ?? '?'}-${args.end_line ?? '?'}`;
-    case 'edit_file':
-      return `edit ${args.path ?? 'unknown'} (replace ${typeof args.old_text === 'string' ? args.old_text.split('\n').length : '?'} lines)`;
-    case 'insert_file':
-      return `insert into ${args.path ?? 'unknown'} at line ${args.line ?? '?'}`;
-    case 'exec':
-      return `run: ${typeof args.command === 'string' ? args.command.slice(0, 80) : 'unknown'}`;
-    case 'spawn_task':
-      return `spawn sub-agent task: ${typeof args.task === 'string' ? args.task.slice(0, 80) : 'unknown'}`;
-    case 'vault_note':
-      return `vault note: ${args.key ?? 'unknown'}`;
-    default:
-      return `${name}(${Object.keys(args).join(', ')})`;
-  }
 }
 
 export type AgentRuntime = {
@@ -1615,7 +1565,7 @@ export async function createSession(opts: {
           content = typeof value === 'string' ? value : JSON.stringify(value);
         } else if (step.tool === 'spawn_task') {
           content = await runSpawnTaskCore(step.args, { signal: inFlight?.signal });
-        } else if (LSP_TOOL_NAME_SET.has(step.tool) && lspManager) {
+        } else if (isLspTool(step.tool) && lspManager) {
           content = await dispatchLspTool(step.tool, step.args);
         } else if (mcpManager?.hasTool(step.tool)) {
           const callArgs =
@@ -2424,7 +2374,7 @@ export async function createSession(opts: {
     const isReadOnlyToolDynamic = (toolName: string) => {
       return (
         isReadOnlyTool(toolName) ||
-        LSP_TOOL_NAME_SET.has(toolName) ||
+        isLspTool(toolName) ||
         Boolean(mcpManager?.isToolReadOnly(toolName))
       );
     };
@@ -3316,7 +3266,7 @@ export async function createSession(opts: {
 
           // Tool-call argument parsing and validation logic
           const fileMutationsInTurn = toolCallsArr.filter((tc) =>
-            FILE_MUTATION_TOOL_SET.has(tc.function?.name)
+            isMutationTool(tc.function?.name)
           ).length;
           if (fileMutationsInTurn >= 3 && isGitDirty(ctx.cwd)) {
             const shouldStash = confirmBridge
@@ -3649,10 +3599,10 @@ export async function createSession(opts: {
             }
 
             const builtInFn = (tools as any)[name] as Function | undefined;
-            const isLspTool = LSP_TOOL_NAME_SET.has(name);
+            const lspToolCall = isLspTool(name);
             const isSpawnTask = name === 'spawn_task';
             const hasMcpTool = mcpManager?.hasTool(name) === true;
-            if (!builtInFn && !isLspTool && !hasMcpTool && !isSpawnTask)
+            if (!builtInFn && !lspToolCall && !hasMcpTool && !isSpawnTask)
               throw new Error(`unknown tool: ${name}`);
 
             // Keep parsed args by call-id so we can digest/archive tool outputs with context.
@@ -3701,7 +3651,7 @@ export async function createSession(opts: {
                 throw new Error(`exec: ${reason} — command: ${args.command}`);
               }
             }
-            if (FILE_MUTATION_TOOL_SET.has(name) && typeof args.path === 'string') {
+            if (isMutationTool(name) && typeof args.path === 'string') {
               const absPath = args.path.startsWith('/')
                 ? args.path
                 : path.resolve(projectDir, args.path);
@@ -3949,7 +3899,7 @@ export async function createSession(opts: {
                     // Ignore parse issues; non-JSON exec output is tolerated.
                   }
                 }
-              } else if (isLspTool && lspManager) {
+              } else if (isLspTool(name) && lspManager) {
                 // LSP tool dispatch
                 content = await dispatchLspTool(name, args);
               } else {
@@ -4015,7 +3965,7 @@ export async function createSession(opts: {
             } else if (name === 'search_files') {
               const lines = content.split('\n').filter(Boolean);
               if (lines.length > 0) resultEvent.searchMatches = lines.slice(0, 20);
-            } else if (FILE_MUTATION_TOOL_SET.has(name) && replay) {
+            } else if (isMutationTool(name) && replay) {
               // Grab the most recent checkpoint for a diff preview
               try {
                 const cps = await replay.list(1);
@@ -4040,7 +3990,7 @@ export async function createSession(opts: {
 
             // Proactive LSP diagnostics after file mutations
             if (lspManager?.hasServers() && lspCfg?.proactive_diagnostics !== false) {
-              if (FILE_MUTATION_TOOL_SET.has(name)) {
+              if (isMutationTool(name)) {
                 const mutatedPath = typeof args.path === 'string' ? args.path : '';
                 if (mutatedPath) {
                   try {
@@ -4075,7 +4025,7 @@ export async function createSession(opts: {
             // ── Per-file mutation spiral detection ──
             // Track edits to the same file. If the model keeps editing the same file
             // over and over, it's likely in an edit→break→read→edit corruption spiral.
-            if (FILE_MUTATION_TOOL_SET.has(name) && toolSuccess && typeof args.path === 'string') {
+            if (isMutationTool(name) && toolSuccess && typeof args.path === 'string') {
               const absPath = args.path.startsWith('/')
                 ? args.path
                 : path.resolve(projectDir, args.path);
@@ -4280,7 +4230,7 @@ export async function createSession(opts: {
                 results.push(await runOne(tc));
               } catch (e: any) {
                 results.push(await catchToolError(e, tc));
-                if (FILE_MUTATION_TOOL_SET.has(tc.function.name)) {
+                if (isMutationTool(tc.function.name)) {
                   // Fail-fast: after mutating tool failure, stop the remaining batch.
                   break;
                 }
@@ -4295,7 +4245,7 @@ export async function createSession(opts: {
                 results.push(await runOne(tc));
               } catch (e: any) {
                 results.push(await catchToolError(e, tc));
-                if (FILE_MUTATION_TOOL_SET.has(tc.function.name)) {
+                if (isMutationTool(tc.function.name)) {
                   // Fail-fast: after mutating tool failure, stop the remaining batch.
                   break;
                 }
