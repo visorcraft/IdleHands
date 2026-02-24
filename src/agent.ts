@@ -1939,6 +1939,13 @@ export async function createSession(opts: {
 
     let turns = 0;
     let toolCalls = 0;
+    const perfEnabled = process.env.IDLEHANDS_PERF_TRACE === '1';
+    const perf = {
+      modelMs: 0,
+      ttftMsSum: 0,
+      ttftSamples: 0,
+      compactions: 0,
+    };
 
     const askId = `ask-${timestampedId()}`;
 
@@ -2018,6 +2025,13 @@ export async function createSession(opts: {
       }
 
       await hookManager.emit('ask_end', { askId, text: finalText, turns, toolCalls });
+      if (perfEnabled) {
+        const wallMs = Date.now() - wallStart;
+        const avgTtft = perf.ttftSamples > 0 ? Math.round(perf.ttftMsSum / perf.ttftSamples) : 0;
+        console.error(
+          `[perf] ask=${askId} turns=${turns} toolCalls=${toolCalls} wallMs=${wallMs} modelMs=${perf.modelMs} avgTTFTms=${avgTtft} compactions=${perf.compactions}`
+        );
+      }
       return { text: finalText, turns, toolCalls };
     };
 
@@ -2479,6 +2493,7 @@ export async function createSession(opts: {
 
           // Emit compaction event for callers (e.g. Anton controller → Discord)
           if (dropped.length) {
+            perf.compactions++;
             try {
               await hookObj.onCompaction?.({
                 droppedMessages: dropped.length,
@@ -2582,6 +2597,11 @@ export async function createSession(opts: {
         }
 
         const ttcMs = Date.now() - turnStartMs;
+        perf.modelMs += ttcMs;
+        if (ttftMs !== undefined) {
+          perf.ttftMsSum += ttftMs;
+          perf.ttftSamples++;
+        }
         const promptTokensTurn = resp.usage?.prompt_tokens ?? 0;
         const completionTokensTurn = resp.usage?.completion_tokens ?? 0;
 
