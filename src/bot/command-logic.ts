@@ -750,6 +750,11 @@ export function antonHelpCommand(): CmdResult {
 export function buildAntonRunConfig(defaults: any, cwd: string, filePath: string): AntonRunConfig {
   return {
     taskFile: filePath,
+    preflightEnabled: defaults.preflight?.enabled ?? false,
+    preflightRequirementsReview: defaults.preflight?.requirements_review ?? true,
+    preflightDiscoveryTimeoutSec: defaults.preflight?.discovery_timeout_sec ?? defaults.task_timeout_sec ?? 600,
+    preflightReviewTimeoutSec: defaults.preflight?.review_timeout_sec ?? defaults.task_timeout_sec ?? 600,
+    preflightMaxRetries: defaults.preflight?.max_retries ?? 1,
     projectDir: defaults.project_dir || cwd,
     maxRetriesPerTask: defaults.max_retries ?? 3,
     maxIterations: defaults.max_iterations ?? 200,
@@ -881,6 +886,12 @@ export function makeAntonProgress(
       managed.lastActivity = Date.now();
       if (defaults.progress_events !== false) {
         send(formatVerificationDetail(taskText, verification));
+      }
+    },
+    onStage(message) {
+      managed.lastActivity = Date.now();
+      if (defaults.progress_events !== false) {
+        send(message);
       }
     },
   };

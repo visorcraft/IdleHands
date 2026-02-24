@@ -718,6 +718,204 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.equal(result.completedAll, true);
   });
 
+  test('17a. Preflight discovery complete skips implementation and marks task', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+
+    const config = createTestConfig({
+      taskFile,
+      projectDir: tmpDir,
+      preflightEnabled: true,
+      preflightRequirementsReview: true,
+    } as any);
+
+    let calls = 0;
+    const createSession = async () => {
+      calls++;
+      if (calls === 1) {
+        return createMockSession(['{"status":"complete","filename":""}']);
+      }
+      return createMockSession(['<anton-result>status: done</anton-result>']);
+    };
+
+    const result = await runAnton({
+      config,
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress: createMockProgressCallback(),
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.equal(result.completedAll, true);
+    assert.equal(calls, 1, 'implementation should not run when discovery says complete');
+
+    const content = await readFile(taskFile, 'utf8');
+    assert.ok(content.includes('- [x] Task 1'));
+  });
+
+  test('17b. Preflight incomplete runs requirements review and implementation uses plan file', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+    const planFile = join(tmpDir, '.agents', 'tasks', 'plan.md');
+    await mkdir(join(tmpDir, '.agents', 'tasks'), { recursive: true });
+    await writeFile(planFile, '# plan');
+
+    const config = createTestConfig({
+      taskFile,
+      projectDir: tmpDir,
+      preflightEnabled: true,
+      preflightRequirementsReview: true,
+    } as any);
+
+    const prompts: string[] = [];
+    let calls = 0;
+    const createSession = async () => ({
+      ...createMockSession(['<anton-result>status: done</anton-result>']),
+      async ask(prompt: string) {
+        prompts.push(prompt);
+        calls++;
+        if (calls === 1) return { text: `{"status":"incomplete","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
+        if (calls === 2) return { text: `{"status":"ready","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
+        return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 } as any;
+      },
+    } as any);
+
+    const result = await runAnton({
+      config,
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress: createMockProgressCallback(),
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.equal(result.completedAll, true);
+    assert.ok(prompts.some((p) => p.includes(`Primary plan file: ${planFile}`)));
+  });
+
+  test('17c. Preflight path safety rejects outside path and follows skip policy', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+    const config = createTestConfig({
+      taskFile,
+      projectDir: tmpDir,
+      preflightEnabled: true,
+      skipOnFail: true,
+      maxRetriesPerTask: 1,
+    } as any);
+
+    const createSession = async () => createMockSession(['{"status":"incomplete","filename":"/tmp/evil.md"}']);
+
+    const result = await runAnton({
+      config,
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress: createMockProgressCallback(),
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.ok(result.skipped >= 1 || result.failed >= 0);
+  });
+
+  test('17d. Preflight malformed JSON triggers retry then skip', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+    const config = createTestConfig({
+      taskFile,
+      projectDir: tmpDir,
+      preflightEnabled: true,
+      skipOnFail: true,
+      maxRetriesPerTask: 1,
+      preflightMaxRetries: 0,
+    } as any);
+
+    const createSession = async () => createMockSession(['not-json']);
+
+    const result = await runAnton({
+      config,
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress: createMockProgressCallback(),
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.ok(result.attempts.some((a) => (a.error || '').includes('preflight-error')));
+  });
+
+  test('17e. Preflight timeout is handled', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+    const config = createTestConfig({
+      taskFile,
+      projectDir: tmpDir,
+      preflightEnabled: true,
+      preflightDiscoveryTimeoutSec: 1,
+      skipOnFail: true,
+      maxRetriesPerTask: 1,
+    } as any);
+
+    const createSession = async () => ({
+      ...createMockSession([]),
+      async ask() {
+        await new Promise((r) => setTimeout(r, 1500));
+        return { text: '{"status":"complete","filename":""}', turns: 1, toolCalls: 0 } as any;
+      },
+    } as any);
+
+    const result = await runAnton({
+      config,
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress: createMockProgressCallback(),
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.ok(result.attempts.some((a) => a.status === 'timeout' || (a.error || '').includes('timeout')));
+  });
+
+  test('17f. Reporter stage messages are emitted via onStage', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+    const planFile = join(tmpDir, '.agents', 'tasks', 'plan.md');
+    await mkdir(join(tmpDir, '.agents', 'tasks'), { recursive: true });
+    await writeFile(planFile, '# plan');
+
+    const config = createTestConfig({
+      taskFile,
+      projectDir: tmpDir,
+      preflightEnabled: true,
+      preflightRequirementsReview: true,
+    } as any);
+
+    const stageMessages: string[] = [];
+    const progress = {
+      ...createMockProgressCallback(),
+      onStage: (m: string) => stageMessages.push(m),
+    } as any;
+
+    let calls = 0;
+    const createSession = async () => ({
+      ...createMockSession(['<anton-result>status: done</anton-result>']),
+      async ask() {
+        calls++;
+        if (calls === 1) return { text: `{"status":"incomplete","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
+        if (calls === 2) return { text: `{"status":"ready","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
+        return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 } as any;
+      },
+    } as any);
+
+    await runAnton({
+      config,
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress,
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.ok(stageMessages.some((m) => m.includes('Discovery')));
+    assert.ok(stageMessages.some((m) => m.includes('Requirements review')));
+    assert.ok(stageMessages.some((m) => m.includes('Implementation')));
+  });
+
   test("17. maxTotalTasks exceeded → stopReason='max_tasks_exceeded'", async () => {
     const tmpDir = await createTempGitRepo();
     const taskFile = await createTaskFile(

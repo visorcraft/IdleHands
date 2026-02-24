@@ -52,6 +52,16 @@ export interface AntonTaskFile {
 export interface AntonRunConfig {
   /** Absolute path to task file. */
   taskFile: string;
+  /** Preflight task analysis/review stage before implementation. */
+  preflightEnabled?: boolean;
+  /** Run peer requirements review stage after discovery (when preflight is enabled). */
+  preflightRequirementsReview?: boolean;
+  /** Discovery-stage timeout in seconds. Falls back to taskTimeoutSec. */
+  preflightDiscoveryTimeoutSec?: number;
+  /** Requirements-review-stage timeout in seconds. Falls back to taskTimeoutSec. */
+  preflightReviewTimeoutSec?: number;
+  /** Max retries for preflight pipeline before falling back to task retry policy. */
+  preflightMaxRetries?: number;
   /** Absolute path to project working directory. */
   projectDir: string;
   /** Max retries per individual task. */
@@ -191,6 +201,8 @@ export interface AntonRunResult {
   preCompleted: number;
   /** Tasks completed during this run. */
   completed: number;
+  /** Tasks auto-confirmed as already complete during preflight. */
+  autoCompleted?: number;
   /** Tasks skipped after max retries. */
   skipped: number;
   /** Tasks that caused abort (only when skipOnFail=false). */
@@ -199,6 +211,8 @@ export interface AntonRunResult {
   remaining: number;
   /** Per-attempt history. */
   attempts: AntonAttempt[];
+  /** Preflight stage records per task/stage. */
+  preflightRecords?: AntonPreflightRecord[];
   /** Total time in milliseconds. */
   totalDurationMs: number;
   /** Total tokens consumed. */
@@ -249,11 +263,34 @@ export interface AntonProgressCallback {
   onCompaction?(taskText: string, event: { droppedMessages: number; freedTokens: number; summaryUsed: boolean }): void;
   /** Verification completed for a task attempt. */
   onVerification?(taskText: string, verification: AntonVerificationResult): void;
+  onStage?(message: string): void;
 }
 
 // ─── Structured agent result ────────────────────────────────────
 
 export type AntonAgentStatus = 'done' | 'blocked' | 'decompose' | 'failed';
+
+export type AntonDiscoveryStatus = 'complete' | 'incomplete';
+
+export interface AntonDiscoveryResult {
+  status: AntonDiscoveryStatus;
+  filename: string;
+}
+
+export interface AntonRequirementsReviewResult {
+  status: 'ready';
+  filename: string;
+}
+
+export interface AntonPreflightRecord {
+  taskKey: string;
+  stage: 'discovery' | 'requirements-review';
+  durationMs: number;
+  tokensUsed: number;
+  status: 'complete' | 'incomplete' | 'ready' | 'error' | 'timeout';
+  filename?: string;
+  error?: string;
+}
 
 /** Parsed structured result from agent output. */
 export interface AntonAgentResult {

@@ -12,6 +12,7 @@ docs/.vitepress/cache/
 
 # OpenClaw
 .openclaw
+.agents/tasks/
 
 # Codex
 HEARTBEAT.md

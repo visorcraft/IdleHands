@@ -135,7 +135,7 @@ is still in place — do NOT rewrite it from scratch.
 
 ### Identical failure dedup guard
 
-If the exact same failure summary occurs **5 consecutive times** (configurable via `max_identical_failures`), Anton stops retrying that task and skips it. This prevents wasting tokens on issues the agent cannot resolve.
+If the exact same failure summary occurs **3 consecutive times** (configurable via `max_identical_failures`), Anton stops retrying that task and skips it. This prevents wasting tokens on issues the agent cannot resolve.
 
 ### Blocked tasks are never retried
 
@@ -202,12 +202,26 @@ anton:
   skip_on_fail: false
   skip_on_blocked: true
   rollback_on_fail: false
-  max_identical_failures: 5
+  max_identical_failures: 3
   approval_mode: yolo
   auto_commit: true
   progress_events: true
   progress_heartbeat_sec: 30
+  preflight:
+    enabled: false
+    requirements_review: true
+    discovery_timeout_sec: 600
+    review_timeout_sec: 600
+    max_retries: 1
 ```
+
+### Preflight artifacts
+
+When preflight is enabled, Anton stores discovery/review plans under:
+
+- `.agents/tasks/*.md`
+
+These artifacts are local planning files and are ignored by git by default in this repo.
 
 ### Environment variables
 

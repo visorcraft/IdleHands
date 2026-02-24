@@ -33,6 +33,7 @@ export function formatRunSummary(result: AntonRunResult): string {
   const lines = [
     '🤖 Anton Complete',
     `  ✅ ${result.completed} tasks completed`,
+    `  🧠 ${result.autoCompleted ?? 0} tasks already complete (preflight)`,
     `  ⏭️  ${result.skipped} tasks skipped`,
     `  ❌ ${result.failed} tasks failed`,
     `  📋 ${result.remaining} remaining`,

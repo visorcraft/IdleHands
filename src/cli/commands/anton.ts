@@ -232,6 +232,11 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
   const defaults = ctx.config.anton || {};
   const config: AntonRunConfig = {
     taskFile: filePath,
+    preflightEnabled: defaults.preflight?.enabled ?? false,
+    preflightRequirementsReview: defaults.preflight?.requirements_review ?? true,
+    preflightDiscoveryTimeoutSec: defaults.preflight?.discovery_timeout_sec ?? defaults.task_timeout_sec ?? 600,
+    preflightReviewTimeoutSec: defaults.preflight?.review_timeout_sec ?? defaults.task_timeout_sec ?? 600,
+    preflightMaxRetries: defaults.preflight?.max_retries ?? 1,
     projectDir: cwd,
     maxRetriesPerTask: parsed.maxRetries ?? defaults.max_retries ?? 3,
     maxIterations: parsed.maxIterations ?? defaults.max_iterations ?? 200,

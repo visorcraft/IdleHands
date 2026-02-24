@@ -306,6 +306,13 @@ export type IdlehandsConfig = {
     progress_events?: boolean;
     /** Seconds between periodic "still working" updates while a task attempt is running. Default: 30. */
     progress_heartbeat_sec?: number;
+    preflight?: {
+      enabled?: boolean;
+      requirements_review?: boolean;
+      discovery_timeout_sec?: number;
+      review_timeout_sec?: number;
+      max_retries?: number;
+    };
   };
 
   // Bot frontends
