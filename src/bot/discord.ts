@@ -74,6 +74,12 @@ export type ManagedSession = {
   antonAbortSignal: { aborted: boolean } | null;
   antonLastResult: import('../anton/types.js').AntonRunResult | null;
   antonProgress: import('../anton/types.js').AntonProgress | null;
+  antonLastLoopEvent: {
+    kind: 'auto-recovered' | 'final-failure' | 'other';
+    taskText: string;
+    message: string;
+    at: number;
+  } | null;
   // Escalation tracking
   currentModelIndex: number; // 0 = base model, 1+ = escalated
   escalationCount: number; // how many times escalated this turn
@@ -272,6 +278,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       antonAbortSignal: null,
       antonLastResult: null,
       antonProgress: null,
+      antonLastLoopEvent: null,
       currentModelIndex: 0,
       escalationCount: 0,
       pendingEscalation: null,
@@ -298,6 +305,7 @@ When you escalate, your request will be re-run on a more capable model.`;
     s.antonActive = false;
     s.antonAbortSignal = null;
     s.antonProgress = null;
+    s.antonLastLoopEvent = null;
     try {
       s.activeAbortController?.abort();
     } catch { }

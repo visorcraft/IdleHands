@@ -57,6 +57,12 @@ export type ManagedSession = {
   antonAbortSignal: { aborted: boolean } | null;
   antonLastResult: AntonRunResult | null;
   antonProgress: AntonProgress | null;
+  antonLastLoopEvent: {
+    kind: 'auto-recovered' | 'final-failure' | 'other';
+    taskText: string;
+    message: string;
+    at: number;
+  } | null;
   // Multi-agent routing
   agentId: string;
   agentPersona: AgentPersona | null;
@@ -269,6 +275,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       antonAbortSignal: null,
       antonLastResult: null,
       antonProgress: null,
+      antonLastLoopEvent: null,
       agentId,
       agentPersona: persona,
       currentModelIndex: 0,
@@ -336,6 +343,7 @@ When you escalate, your request will be re-run on a more capable model.`;
     managed.antonActive = false;
     managed.antonAbortSignal = null;
     managed.antonProgress = null;
+    managed.antonLastLoopEvent = null;
     try {
       managed.activeAbortController?.abort();
     } catch {}
@@ -363,6 +371,7 @@ When you escalate, your request will be re-run on a more capable model.`;
     managed.antonActive = false;
     managed.antonAbortSignal = null;
     managed.antonProgress = null;
+    managed.antonLastLoopEvent = null;
     try {
       managed.activeAbortController?.abort();
     } catch {}
@@ -477,6 +486,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       antonAbortSignal: null,
       antonLastResult: null,
       antonProgress: null,
+      antonLastLoopEvent: null,
       agentId: managed.agentId,
       agentPersona: managed.agentPersona,
       currentModelIndex: managed.currentModelIndex,
@@ -530,6 +540,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       antonAbortSignal: null,
       antonLastResult: null,
       antonProgress: null,
+      antonLastLoopEvent: null,
       // Preserve multi-agent state
       agentId: managed.agentId,
       agentPersona: managed.agentPersona,

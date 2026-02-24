@@ -530,12 +530,15 @@ describe('anton config', () => {
   const ANTON_ENV_KEYS = [
     'IDLEHANDS_ANTON_MAX_RETRIES',
     'IDLEHANDS_ANTON_MAX_ITERATIONS',
+    'IDLEHANDS_ANTON_TASK_MAX_ITERATIONS',
     'IDLEHANDS_ANTON_TASK_TIMEOUT_SEC',
     'IDLEHANDS_ANTON_TOTAL_TIMEOUT_SEC',
     'IDLEHANDS_ANTON_MAX_TOTAL_TOKENS',
     'IDLEHANDS_ANTON_VERIFY_AI',
     'IDLEHANDS_ANTON_VERIFY_MODEL',
     'IDLEHANDS_ANTON_VERBOSE',
+    'IDLEHANDS_ANTON_PROGRESS_EVENTS',
+    'IDLEHANDS_ANTON_PROGRESS_HEARTBEAT_SEC',
     'IDLEHANDS_QUIET_WARNINGS',
   ];
 
@@ -565,6 +568,7 @@ describe('anton config', () => {
     assert.ok(config.anton, 'anton config block should exist');
     assert.equal(config.anton.max_retries, 3);
     assert.equal(config.anton.max_iterations, 200);
+    assert.equal(config.anton.task_max_iterations, 50);
     assert.equal(config.anton.task_timeout_sec, 600);
     assert.equal(config.anton.total_timeout_sec, 7200);
     assert.equal(config.anton.max_total_tokens, undefined);
@@ -580,10 +584,14 @@ describe('anton config', () => {
     assert.equal(config.anton.approval_mode, 'yolo');
     assert.equal(config.anton.verbose, false);
     assert.equal(config.anton.auto_commit, true);
+    assert.equal(config.anton.progress_events, true);
+    assert.equal(config.anton.progress_heartbeat_sec, 30);
   });
 
   it('env overrides apply', async () => {
     process.env.IDLEHANDS_ANTON_MAX_RETRIES = '5';
+    process.env.IDLEHANDS_ANTON_TASK_MAX_ITERATIONS = '12';
+    process.env.IDLEHANDS_ANTON_PROGRESS_HEARTBEAT_SEC = '12';
     process.env.IDLEHANDS_ANTON_VERIFY_AI = 'false';
 
     try {
@@ -592,12 +600,16 @@ describe('anton config', () => {
       });
 
       assert.equal(config.anton?.max_retries, 5);
+      assert.equal(config.anton?.task_max_iterations, 12);
+      assert.equal(config.anton?.progress_heartbeat_sec, 12);
       assert.equal(config.anton?.verify_ai, false);
       // Other defaults should remain unchanged
       assert.equal(config.anton?.max_iterations, 200);
       assert.equal(config.anton?.task_timeout_sec, 600);
     } finally {
       delete process.env.IDLEHANDS_ANTON_MAX_RETRIES;
+      delete process.env.IDLEHANDS_ANTON_TASK_MAX_ITERATIONS;
+      delete process.env.IDLEHANDS_ANTON_PROGRESS_HEARTBEAT_SEC;
       delete process.env.IDLEHANDS_ANTON_VERIFY_AI;
     }
   });
@@ -609,6 +621,7 @@ describe('anton config', () => {
         anton: {
           max_retries: 0,
           max_decompose_depth: 10,
+          progress_heartbeat_sec: 1,
           approval_mode: 'invalid',
         },
       },
@@ -618,6 +631,8 @@ describe('anton config', () => {
     assert.equal(config.anton?.max_retries, 1);
     // max_decompose_depth clamped to 0-5
     assert.equal(config.anton?.max_decompose_depth, 5);
+    // progress heartbeat clamped to sane min
+    assert.equal(config.anton?.progress_heartbeat_sec, 5);
     // invalid approval_mode defaults to 'yolo' with warning
     assert.equal(config.anton?.approval_mode, 'yolo');
   });

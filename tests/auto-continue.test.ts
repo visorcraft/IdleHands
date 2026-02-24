@@ -1,7 +1,11 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
 
-import { isToolLoopBreak, formatAutoContinueNotice, AUTO_CONTINUE_PROMPT } from '../dist/bot/auto-continue.js';
+import {
+  isToolLoopBreak,
+  formatAutoContinueNotice,
+  AUTO_CONTINUE_PROMPT,
+} from '../dist/bot/auto-continue.js';
 
 describe('auto-continue', () => {
   describe('isToolLoopBreak', () => {
@@ -13,6 +17,13 @@ describe('auto-continue', () => {
 
     it('detects tool-loop in message', () => {
       const err = new Error('critical tool-loop persisted after one tools-disabled recovery turn');
+      assert.equal(isToolLoopBreak(err), true);
+    });
+
+    it('detects legacy loop-break wording from repeated tool calls', () => {
+      const err = new Error(
+        'tool edit_range: identical call repeated 3x across turns; breaking loop. args={...}'
+      );
       assert.equal(isToolLoopBreak(err), true);
     });
 

@@ -70,6 +70,21 @@ export function formatTaskStart(task: AntonTask, attempt: number, progress: Anto
 }
 
 /**
+ * Format periodic heartbeat message while a task is still in-flight.
+ */
+export function formatTaskHeartbeat(progress: AntonProgress): string {
+  const bar = formatProgressBar(progress);
+  const task = progress.currentTask ? progress.currentTask : 'unknown task';
+  const attempt = progress.currentAttempt ?? 1;
+  const elapsed = formatDuration(progress.elapsedMs);
+  const eta = progress.estimatedRemainingMs !== undefined
+    ? ` · ETA ~${formatDuration(progress.estimatedRemainingMs)}`
+    : '';
+
+  return `⏳ Still working: ${task} (attempt ${attempt})\n${bar}\nElapsed: ${elapsed}${eta}`;
+}
+
+/**
  * Format task end message.
  */
 export function formatTaskEnd(
@@ -154,14 +169,24 @@ export function formatDryRunPlan(taskFile: AntonTaskFile, commands: DetectedComm
 }
 
 /**
- * Format tool loop event message for Discord.
+ * Format tool loop event message for chat status updates.
  */
 export function formatToolLoopEvent(
   taskText: string,
   event: { level: string; toolName: string; count: number; message: string }
 ): string {
-  const emoji = event.level === 'critical' ? '🔴' : '🟡';
   const task = taskText.length > 60 ? taskText.slice(0, 60) + '...' : taskText;
+  const detail = (event.message || '').trim();
+
+  if (/auto-?continuing|auto-?recover/i.test(detail)) {
+    return `🟠 Tool loop auto-recovered during "${task}" — ${detail}`;
+  }
+
+  if (/final loop failure|retries exhausted/i.test(detail)) {
+    return `🔴 Tool loop final failure during "${task}" — ${detail}`;
+  }
+
+  const emoji = event.level === 'critical' ? '🔴' : '🟡';
   return `${emoji} Tool loop ${event.level}: \`${event.toolName}\` called ${event.count}x during "${task}"`;
 }
 

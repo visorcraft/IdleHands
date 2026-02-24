@@ -17,6 +17,7 @@ import {
   formatTaskStart,
   formatTaskEnd,
   formatTaskSkip,
+  formatTaskHeartbeat,
   formatToolLoopEvent,
   formatCompactionEvent,
   formatVerificationDetail,
@@ -83,6 +84,12 @@ export interface ManagedLike {
   antonAbortSignal: { aborted: boolean } | null;
   antonProgress: any;
   antonLastResult: any;
+  antonLastLoopEvent?: {
+    kind: 'auto-recovered' | 'final-failure' | 'other';
+    taskText: string;
+    message: string;
+    at: number;
+  } | null;
   lastActivity: number;
   lastProgressAt: number;
   pendingEscalation?: string | null;
@@ -657,6 +664,25 @@ export async function gitStatusCommand(cwd: string): Promise<CmdResult> {
 
 // ── Anton ───────────────────────────────────────────────────────────
 
+function formatAgeShort(msAgo: number): string {
+  if (msAgo < 60_000) return `${Math.max(1, Math.round(msAgo / 1000))}s ago`;
+  if (msAgo < 3_600_000) return `${Math.round(msAgo / 60_000)}m ago`;
+  return `${Math.round(msAgo / 3_600_000)}h ago`;
+}
+
+function summarizeLoopEvent(
+  ev: NonNullable<ManagedLike['antonLastLoopEvent']>
+): string {
+  const emoji = ev.kind === 'final-failure' ? '🔴' : ev.kind === 'auto-recovered' ? '🟠' : '🟡';
+  const kind = ev.kind === 'final-failure'
+    ? 'final failure'
+    : ev.kind === 'auto-recovered'
+      ? 'auto-recovered'
+      : 'loop event';
+  const msg = ev.message.length > 120 ? ev.message.slice(0, 117) + '...' : ev.message;
+  return `${emoji} Last loop: ${kind} (${formatAgeShort(Date.now() - ev.at)})\n${msg}`;
+}
+
 export function antonStatusCommand(managed: ManagedLike): CmdResult {
   if (!managed.antonActive) return { lines: ['No Anton run in progress.'] };
 
@@ -666,16 +692,30 @@ export function antonStatusCommand(managed: ManagedLike): CmdResult {
 
   if (managed.antonProgress) {
     const line1 = formatProgressBar(managed.antonProgress);
+    const lines = [line1];
+
     if (managed.antonProgress.currentTask) {
-      return {
-        lines: [
-          line1,
-          '',
-          `Working on: ${managed.antonProgress.currentTask} (Attempt ${managed.antonProgress.currentAttempt})`,
-        ],
-      };
+      lines.push(
+        '',
+        `Working on: ${managed.antonProgress.currentTask} (Attempt ${managed.antonProgress.currentAttempt})`
+      );
     }
-    return { lines: [line1] };
+
+    if (managed.antonLastLoopEvent) {
+      lines.push('', summarizeLoopEvent(managed.antonLastLoopEvent));
+    }
+
+    return { lines };
+  }
+
+  if (managed.antonLastLoopEvent) {
+    return {
+      lines: [
+        '🤖 Anton is running (no progress data yet).',
+        '',
+        summarizeLoopEvent(managed.antonLastLoopEvent),
+      ],
+    };
   }
 
   return { lines: ['🤖 Anton is running (no progress data yet).'] };
@@ -744,28 +784,30 @@ export function makeAntonProgress(
   managed: ManagedLike,
   defaults: any,
   send: (text: string) => void,
-  rateLimitMs: number,
+  rateLimitMs: number
 ): AntonProgressCallback {
+  const heartbeatSecRaw = Number(defaults.progress_heartbeat_sec ?? 30);
+  const heartbeatIntervalMs = Number.isFinite(heartbeatSecRaw)
+    ? Math.max(5000, Math.floor(heartbeatSecRaw * 1000))
+    : 30_000;
+
   let lastProgressAt = 0;
+  let lastHeartbeatNoticeAt = 0;
 
   return {
     onTaskStart(task, attempt, prog) {
-      managed.antonProgress = prog;
-      managed.lastActivity = Date.now();
       const now = Date.now();
-      if (now - lastProgressAt >= rateLimitMs) {
-        lastProgressAt = now;
-        send(formatTaskStart(task, attempt, prog));
-      }
+      managed.antonProgress = prog;
+      managed.lastActivity = now;
+      lastProgressAt = now;
+      send(formatTaskStart(task, attempt, prog));
     },
     onTaskEnd(task, result, prog) {
-      managed.antonProgress = prog;
-      managed.lastActivity = Date.now();
       const now = Date.now();
-      if (now - lastProgressAt >= rateLimitMs) {
-        lastProgressAt = now;
-        send(formatTaskEnd(task, result, prog));
-      }
+      managed.antonProgress = prog;
+      managed.lastActivity = now;
+      lastProgressAt = now;
+      send(formatTaskEnd(task, result, prog));
     },
     onTaskSkip(task, reason) {
       managed.lastActivity = Date.now();
@@ -780,10 +822,34 @@ export function makeAntonProgress(
       send(formatRunSummary(result));
     },
     onHeartbeat() {
-      managed.lastActivity = Date.now();
+      const now = Date.now();
+      managed.lastActivity = now;
+
+      if (defaults.progress_events === false) return;
+      if (!managed.antonProgress?.currentTask) return;
+      if (now - lastProgressAt < rateLimitMs) return;
+      if (now - lastHeartbeatNoticeAt < heartbeatIntervalMs) return;
+
+      lastHeartbeatNoticeAt = now;
+      send(formatTaskHeartbeat(managed.antonProgress));
     },
     onToolLoop(taskText, event) {
-      managed.lastActivity = Date.now();
+      const now = Date.now();
+      managed.lastActivity = now;
+
+      const detail = String(event.message ?? '');
+      const kind = /final loop failure|retries exhausted/i.test(detail)
+        ? 'final-failure'
+        : /auto-?recover|auto-?continu/i.test(detail)
+          ? 'auto-recovered'
+          : 'other';
+      managed.antonLastLoopEvent = {
+        kind,
+        taskText,
+        message: detail,
+        at: now,
+      };
+
       if (defaults.progress_events !== false) {
         send(formatToolLoopEvent(taskText, event));
       }
@@ -796,7 +862,7 @@ export function makeAntonProgress(
     },
     onVerification(taskText, verification) {
       managed.lastActivity = Date.now();
-      if (defaults.progress_events !== false && !verification.passed) {
+      if (defaults.progress_events !== false) {
         send(formatVerificationDetail(taskText, verification));
       }
     },
@@ -825,6 +891,7 @@ export async function antonStartCommand(
       managed.antonActive = false;
       managed.antonAbortSignal = null;
       managed.antonProgress = null;
+      managed.antonLastLoopEvent = null;
       send('♻️ Recovered stale Anton run state. Starting a fresh run...');
     } else {
       const msg = managed.antonAbortSignal?.aborted
@@ -850,6 +917,7 @@ export async function antonStartCommand(
   managed.antonActive = true;
   managed.antonAbortSignal = abortSignal;
   managed.antonProgress = null;
+  managed.antonLastLoopEvent = null;
 
   const progress = makeAntonProgress(managed, defaults, send, rateLimitMs);
 

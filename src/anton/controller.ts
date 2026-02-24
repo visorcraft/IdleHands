@@ -570,18 +570,50 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               result = await session.ask(prompt, askHooks as any);
               break;
             } catch (e) {
-              // Auto-continue on tool-loop breaks (AgentLoopBreak)
-              if (
-                isToolLoopBreak(e) &&
-                toolLoopRetries < toolLoopMaxRetries &&
-                !abortSignal.aborted &&
-                !controller.signal.aborted
-              ) {
-                toolLoopRetries++;
-                console.error(`[anton] tool-loop auto-continue (retry ${toolLoopRetries}/${toolLoopMaxRetries}) task="${currentTask.text.slice(0, 40)}"`);
-                try { progress.onToolLoop?.(currentTask.text, { level: 'critical', toolName: 'unknown', count: toolLoopRetries, message: `Auto-continuing (retry ${toolLoopRetries}/${toolLoopMaxRetries})` }); } catch { /* best effort */ }
-                prompt = AUTO_CONTINUE_PROMPT;
-                continue;
+              // Auto-recover and explicitly report tool-loop outcomes.
+              if (isToolLoopBreak(e)) {
+                const loopMessage = e instanceof Error ? e.message : String(e);
+
+                if (
+                  toolLoopRetries < toolLoopMaxRetries &&
+                  !abortSignal.aborted &&
+                  !controller.signal.aborted
+                ) {
+                  toolLoopRetries++;
+                  console.error(
+                    `[anton] tool-loop auto-continue (retry ${toolLoopRetries}/${toolLoopMaxRetries}) task="${currentTask.text.slice(0, 40)}"`
+                  );
+                  try {
+                    progress.onToolLoop?.(currentTask.text, {
+                      level: 'critical',
+                      toolName: 'unknown',
+                      count: toolLoopRetries,
+                      message: `Auto-recovered by continuing (retry ${toolLoopRetries}/${toolLoopMaxRetries})`,
+                    });
+                  } catch {
+                    // best effort
+                  }
+                  prompt = AUTO_CONTINUE_PROMPT;
+                  continue;
+                }
+
+                if (!abortSignal.aborted && !controller.signal.aborted) {
+                  const finalLoopFailure = `Final loop failure after ${toolLoopRetries}/${toolLoopMaxRetries} auto-retries: ${loopMessage}`;
+                  console.error(
+                    `[anton] ${finalLoopFailure} task="${currentTask.text.slice(0, 40)}"`
+                  );
+                  try {
+                    progress.onToolLoop?.(currentTask.text, {
+                      level: 'critical',
+                      toolName: 'unknown',
+                      count: Math.max(toolLoopRetries, 1),
+                      message: finalLoopFailure,
+                    });
+                  } catch {
+                    // best effort
+                  }
+                  throw new Error(finalLoopFailure);
+                }
               }
 
               const infraKind = classifyInfraError(e);
