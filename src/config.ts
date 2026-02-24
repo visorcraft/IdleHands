@@ -110,7 +110,7 @@ const DEFAULTS: IdlehandsConfig = {
     task_timeout_sec: 600,
     total_timeout_sec: 7200,
     max_total_tokens: undefined, // unlimited
-    max_prompt_tokens_per_attempt: 64000,
+    max_prompt_tokens_per_attempt: 999999999,
     verify_ai: true,
     decompose: true,
     max_decompose_depth: 2,

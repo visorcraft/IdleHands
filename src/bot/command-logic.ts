@@ -757,7 +757,7 @@ export function buildAntonRunConfig(defaults: any, cwd: string, filePath: string
     taskTimeoutSec: defaults.task_timeout_sec ?? 600,
     totalTimeoutSec: defaults.total_timeout_sec ?? 7200,
     maxTotalTokens: defaults.max_total_tokens ?? Infinity,
-    maxPromptTokensPerAttempt: defaults.max_prompt_tokens_per_attempt ?? 64_000,
+    maxPromptTokensPerAttempt: defaults.max_prompt_tokens_per_attempt ?? 999_999_999,
     autoCommit: defaults.auto_commit ?? true,
     branch: false,
     allowDirty: false,
@@ -793,10 +793,13 @@ export function makeAntonProgress(
 
   let lastProgressAt = 0;
   let lastHeartbeatNoticeAt = 0;
+  let runStartMs = 0;
+  let lastHeartbeatText = '';
 
   return {
     onTaskStart(task, attempt, prog) {
       const now = Date.now();
+      if (!runStartMs) runStartMs = now;
       managed.antonProgress = prog;
       managed.lastActivity = now;
       lastProgressAt = now;
@@ -819,6 +822,8 @@ export function makeAntonProgress(
       managed.antonActive = false;
       managed.antonAbortSignal = null;
       managed.antonProgress = null;
+      runStartMs = 0;
+      lastHeartbeatText = '';
       send(formatRunSummary(result));
     },
     onHeartbeat() {
@@ -830,8 +835,20 @@ export function makeAntonProgress(
       if (now - lastProgressAt < rateLimitMs) return;
       if (now - lastHeartbeatNoticeAt < heartbeatIntervalMs) return;
 
+      // Keep elapsed time live between task start/end callbacks.
+      if (!runStartMs) runStartMs = now;
+      managed.antonProgress = {
+        ...managed.antonProgress,
+        elapsedMs: now - runStartMs,
+      };
+
+      const hb = formatTaskHeartbeat(managed.antonProgress);
+      // Avoid repeated identical status lines across Telegram/TUI/Discord.
+      if (hb === lastHeartbeatText) return;
+
       lastHeartbeatNoticeAt = now;
-      send(formatTaskHeartbeat(managed.antonProgress));
+      lastHeartbeatText = hb;
+      send(hb);
     },
     onToolLoop(taskText, event) {
       const now = Date.now();
