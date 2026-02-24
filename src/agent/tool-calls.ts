@@ -558,7 +558,7 @@ function parseFunctionTagToolCalls(content: string): ToolCall[] | null {
   return calls;
 }
 
-/** 
+/**
  * robustly parse JSON from raw argument strings, applying basic heuristic repairs
  * for common model hallucinations such as trailing commas and unescaped newlines.
  */

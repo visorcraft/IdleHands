@@ -280,9 +280,11 @@ export function looksLikePlanningNarration(text: string, finishReason?: string):
   if (/(^|\n)\s*(done|completed|finished|final answer|summary:)\b/.test(s)) return false;
 
   // Typical "thinking out loud"/plan chatter that should continue with tools.
-  if (/\b(let me|i(?:'|’)ll|i will|i'm going to|i am going to|next i(?:'|’)ll|first i(?:'|’)ll|i need to|i should|checking|reviewing|exploring|starting by)\b/.test(
-    s
-  )) {
+  if (
+    /\b(let me|i(?:'|’)ll|i will|i'm going to|i am going to|next i(?:'|’)ll|first i(?:'|’)ll|i need to|i should|checking|reviewing|exploring|starting by)\b/.test(
+      s
+    )
+  ) {
     return true;
   }
 
@@ -302,9 +304,33 @@ export function looksLikePlanningNarration(text: string, finishReason?: string):
     const firstLine = lines[0].trim();
     const firstWord = firstLine.split(/\s+/)[0];
     const nakedCommands = new Set([
-      'grep', 'ls', 'cat', 'npm', 'yarn', 'pnpm', 'git', 'node', 'python',
-      'cargo', 'go', 'find', 'awk', 'sed', 'rg', 'cd', 'mkdir', 'touch',
-      'rm', 'mv', 'cp', 'curl', 'wget', 'docker', 'pytest', 'tsc', 'npx'
+      'grep',
+      'ls',
+      'cat',
+      'npm',
+      'yarn',
+      'pnpm',
+      'git',
+      'node',
+      'python',
+      'cargo',
+      'go',
+      'find',
+      'awk',
+      'sed',
+      'rg',
+      'cd',
+      'mkdir',
+      'touch',
+      'rm',
+      'mv',
+      'cp',
+      'curl',
+      'wget',
+      'docker',
+      'pytest',
+      'tsc',
+      'npx',
     ]);
     if (nakedCommands.has(firstWord)) {
       // If it has flags or paths, treat as a broken tool call

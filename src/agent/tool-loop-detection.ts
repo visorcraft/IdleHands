@@ -101,30 +101,49 @@ export function createToolLoopState(): ToolLoopState {
   };
 }
 
-function normalizePolicy(base: NormalizedToolLoopPolicy, incoming?: ToolLoopPolicy): NormalizedToolLoopPolicy {
+function normalizePolicy(
+  base: NormalizedToolLoopPolicy,
+  incoming?: ToolLoopPolicy
+): NormalizedToolLoopPolicy {
   const out: NormalizedToolLoopPolicy = {
-    warningThreshold: Number.isFinite(Number(incoming?.warningThreshold)) ? Math.max(2, Math.floor(Number(incoming?.warningThreshold))) : base.warningThreshold,
-    criticalThreshold: Number.isFinite(Number(incoming?.criticalThreshold)) ? Math.max(3, Math.floor(Number(incoming?.criticalThreshold))) : base.criticalThreshold,
-    globalCircuitBreakerThreshold: Number.isFinite(Number(incoming?.globalCircuitBreakerThreshold)) ? Math.max(4, Math.floor(Number(incoming?.globalCircuitBreakerThreshold))) : base.globalCircuitBreakerThreshold,
+    warningThreshold: Number.isFinite(Number(incoming?.warningThreshold))
+      ? Math.max(2, Math.floor(Number(incoming?.warningThreshold)))
+      : base.warningThreshold,
+    criticalThreshold: Number.isFinite(Number(incoming?.criticalThreshold))
+      ? Math.max(3, Math.floor(Number(incoming?.criticalThreshold)))
+      : base.criticalThreshold,
+    globalCircuitBreakerThreshold: Number.isFinite(Number(incoming?.globalCircuitBreakerThreshold))
+      ? Math.max(4, Math.floor(Number(incoming?.globalCircuitBreakerThreshold)))
+      : base.globalCircuitBreakerThreshold,
     detectors: {
       genericRepeat: incoming?.detectors?.genericRepeat ?? base.detectors.genericRepeat,
-      knownPollNoProgress: incoming?.detectors?.knownPollNoProgress ?? base.detectors.knownPollNoProgress,
+      knownPollNoProgress:
+        incoming?.detectors?.knownPollNoProgress ?? base.detectors.knownPollNoProgress,
       pingPong: incoming?.detectors?.pingPong ?? base.detectors.pingPong,
     },
   };
-  if (out.warningThreshold >= out.criticalThreshold) out.criticalThreshold = out.warningThreshold + 2;
-  if (out.criticalThreshold >= out.globalCircuitBreakerThreshold) out.globalCircuitBreakerThreshold = out.criticalThreshold + 2;
+  if (out.warningThreshold >= out.criticalThreshold)
+    out.criticalThreshold = out.warningThreshold + 2;
+  if (out.criticalThreshold >= out.globalCircuitBreakerThreshold)
+    out.globalCircuitBreakerThreshold = out.criticalThreshold + 2;
   return out;
 }
 
 function normalizeConfig(config?: ToolLoopConfig): NormalizedToolLoopConfig {
   const basePolicy: NormalizedToolLoopPolicy = {
-    warningThreshold: Number.isFinite(Number(config?.warningThreshold)) ? Math.max(2, Math.floor(Number(config?.warningThreshold))) : DEFAULTS.warningThreshold,
-    criticalThreshold: Number.isFinite(Number(config?.criticalThreshold)) ? Math.max(3, Math.floor(Number(config?.criticalThreshold))) : DEFAULTS.criticalThreshold,
-    globalCircuitBreakerThreshold: Number.isFinite(Number(config?.globalCircuitBreakerThreshold)) ? Math.max(4, Math.floor(Number(config?.globalCircuitBreakerThreshold))) : DEFAULTS.globalCircuitBreakerThreshold,
+    warningThreshold: Number.isFinite(Number(config?.warningThreshold))
+      ? Math.max(2, Math.floor(Number(config?.warningThreshold)))
+      : DEFAULTS.warningThreshold,
+    criticalThreshold: Number.isFinite(Number(config?.criticalThreshold))
+      ? Math.max(3, Math.floor(Number(config?.criticalThreshold)))
+      : DEFAULTS.criticalThreshold,
+    globalCircuitBreakerThreshold: Number.isFinite(Number(config?.globalCircuitBreakerThreshold))
+      ? Math.max(4, Math.floor(Number(config?.globalCircuitBreakerThreshold)))
+      : DEFAULTS.globalCircuitBreakerThreshold,
     detectors: {
       genericRepeat: config?.detectors?.genericRepeat ?? DEFAULT_DETECTORS.genericRepeat,
-      knownPollNoProgress: config?.detectors?.knownPollNoProgress ?? DEFAULT_DETECTORS.knownPollNoProgress,
+      knownPollNoProgress:
+        config?.detectors?.knownPollNoProgress ?? DEFAULT_DETECTORS.knownPollNoProgress,
       pingPong: config?.detectors?.pingPong ?? DEFAULT_DETECTORS.pingPong,
     },
   };
@@ -138,23 +157,32 @@ function normalizeConfig(config?: ToolLoopConfig): NormalizedToolLoopConfig {
 
   return {
     enabled: config?.enabled ?? DEFAULTS.enabled,
-    historySize: Number.isFinite(Number(config?.historySize)) ? Math.max(10, Math.floor(Number(config?.historySize))) : DEFAULTS.historySize,
+    historySize: Number.isFinite(Number(config?.historySize))
+      ? Math.max(10, Math.floor(Number(config?.historySize)))
+      : DEFAULTS.historySize,
     warningThreshold: normalizedBasePolicy.warningThreshold,
     criticalThreshold: normalizedBasePolicy.criticalThreshold,
     globalCircuitBreakerThreshold: normalizedBasePolicy.globalCircuitBreakerThreshold,
-    readCacheTtlMs: Number.isFinite(Number(config?.readCacheTtlMs)) ? Math.max(0, Math.floor(Number(config?.readCacheTtlMs))) : DEFAULTS.readCacheTtlMs,
+    readCacheTtlMs: Number.isFinite(Number(config?.readCacheTtlMs))
+      ? Math.max(0, Math.floor(Number(config?.readCacheTtlMs)))
+      : DEFAULTS.readCacheTtlMs,
     detectors: normalizedBasePolicy.detectors,
     perTool,
   };
 }
 
-function resolvePolicyForTool(cfg: NormalizedToolLoopConfig, toolName: string): NormalizedToolLoopPolicy {
-  return cfg.perTool[toolName] ?? {
-    warningThreshold: cfg.warningThreshold,
-    criticalThreshold: cfg.criticalThreshold,
-    globalCircuitBreakerThreshold: cfg.globalCircuitBreakerThreshold,
-    detectors: cfg.detectors,
-  };
+function resolvePolicyForTool(
+  cfg: NormalizedToolLoopConfig,
+  toolName: string
+): NormalizedToolLoopPolicy {
+  return (
+    cfg.perTool[toolName] ?? {
+      warningThreshold: cfg.warningThreshold,
+      criticalThreshold: cfg.criticalThreshold,
+      globalCircuitBreakerThreshold: cfg.globalCircuitBreakerThreshold,
+      detectors: cfg.detectors,
+    }
+  );
 }
 
 export function stableStringify(value: unknown): string {
@@ -183,7 +211,10 @@ export function hashToolArgs(params: unknown): string {
   return sha256(stableStringify(params ?? {}));
 }
 
-export function hashToolCall(toolName: string, params: unknown): { argsHash: string; signature: string } {
+export function hashToolCall(
+  toolName: string,
+  params: unknown
+): { argsHash: string; signature: string } {
   const argsHash = hashToolArgs(params);
   return {
     argsHash,
@@ -193,7 +224,12 @@ export function hashToolCall(toolName: string, params: unknown): { argsHash: str
 
 function hashToolOutcome(result?: unknown, error?: unknown): string {
   if (error != null) {
-    const msg = typeof error === 'string' ? error : (error as any)?.message ? String((error as any).message) : String(error);
+    const msg =
+      typeof error === 'string'
+        ? error
+        : (error as any)?.message
+          ? String((error as any).message)
+          : String(error);
     return `error:${sha256(msg.trim())}`;
   }
 
@@ -213,7 +249,7 @@ export function recordToolCall(
   toolName: string,
   params: unknown,
   toolCallId?: string,
-  config?: ToolLoopConfig,
+  config?: ToolLoopConfig
 ): ToolCallRecord {
   const cfg = normalizeConfig(config);
   const { argsHash, signature } = hashToolCall(toolName, params);
@@ -255,7 +291,7 @@ export function recordToolCallOutcome(
     result?: unknown;
     error?: unknown;
   },
-  record?: ToolCallRecord,
+  record?: ToolCallRecord
 ): void {
   const outHash = hashToolOutcome(args.result, args.error);
 
@@ -291,7 +327,11 @@ function consecutiveSignatureStreak(history: ToolCallRecord[], signature: string
   return count;
 }
 
-function consecutiveOutcomeStreak(history: ToolCallRecord[], signature: string, outcomeHash: string): number {
+function consecutiveOutcomeStreak(
+  history: ToolCallRecord[],
+  signature: string,
+  outcomeHash: string
+): number {
   let count = 0;
   for (let i = history.length - 1; i >= 0; i--) {
     const rec = history[i];
@@ -306,7 +346,7 @@ export function detectToolCallLoop(
   state: ToolLoopState,
   toolName: string,
   params: unknown,
-  config?: ToolLoopConfig,
+  config?: ToolLoopConfig
 ): ToolLoopDetectionResult {
   const cfg = normalizeConfig(config);
   const policy = resolvePolicyForTool(cfg, toolName);
@@ -332,9 +372,14 @@ export function detectToolCallLoop(
 
   const latestSameOutcome = [...state.history]
     .reverse()
-    .find((h) => h.signature === signature && typeof h.resultHash === 'string' && h.resultHash.length > 0);
+    .find(
+      (h) =>
+        h.signature === signature && typeof h.resultHash === 'string' && h.resultHash.length > 0
+    );
 
-  const outcomeKey = latestSameOutcome?.resultHash ? `${signature}|${latestSameOutcome.resultHash}` : '';
+  const outcomeKey = latestSameOutcome?.resultHash
+    ? `${signature}|${latestSameOutcome.resultHash}`
+    : '';
   const outcomeCount = outcomeKey ? (state.byOutcomeKey.get(outcomeKey) ?? 0) : 0;
   const outcomeStreak = latestSameOutcome?.resultHash
     ? consecutiveOutcomeStreak(state.history, signature, latestSameOutcome.resultHash)
@@ -349,7 +394,7 @@ export function detectToolCallLoop(
     return {
       level: 'critical',
       detector: 'known_poll_no_progress',
-      message: `${toolName} repeated with no outcome change (${count}x)` ,
+      message: `${toolName} repeated with no outcome change (${count}x)`,
       signature,
       argsHash,
       count,
@@ -371,7 +416,10 @@ export function detectToolCallLoop(
       a.signature === c.signature &&
       b.signature === d.signature &&
       a.signature !== b.signature &&
-      a.resultHash && b.resultHash && c.resultHash && d.resultHash &&
+      a.resultHash &&
+      b.resultHash &&
+      c.resultHash &&
+      d.resultHash &&
       a.resultHash === c.resultHash &&
       b.resultHash === d.resultHash
     ) {
