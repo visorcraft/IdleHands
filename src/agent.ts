@@ -24,6 +24,7 @@ import {
   sanitizePathsInMessage,
   digestToolResult,
 } from './agent/formatting.js';
+import { autoPickModel } from './agent/model-pick.js';
 import {
   reviewArtifactKeys,
   looksLikeCodeReviewRequest,
@@ -4539,23 +4540,4 @@ export async function runAgent(opts: {
     runtime: opts.runtime,
   });
   return session.ask(opts.instruction, opts.onToken);
-}
-
-async function autoPickModel(
-  client: OpenAIClient,
-  cached?: { data: Array<{ id: string }> }
-): Promise<string> {
-  const ac = makeAbortController();
-  const timer = setTimeout(() => ac.abort(), 3000);
-  try {
-    const models = cached ?? normalizeModelsResponse(await client.models(ac.signal));
-    const q = models.data.find((m) => /qwen/i.test(m.id));
-    if (q) return q.id;
-    const first = models.data[0]?.id;
-    if (!first)
-      throw new Error('No models found on server. Check your endpoint and that a model is loaded.');
-    return first;
-  } finally {
-    clearTimeout(timer);
-  }
 }
