@@ -1,6 +1,38 @@
 import { SYS_CONTEXT_SCHEMA } from '../sys/context.js';
 import type { ToolSchema } from '../types.js';
 
+const obj = (properties: Record<string, any>, required: string[] = []) => ({
+  type: 'object',
+  additionalProperties: false,
+  properties,
+  required,
+});
+const str = () => ({ type: 'string' });
+const bool = () => ({ type: 'boolean' });
+const int = (min?: number, max?: number) => ({
+  type: 'integer',
+  ...(min !== undefined && { minimum: min }),
+  ...(max !== undefined && { maximum: max }),
+});
+
+const SCHEMA_CACHE = new Map<string, ToolSchema[]>();
+
+function cacheKey(opts?: {
+  activeVaultTools?: boolean;
+  passiveVault?: boolean;
+  sysMode?: boolean;
+  lspTools?: boolean;
+  allowSpawnTask?: boolean;
+}): string {
+  return [
+    opts?.activeVaultTools ? 'a1' : 'a0',
+    opts?.passiveVault ? 'p1' : 'p0',
+    opts?.sysMode ? 's1' : 's0',
+    opts?.lspTools ? 'l1' : 'l0',
+    opts?.allowSpawnTask === false ? 'sp0' : 'sp1',
+  ].join('|');
+}
+
 export function buildToolsSchema(opts?: {
   activeVaultTools?: boolean;
   passiveVault?: boolean;
@@ -9,19 +41,12 @@ export function buildToolsSchema(opts?: {
   lspTools?: boolean;
   allowSpawnTask?: boolean;
 }): ToolSchema[] {
-  const obj = (properties: Record<string, any>, required: string[] = []) => ({
-    type: 'object',
-    additionalProperties: false,
-    properties,
-    required,
-  });
-  const str = () => ({ type: 'string' });
-  const bool = () => ({ type: 'boolean' });
-  const int = (min?: number, max?: number) => ({
-    type: 'integer',
-    ...(min !== undefined && { minimum: min }),
-    ...(max !== undefined && { maximum: max }),
-  });
+  const key = cacheKey(opts);
+  const canUseCache = !opts?.mcpTools?.length;
+  if (canUseCache) {
+    const cached = SCHEMA_CACHE.get(key);
+    if (cached) return cached;
+  }
 
   const schemas: ToolSchema[] = [
     // ────────────────────────────────────────────────────────────────────────────
@@ -308,5 +333,8 @@ export function buildToolsSchema(opts?: {
     schemas.push(...opts.mcpTools);
   }
 
+  if (canUseCache) {
+    SCHEMA_CACHE.set(key, schemas);
+  }
   return schemas;
 }
