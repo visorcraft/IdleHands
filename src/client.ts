@@ -39,6 +39,14 @@ function asError(e: unknown, fallback = 'unknown error'): Error {
   return new Error(String(e));
 }
 
+function getRetryDelayMs(defaultMs: number): number {
+  const raw = process.env.IDLEHANDS_TEST_RETRY_DELAY_MS;
+  if (raw == null) return defaultMs;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) return defaultMs;
+  return Math.floor(parsed);
+}
+
 // ─── Rate Limiter ────────────────────────────────────────
 
 /**
@@ -612,7 +620,7 @@ export class OpenAIClient {
       console.warn(
         `[warn] server returned 429/503 ${this.rateLimiter.recentCount} times in 60s, backing off ${(rlDelay / 1000).toFixed(1)}s`
       );
-      await delay(rlDelay);
+      await delay(getRetryDelayMs(rlDelay));
     }
 
     let lastErr: unknown = makeClientError(
@@ -650,7 +658,7 @@ export class OpenAIClient {
             true
           );
           if (attempt < 2) {
-            await delay(backoff);
+            await delay(getRetryDelayMs(backoff));
             continue;
           }
           throw lastErr;
@@ -701,7 +709,7 @@ export class OpenAIClient {
           const backoff = Math.pow(2, attempt + 1) * 1000;
           this.log(`HTTP ${res.status} on non-stream request, retrying in ${backoff}ms...`);
           if (attempt < 2) {
-            await delay(backoff);
+            await delay(getRetryDelayMs(backoff));
             continue;
           }
           throw lastErr;
@@ -759,7 +767,7 @@ export class OpenAIClient {
           // Spec: retry once on connection timeout (§11)
           if (attempt < 1) {
             this.log(`Connection timeout, retrying in 2s (attempt ${attempt + 1}/2)...`);
-            await delay(2000);
+            await delay(getRetryDelayMs(2000));
             continue;
           }
           throw lastErr;
@@ -770,7 +778,7 @@ export class OpenAIClient {
             this.log(
               `Connection error (${e?.message ?? 'unknown'}), retrying in 2s (attempt ${attempt + 1}/3)...`
             );
-            await delay(2000);
+            await delay(getRetryDelayMs(2000));
             continue;
           }
           throw makeClientError(
@@ -827,7 +835,7 @@ export class OpenAIClient {
       console.warn(
         `[warn] server returned 429/503 ${this.rateLimiter.recentCount} times in 60s, backing off ${(rlDelay / 1000).toFixed(1)}s`
       );
-      await delay(rlDelay);
+      await delay(getRetryDelayMs(rlDelay));
     }
 
     let lastErr: unknown = makeClientError(
@@ -855,7 +863,7 @@ export class OpenAIClient {
         if (isConnTimeout(e)) {
           if (attempt < 1) {
             this.log(`Connection timeout, retrying in 2s (attempt ${attempt + 1}/2)...`);
-            await delay(2000);
+            await delay(getRetryDelayMs(2000));
             continue;
           }
           throw lastErr;
@@ -866,7 +874,7 @@ export class OpenAIClient {
             this.log(
               `Connection error (${e?.message ?? 'unknown'}), retrying in 2s (attempt ${attempt + 1}/3)...`
             );
-            await delay(2000);
+            await delay(getRetryDelayMs(2000));
             continue;
           }
           throw makeClientError(
@@ -895,7 +903,7 @@ export class OpenAIClient {
         );
         this.log(`503 model loading, retrying in ${backoff}ms...`);
         if (attempt < 2) {
-          await delay(backoff);
+          await delay(getRetryDelayMs(backoff));
           continue;
         }
         throw lastErr;
@@ -956,7 +964,7 @@ export class OpenAIClient {
 
         const backoff = Math.pow(2, attempt + 1) * 1000;
         this.log(`HTTP ${res.status} on stream request, retrying in ${backoff}ms...`);
-        await delay(backoff);
+        await delay(getRetryDelayMs(backoff));
         continue;
       }
 

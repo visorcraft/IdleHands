@@ -848,7 +848,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       taskFile,
       projectDir: tmpDir,
       preflightEnabled: true,
-      preflightDiscoveryTimeoutSec: 1,
+      preflightDiscoveryTimeoutSec: 0.05,
       skipOnFail: true,
       maxRetriesPerTask: 1,
     } as any);
@@ -856,7 +856,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     const createSession = async () => ({
       ...createMockSession([]),
       async ask() {
-        await new Promise((r) => setTimeout(r, 1500));
+        await new Promise((r) => setTimeout(r, 120));
         return { text: '{"status":"complete","filename":""}', turns: 1, toolCalls: 0 } as any;
       },
     } as any);
