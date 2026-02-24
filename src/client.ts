@@ -37,6 +37,7 @@ export class OpenAIClient {
   readonly rateLimiter = new RateLimiter();
   readonly backpressure = new BackpressureMonitor();
   private exchangeHook?: (record: ExchangeRecord) => void | Promise<void>;
+  private cachedHeaders?: Record<string, string>;
 
   /** Default response timeout in ms (overridable per-call). */
   private defaultResponseTimeoutMs = 600_000;
@@ -103,14 +104,21 @@ export class OpenAIClient {
       OpenAIClient.dynamicPatternsCache = { patterns, loadedAt: now };
       return patterns;
     } catch {
+      OpenAIClient.dynamicPatternsCache = { patterns: [], loadedAt: Date.now() };
       return [];
     }
   }
 
   /** Check if a model name matches built-in or dynamic content-mode patterns. */
   static needsContentMode(modelName: string): boolean {
+    for (const p of OpenAIClient.CONTENT_MODE_PATTERNS) {
+      if (p.test(modelName)) return true;
+    }
     const dynamic = OpenAIClient.loadDynamicCompatPatterns();
-    return [...OpenAIClient.CONTENT_MODE_PATTERNS, ...dynamic].some((p) => p.test(modelName));
+    for (const p of dynamic) {
+      if (p.test(modelName)) return true;
+    }
+    return false;
   }
 
   recordKnownPatternMatch(): void {
@@ -218,10 +226,12 @@ export class OpenAIClient {
   }
 
   private headers() {
+    if (this.cachedHeaders) return this.cachedHeaders;
     const h: Record<string, string> = {
       'Content-Type': 'application/json',
     };
     if (this.apiKey) h.Authorization = `Bearer ${this.apiKey}`;
+    this.cachedHeaders = h;
     return h;
   }
 
