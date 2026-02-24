@@ -32,6 +32,14 @@ import {
 } from './agent/review-artifact.js';
 import type { ReviewArtifact } from './agent/review-artifact.js';
 import {
+  capApprovalMode,
+  ensureInformativeAssistantText,
+  isContextWindowExceededError,
+  makeAbortController,
+  userContentToText,
+  userDisallowsDelegation,
+} from './agent/session-utils.js';
+import {
   parseToolCallsFromContent,
   getMissingRequiredParams,
   getArgValidationIssues,
@@ -69,7 +77,6 @@ import { SYS_CONTEXT_SCHEMA, collectSnapshot } from './sys/context.js';
 import { ToolError, ValidationError } from './tools/tool-error.js';
 import * as tools from './tools.js';
 import type {
-  ApprovalMode,
   ChatMessage,
   ConfirmationProvider,
   IdlehandsConfig,
@@ -88,36 +95,6 @@ import { stateDir, timestampedId } from './utils.js';
 import { VaultStore } from './vault.js';
 
 export { parseToolCallsFromContent };
-
-function makeAbortController() {
-  // Node 24: AbortController is global.
-  return new AbortController();
-}
-
-function ensureInformativeAssistantText(
-  text: string,
-  ctx: { toolCalls: number; turns: number }
-): string {
-  if (String(text ?? '').trim()) return text;
-
-  if (ctx.toolCalls > 0) {
-    return 'I completed the requested tool work, but I have no user-visible response text yet. Ask me to summarize what was done.';
-  }
-
-  return `I have no user-visible response text for this turn (turn=${ctx.turns}). Please try again or rephrase your request.`;
-}
-
-function isContextWindowExceededError(err: unknown): boolean {
-  const status = Number((err as any)?.status ?? NaN);
-  const msg = String((err as any)?.message ?? err ?? '');
-
-  if (status === 413) return true;
-  if (!msg) return false;
-
-  return /(exceeds?\s+the\s+available\s+context\s+size|exceed_context|context\s+size|context\s+window|maximum\s+context\s+length|too\s+many\s+tokens|request\s*\(\d+\s*tokens\))/i.test(
-    msg
-  );
-}
 
 /** Errors that should break the outer agent loop, not be caught by per-tool handlers */
 class AgentLoopBreak extends Error {
@@ -207,23 +184,6 @@ const FILE_MUTATION_TOOL_SET = new Set([
   'write_file',
   'insert_file',
 ]);
-
-/** Approval mode permissiveness ranking (lower = more restrictive). */
-const APPROVAL_MODE_RANK: Record<ApprovalMode, number> = {
-  plan: 0,
-  reject: 1,
-  default: 2,
-  'auto-edit': 3,
-  yolo: 4,
-};
-
-/**
- * Cap a sub-agent's approval mode at the parent's level.
- * Sub-agents cannot escalate beyond the parent's approval mode.
- */
-function capApprovalMode(requested: ApprovalMode, parentMode: ApprovalMode): ApprovalMode {
-  return APPROVAL_MODE_RANK[requested] <= APPROVAL_MODE_RANK[parentMode] ? requested : parentMode;
-}
 
 async function buildSubAgentContextBlock(
   cwd: string,
@@ -655,35 +615,6 @@ function planModeSummary(name: string, args: Record<string, unknown>): string {
     default:
       return `${name}(${Object.keys(args).join(', ')})`;
   }
-}
-
-function userContentToText(content: UserContent): string {
-  if (typeof content === 'string') return content;
-  return content
-    .filter((p) => p.type === 'text')
-    .map((p: any) => p.text)
-    .join('\n')
-    .trim();
-}
-
-function userDisallowsDelegation(content: UserContent): boolean {
-  const text = userContentToText(content).toLowerCase();
-  if (!text) return false;
-
-  const mentionsDelegation = /\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b/.test(
-    text
-  );
-  if (!mentionsDelegation) return false;
-
-  const negationNearDelegation =
-    /\b(?:do not|don't|dont|no|without|avoid|skip|never)\b[^\n.]{0,90}\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b/.test(
-      text
-    ) ||
-    /\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b[^\n.]{0,50}\b(?:do not|don't|dont|not allowed|forbidden|no)\b/.test(
-      text
-    );
-
-  return negationNearDelegation;
 }
 
 export type AgentRuntime = {
