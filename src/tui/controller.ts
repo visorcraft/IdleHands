@@ -1,4 +1,9 @@
 import { createSession, type AgentSession, type AgentHooks } from '../agent.js';
+import {
+  isToolLoopBreak,
+  formatAutoContinueNotice,
+  AUTO_CONTINUE_PROMPT,
+} from '../bot/auto-continue.js';
 import { splitTokens } from '../cli/command-utils.js';
 import { saveSessionFile, lastSessionPath, projectSessionPath } from '../cli/session-state.js';
 import { chainAgentHooks } from '../progress/agent-hooks.js';
@@ -22,7 +27,6 @@ import { renderTui, setRenderTheme } from './render.js';
 import { enterFullScreen, leaveFullScreen } from './screen.js';
 import { createInitialTuiState, reduceTuiState } from './state.js';
 import type { SettingsMenuItem, StepNavigatorItem, TranscriptItem } from './types.js';
-import { isToolLoopBreak, formatAutoContinueNotice, AUTO_CONTINUE_PROMPT } from '../bot/auto-continue.js';
 
 const THEME_OPTIONS = ['default', 'dark', 'light', 'minimal', 'hacker'] as const;
 const APPROVAL_OPTIONS = ['plan', 'default', 'auto-edit', 'yolo'] as const;
@@ -970,10 +974,21 @@ export class TuiController {
           }
 
           // Auto-continue on tool-loop breaks
-          if (!isAbort && isToolLoopBreak(e) && autoContinueEnabled && toolLoopRetryCount < autoContinueMaxRetries) {
+          if (
+            !isAbort &&
+            isToolLoopBreak(e) &&
+            autoContinueEnabled &&
+            toolLoopRetryCount < autoContinueMaxRetries
+          ) {
             toolLoopRetryCount++;
-            const notice = formatAutoContinueNotice(msg, toolLoopRetryCount, autoContinueMaxRetries);
-            console.error(`[tui] tool-loop auto-continue (retry ${toolLoopRetryCount}/${autoContinueMaxRetries})`);
+            const notice = formatAutoContinueNotice(
+              msg,
+              toolLoopRetryCount,
+              autoContinueMaxRetries
+            );
+            console.error(
+              `[tui] tool-loop auto-continue (retry ${toolLoopRetryCount}/${autoContinueMaxRetries})`
+            );
             this.dispatch({
               type: 'ALERT_PUSH',
               id: `tool_loop_retry_${Date.now()}`,

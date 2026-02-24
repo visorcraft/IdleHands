@@ -17,8 +17,8 @@
  */
 
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
 
 import { configDir } from './utils.js';
 
@@ -414,9 +414,11 @@ export function checkPathSafety(absPath: string): SafetyVerdict {
   const home = os.homedir();
   if (!norm.startsWith(home + path.sep) && norm !== home) {
     // /tmp or Windows Temp is fine for scratch work
-    const isTemp = process.platform === 'win32'
-      ? (process.env.TEMP && norm.startsWith(path.normalize(process.env.TEMP))) || (process.env.TMP && norm.startsWith(path.normalize(process.env.TMP)))
-      : norm.startsWith('/tmp/') || norm.startsWith('/var/tmp/');
+    const isTemp =
+      process.platform === 'win32'
+        ? (process.env.TEMP && norm.startsWith(path.normalize(process.env.TEMP))) ||
+          (process.env.TMP && norm.startsWith(path.normalize(process.env.TMP)))
+        : norm.startsWith('/tmp/') || norm.startsWith('/var/tmp/');
 
     if (!isTemp) {
       if (_lockdown) {

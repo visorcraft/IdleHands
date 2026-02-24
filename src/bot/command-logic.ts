@@ -8,7 +8,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import type { AntonRunConfig, AntonProgressCallback } from '../anton/types.js';
 import { runAnton } from '../anton/controller.js';
 import { parseTaskFile } from '../anton/parser.js';
 import {
@@ -22,6 +21,7 @@ import {
   formatCompactionEvent,
   formatVerificationDetail,
 } from '../anton/reporter.js';
+import type { AntonRunConfig, AntonProgressCallback } from '../anton/types.js';
 import { firstToken } from '../cli/command-utils.js';
 import type { AgentPersona } from '../types.js';
 import {
@@ -130,7 +130,7 @@ export function startCommand(info: StartInfo): CmdResult {
   kv.push(
     ['Model', info.model || 'auto', true],
     ['Endpoint', info.endpoint || '?', true],
-    ['Default dir', info.defaultDir || '~', true],
+    ['Default dir', info.defaultDir || '~', true]
   );
   return {
     title: 'Idle Hands — Local-first coding agent',
@@ -170,7 +170,7 @@ export function helpCommand(surface: 'telegram' | 'discord'): CmdResult {
   if (surface === 'telegram') {
     lines.push(
       '/git_status — Show git status for working directory',
-      '/restart_bot — Restart the bot service',
+      '/restart_bot — Restart the bot service'
     );
   }
 
@@ -226,7 +226,7 @@ export function statusCommand(managed: ManagedLike, extra?: { maxQueue?: number 
       extra?.maxQueue != null
         ? `${managed.pendingQueue.length}/${extra.maxQueue}`
         : `${managed.pendingQueue.length} pending`,
-    ],
+    ]
   );
 
   return { title: 'Session Status', kv };
@@ -234,7 +234,7 @@ export function statusCommand(managed: ManagedLike, extra?: { maxQueue?: number 
 
 export function watchdogCommand(
   managed: ManagedLike | undefined,
-  watchdogCfg: WatchdogSettings | undefined,
+  watchdogCfg: WatchdogSettings | undefined
 ): CmdResult {
   const cfg = watchdogCfg ?? resolveWatchdogSettings();
   const kv: KV[] = [
@@ -261,7 +261,7 @@ export function watchdogCommand(
       ['In-flight', managed.inFlight ? 'yes' : 'no'],
       ['State', managed.state],
       ['Compaction attempts (turn)', String(managed.watchdogCompactAttempts ?? 0)],
-      ['Idle since progress', `${idleSec}s`],
+      ['Idle since progress', `${idleSec}s`]
     );
   } else {
     lines.push('', 'No active session yet. Send a message to start one.');
@@ -331,10 +331,7 @@ export function approvalShowCommand(managed: ManagedLike, fallback?: string): Cm
   };
 }
 
-export function approvalSetCommand(
-  managed: ManagedLike,
-  arg: string,
-): CmdResult | null {
+export function approvalSetCommand(managed: ManagedLike, arg: string): CmdResult | null {
   if (!APPROVAL_MODES.includes(arg as any)) {
     return { error: `Invalid mode. Options: ${APPROVAL_MODES.join(', ')}` };
   }
@@ -509,28 +506,28 @@ export function agentsCommand(managed: ManagedLike, surfaceConfig: AgentsConfig)
       lines.push(
         `Users: ${Object.entries(routing.users)
           .map(([u, a]) => `${u}→${a}`)
-          .join(', ')}`,
+          .join(', ')}`
       );
     }
     if (routing.chats && Object.keys(routing.chats).length > 0) {
       lines.push(
         `Chats: ${Object.entries(routing.chats)
           .map(([c, a]) => `${c}→${a}`)
-          .join(', ')}`,
+          .join(', ')}`
       );
     }
     if (routing.channels && Object.keys(routing.channels).length > 0) {
       lines.push(
         `Channels: ${Object.entries(routing.channels)
           .map(([c, a]) => `${c}→${a}`)
-          .join(', ')}`,
+          .join(', ')}`
       );
     }
     if (routing.guilds && Object.keys(routing.guilds).length > 0) {
       lines.push(
         `Guilds: ${Object.entries(routing.guilds)
           .map(([g, a]) => `${g}→${a}`)
-          .join(', ')}`,
+          .join(', ')}`
       );
     }
   }
@@ -540,10 +537,7 @@ export function agentsCommand(managed: ManagedLike, surfaceConfig: AgentsConfig)
 
 // ── Escalation / de-escalation ──────────────────────────────────────
 
-export function escalateShowCommand(
-  managed: ManagedLike,
-  baseModel: string,
-): CmdResult {
+export function escalateShowCommand(managed: ManagedLike, baseModel: string): CmdResult {
   const escalation = managed.agentPersona?.escalation;
   if (!escalation?.models?.length) {
     return { error: '❌ No escalation models configured for this agent.' };
@@ -553,19 +547,23 @@ export function escalateShowCommand(
     ['Current model', baseModel, true],
     ['Escalation models', escalation.models.join(', ')],
   ];
-  const lines = ['', 'Usage: /escalate <model> or /escalate next', 'Then send your message - it will use the escalated model.'];
+  const lines = [
+    '',
+    'Usage: /escalate <model> or /escalate next',
+    'Then send your message - it will use the escalated model.',
+  ];
 
   if (managed.pendingEscalation) {
-    lines.push('', `⚡ Pending escalation: ${managed.pendingEscalation} (next message will use this)`);
+    lines.push(
+      '',
+      `⚡ Pending escalation: ${managed.pendingEscalation} (next message will use this)`
+    );
   }
 
   return { kv, lines };
 }
 
-export function escalateSetCommand(
-  managed: ManagedLike,
-  arg: string,
-): CmdResult {
+export function escalateSetCommand(managed: ManagedLike, arg: string): CmdResult {
   const escalation = managed.agentPersona?.escalation;
   if (!escalation?.models?.length) {
     return { error: '❌ No escalation models configured for this agent.' };
@@ -599,7 +597,7 @@ export function escalateSetCommand(
 
 export function deescalateCommand(
   managed: ManagedLike,
-  baseModel: string,
+  _baseModel: string
 ): CmdResult | 'recreate' {
   if (managed.currentModelIndex === 0 && !managed.pendingEscalation) {
     return { lines: ['Already using base model.'] };
@@ -643,8 +641,7 @@ export async function gitStatusCommand(cwd: string): Promise<CmdResult> {
     encoding: 'utf8',
     timeout: 2000,
   });
-  const branch =
-    branchResult.status === 0 ? String(branchResult.stdout || '').trim() : 'unknown';
+  const branch = branchResult.status === 0 ? String(branchResult.stdout || '').trim() : 'unknown';
 
   if (!statusOut) {
     return {
@@ -670,15 +667,14 @@ function formatAgeShort(msAgo: number): string {
   return `${Math.round(msAgo / 3_600_000)}h ago`;
 }
 
-function summarizeLoopEvent(
-  ev: NonNullable<ManagedLike['antonLastLoopEvent']>
-): string {
+function summarizeLoopEvent(ev: NonNullable<ManagedLike['antonLastLoopEvent']>): string {
   const emoji = ev.kind === 'final-failure' ? '🔴' : ev.kind === 'auto-recovered' ? '🟠' : '🟡';
-  const kind = ev.kind === 'final-failure'
-    ? 'final failure'
-    : ev.kind === 'auto-recovered'
-      ? 'auto-recovered'
-      : 'loop event';
+  const kind =
+    ev.kind === 'final-failure'
+      ? 'final failure'
+      : ev.kind === 'auto-recovered'
+        ? 'auto-recovered'
+        : 'loop event';
   const msg = ev.message.length > 120 ? ev.message.slice(0, 117) + '...' : ev.message;
   return `${emoji} Last loop: ${kind} (${formatAgeShort(Date.now() - ev.at)})\n${msg}`;
 }
@@ -752,11 +748,14 @@ export function buildAntonRunConfig(defaults: any, cwd: string, filePath: string
     taskFile: filePath,
     preflightEnabled: defaults.preflight?.enabled ?? false,
     preflightRequirementsReview: defaults.preflight?.requirements_review ?? true,
-    preflightDiscoveryTimeoutSec: defaults.preflight?.discovery_timeout_sec ?? defaults.task_timeout_sec ?? 600,
-    preflightReviewTimeoutSec: defaults.preflight?.review_timeout_sec ?? defaults.task_timeout_sec ?? 600,
+    preflightDiscoveryTimeoutSec:
+      defaults.preflight?.discovery_timeout_sec ?? defaults.task_timeout_sec ?? 600,
+    preflightReviewTimeoutSec:
+      defaults.preflight?.review_timeout_sec ?? defaults.task_timeout_sec ?? 600,
     preflightMaxRetries: defaults.preflight?.max_retries ?? 2,
     preflightSessionMaxIterations: defaults.preflight?.session_max_iterations ?? 500,
-    preflightSessionTimeoutSec: defaults.preflight?.session_timeout_sec ?? 120,
+    preflightSessionTimeoutSec:
+      defaults.preflight?.session_timeout_sec ?? defaults.task_timeout_sec ?? 600,
     projectDir: defaults.project_dir || cwd,
     maxRetriesPerTask: defaults.max_retries ?? 3,
     maxIterations: defaults.max_iterations ?? 200,
@@ -907,7 +906,7 @@ export async function antonStartCommand(
   managed: ManagedLike,
   args: string,
   send: (text: string) => void,
-  rateLimitMs: number,
+  rateLimitMs: number
 ): Promise<CmdResult> {
   const sub = firstToken(args);
   const filePart = sub === 'run' ? args.replace(/^\S+\s*/, '').trim() : args;
@@ -955,7 +954,9 @@ export async function antonStartCommand(
   try {
     const tf = await parseTaskFile(filePath);
     pendingCount = tf.pending.length;
-  } catch { /* non-fatal */ }
+  } catch {
+    /* non-fatal */
+  }
 
   // Fire and forget — the run proceeds in the background
   runAnton({
@@ -983,7 +984,7 @@ export async function antonCommand(
   managed: ManagedLike,
   args: string,
   send: (text: string) => void,
-  rateLimitMs: number,
+  rateLimitMs: number
 ): Promise<CmdResult> {
   const sub = firstToken(args);
 

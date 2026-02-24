@@ -53,7 +53,7 @@ export function buildPreflightConfig(
     Number.isFinite(config.preflightSessionTimeoutSec) &&
     Number(config.preflightSessionTimeoutSec) > 0
       ? Math.floor(Number(config.preflightSessionTimeoutSec))
-      : 120;
+      : Math.max(10, Math.floor(Number(config.taskTimeoutSec) || 600));
 
   return {
     ...base,
@@ -78,7 +78,10 @@ export function buildPreflightConfig(
  * Build session config for decompose-only sessions.
  * No tools — forces the model to emit a text-only decompose response.
  */
-export function buildDecomposeConfig(base: IdlehandsConfig, config: AntonRunConfig): IdlehandsConfig {
+export function buildDecomposeConfig(
+  base: IdlehandsConfig,
+  config: AntonRunConfig
+): IdlehandsConfig {
   return {
     ...base,
     dir: config.projectDir,

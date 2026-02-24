@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+
 import type { ToolCall } from '../types.js';
+
 import {
   createToolLoopState,
   detectToolCallLoop,
@@ -141,15 +143,23 @@ export class ToolLoopGuard {
     }
   }
 
-  registerOutcome(toolName: string, args: Record<string, unknown>, outcome: { toolCallId?: string; result?: unknown; error?: unknown }): void {
+  registerOutcome(
+    toolName: string,
+    args: Record<string, unknown>,
+    outcome: { toolCallId?: string; result?: unknown; error?: unknown }
+  ): void {
     const record = outcome.toolCallId ? this.recordByCallId.get(outcome.toolCallId) : undefined;
-    recordToolCallOutcome(this.loopState, {
-      toolName,
-      toolParams: args,
-      toolCallId: outcome.toolCallId,
-      result: outcome.result,
-      error: outcome.error,
-    }, record);
+    recordToolCallOutcome(
+      this.loopState,
+      {
+        toolName,
+        toolParams: args,
+        toolCallId: outcome.toolCallId,
+        result: outcome.result,
+        error: outcome.error,
+      },
+      record
+    );
     // Clean up the record reference after outcome is recorded
     if (outcome.toolCallId) {
       this.recordByCallId.delete(outcome.toolCallId);
@@ -167,12 +177,14 @@ export class ToolLoopGuard {
 
   getStats() {
     const base = getToolCallStats(this.loopState);
-    const readCacheHitRate = this.telemetry.readCacheLookups > 0
-      ? this.telemetry.readCacheHits / this.telemetry.readCacheLookups
-      : 0;
-    const dedupeRate = this.telemetry.callsRegistered > 0
-      ? this.telemetry.dedupedReplays / this.telemetry.callsRegistered
-      : 0;
+    const readCacheHitRate =
+      this.telemetry.readCacheLookups > 0
+        ? this.telemetry.readCacheHits / this.telemetry.readCacheLookups
+        : 0;
+    const dedupeRate =
+      this.telemetry.callsRegistered > 0
+        ? this.telemetry.dedupedReplays / this.telemetry.callsRegistered
+        : 0;
     return {
       ...base,
       telemetry: {
@@ -200,7 +212,7 @@ export class ToolLoopGuard {
   async getReadCacheReplay(
     toolName: string,
     args: Record<string, unknown>,
-    cwd: string,
+    cwd: string
   ): Promise<string | null> {
     if (!isReadCacheableTool(toolName)) return null;
 
@@ -237,7 +249,7 @@ export class ToolLoopGuard {
     toolName: string,
     args: Record<string, unknown>,
     cwd: string,
-    content: string,
+    content: string
   ): Promise<void> {
     if (!isReadCacheableTool(toolName)) return;
     if (content.startsWith('ERROR:')) return;
@@ -274,9 +286,12 @@ function isReadCacheableTool(toolName: string): boolean {
 }
 
 function makeCacheHint(toolName: string): string {
-  if (toolName === 'read_file') return '[CACHE HIT] File unchanged since previous read. Replaying cached content below.';
-  if (toolName === 'read_files') return '[CACHE HIT] Files unchanged since previous read. Replaying cached content below.';
-  if (toolName === 'list_dir') return '[CACHE HIT] Directory unchanged since previous read. Replaying cached content below.';
+  if (toolName === 'read_file')
+    return '[CACHE HIT] File unchanged since previous read. Replaying cached content below.';
+  if (toolName === 'read_files')
+    return '[CACHE HIT] Files unchanged since previous read. Replaying cached content below.';
+  if (toolName === 'list_dir')
+    return '[CACHE HIT] Directory unchanged since previous read. Replaying cached content below.';
   return '[CACHE HIT] Resource unchanged since previous read. Replaying cached content below.';
 }
 
@@ -293,7 +308,11 @@ function resolveWithCwd(baseCwd: string, p: string): string {
   return path.resolve(baseCwd, p);
 }
 
-function extractReadPaths(toolName: string, args: Record<string, unknown>, cwd: string): { paths: string[] } {
+function extractReadPaths(
+  toolName: string,
+  args: Record<string, unknown>,
+  cwd: string
+): { paths: string[] } {
   if (toolName === 'read_file' || toolName === 'list_dir') {
     const p = typeof args.path === 'string' ? args.path.trim() : '';
     if (!p) return { paths: [] };

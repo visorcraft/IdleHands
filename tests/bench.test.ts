@@ -104,7 +104,7 @@ describe('bench harness', () => {
     try {
       // Run the bench runner via node
       const result = await new Promise<{ code: number; stdout: string; stderr: string }>(
-        (resolve, reject) => {
+        (resolve, _reject) => {
           execFile(
             process.execPath,
             ['./dist/bench/runner.js', casePath],
@@ -191,7 +191,7 @@ describe('bench harness', () => {
 
     try {
       const result = await new Promise<{ code: number; stdout: string; stderr: string }>(
-        (resolve, reject) => {
+        (resolve, _reject) => {
           execFile(
             process.execPath,
             ['./dist/bench/compare.js', casePath],

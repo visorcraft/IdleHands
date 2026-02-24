@@ -1,3 +1,4 @@
+/* eslint-disable import/order */
 /**
  * Tests for CLI helper modules extracted from index.ts.
  *
@@ -519,7 +520,6 @@ describe('summarizeWatchChange', () => {
 // ── cli/init.ts ──────────────────────────────────────────────────────
 
 import {
-  getGitShortStat,
   parseChangedFileCount,
   countDiffAddsRemoves,
   formatChangePrefix,
@@ -983,10 +983,10 @@ describe('health discovery JSON contract', () => {
       configuredModels: [],
       ok: true,
     };
-    
+
     const json = JSON.stringify(output, null, 2);
     const parsed = JSON.parse(json);
-    
+
     assert.ok(parsed.discovery);
     assert.ok(Array.isArray(parsed.discovery.ports));
     assert.ok(Array.isArray(parsed.discovery.hosts));

@@ -121,14 +121,12 @@ describe('user-defined harnesses', () => {
   const realHome = os.homedir();
   const harnessDir = path.join(realHome, '.config', 'idlehands', 'harnesses');
   const testFile = path.join(harnessDir, '_test_custom_model.json');
-  let createdDir = false;
 
   before(async () => {
     // Reset cache so user harnesses are reloaded
     _resetHarnessCache();
     try {
       await fs.mkdir(harnessDir, { recursive: true });
-      createdDir = true;
     } catch {
       /* dir exists */
     }

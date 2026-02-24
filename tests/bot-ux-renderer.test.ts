@@ -46,15 +46,29 @@ test('renderACK returns message block array', () => {
 });
 
 test('renderPROGRESS includes progress block when progress exists', () => {
-  const blocks = renderPROGRESS({ ...base, category: 'PROGRESS', message: 'Processing', progress: 0.5 } as any);
+  const blocks = renderPROGRESS({
+    ...base,
+    category: 'PROGRESS',
+    message: 'Processing',
+    progress: 0.5,
+  } as any);
   assert.ok(blocks.some((b: any) => b.type === 'progress'));
   assert.strictEqual((blocks[0] as any).type, 'progress');
 });
 
 test('renderWARNING/renderERROR/renderRESULT message-first', () => {
-  assert.strictEqual((renderWARNING({ ...base, category: 'WARNING', message: 'warn' } as any)[0] as any).type, 'message');
-  assert.strictEqual((renderERROR({ ...base, category: 'ERROR', message: 'err' } as any)[0] as any).type, 'message');
-  assert.strictEqual((renderRESULT({ ...base, category: 'RESULT', summary: 'ok' } as any)[0] as any).type, 'message');
+  assert.strictEqual(
+    (renderWARNING({ ...base, category: 'WARNING', message: 'warn' } as any)[0] as any).type,
+    'message'
+  );
+  assert.strictEqual(
+    (renderERROR({ ...base, category: 'ERROR', message: 'err' } as any)[0] as any).type,
+    'message'
+  );
+  assert.strictEqual(
+    (renderRESULT({ ...base, category: 'RESULT', summary: 'ok' } as any)[0] as any).type,
+    'message'
+  );
 });
 
 test('renderACTIONS emits action block with actions list', () => {
@@ -70,14 +84,30 @@ test('renderACTIONS emits action block with actions list', () => {
 });
 
 test('renderEvent dispatches to category renderer', () => {
-  assert.strictEqual((renderEvent({ ...base, category: 'ACK', message: 'a' } as any)[0] as any).category, 'ACK');
-  assert.ok(renderEvent({ ...base, category: 'PROGRESS', message: 'p', progress: 0.2 } as any).some((b: any) => b.type === 'progress'));
-  assert.strictEqual((renderEvent({ ...base, category: 'ACTIONS', actions: [] } as any)[0] as any).type, 'actions');
+  assert.strictEqual(
+    (renderEvent({ ...base, category: 'ACK', message: 'a' } as any)[0] as any).category,
+    'ACK'
+  );
+  assert.ok(
+    renderEvent({ ...base, category: 'PROGRESS', message: 'p', progress: 0.2 } as any).some(
+      (b: any) => b.type === 'progress'
+    )
+  );
+  assert.strictEqual(
+    (renderEvent({ ...base, category: 'ACTIONS', actions: [] } as any)[0] as any).type,
+    'actions'
+  );
 });
 
 test('blockToPlainText supports message/progress/actions blocks', () => {
-  const msg = blockToPlainText(renderACK({ ...base, category: 'ACK', message: 'hello' } as any)[0] as any);
+  const msg = blockToPlainText(
+    renderACK({ ...base, category: 'ACK', message: 'hello' } as any)[0] as any
+  );
   assert.ok(msg.includes('hello'));
-  assert.ok(blockToPlainText({ type: 'progress', progress: 0.5, message: 'Doing' } as any).includes('50%'));
-  assert.ok(blockToPlainText({ type: 'actions', actions: [{ label: 'Retry' }] } as any).includes('Retry'));
+  assert.ok(
+    blockToPlainText({ type: 'progress', progress: 0.5, message: 'Doing' } as any).includes('50%')
+  );
+  assert.ok(
+    blockToPlainText({ type: 'actions', actions: [{ label: 'Retry' }] } as any).includes('Retry')
+  );
 });

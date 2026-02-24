@@ -11,7 +11,6 @@ import {
   isProtectedDeleteTarget,
   classifyCommand,
   setLockdown,
-  setSafetyLogging,
   loadSafetyConfig,
   resetSafetyState,
   FORBIDDEN_PATTERNS,

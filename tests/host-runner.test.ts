@@ -1,7 +1,7 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { describe, it, beforeEach } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { HostCommandRunner } from '../dist/runtime/host-runner.js';
 import type { RuntimeHost } from '../dist/runtime/types.js';
@@ -59,7 +59,7 @@ describe('HostCommandRunner', () => {
     });
 
     it('should handle SSH host (would require actual SSH)', async () => {
-      const host: RuntimeHost = {
+      const _host: RuntimeHost = {
         id: 'remote',
         display_name: 'Remote',
         enabled: true,
@@ -91,7 +91,7 @@ describe('HostCommandRunner', () => {
       };
 
       // This would fail without sudo access, but we can test the structure
-      const result = await runner.runSudoOnHost(host, 'echo hello');
+      await runner.runSudoOnHost(host, 'echo hello');
       // The command structure is correct even if it fails
       assert.ok(true);
     });

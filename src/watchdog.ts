@@ -67,9 +67,7 @@ export function formatWatchdogCancelMessage(input: WatchdogCancelMessageInput): 
   const prefix = input.prefix ?? '';
   // Extract message from Error objects instead of getting [object Object]
   const rawReason = input.abortReason;
-  const reasonStr = rawReason instanceof Error
-    ? rawReason.message
-    : String(rawReason ?? '');
+  const reasonStr = rawReason instanceof Error ? rawReason.message : String(rawReason ?? '');
   const reason = reasonStr.slice(0, 400);
 
   const base = input.watchdogForcedCancel

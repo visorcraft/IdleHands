@@ -3,12 +3,13 @@
  * Manages file backups with FIFO rotation and provides undo support.
  */
 
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import crypto from 'node:crypto';
 
 import type { ToolContext } from '../tools.js';
 import { stateDir } from '../utils.js';
+
 import { resolvePath, redactPath } from './path-safety.js';
 
 const DEFAULT_MAX_BACKUPS_PER_FILE = 5;
@@ -98,8 +99,8 @@ export async function rotateBackups(absPath: string, ctx: ToolContext) {
   for (const name of toDelete) {
     const bak = path.join(keyDir, name);
     const meta = path.join(keyDir, `${name.replace(/\.bak$/, '')}.meta.json`);
-    await fs.rm(bak, { force: true }).catch(() => { });
-    await fs.rm(meta, { force: true }).catch(() => { });
+    await fs.rm(bak, { force: true }).catch(() => {});
+    await fs.rm(meta, { force: true }).catch(() => {});
   }
 }
 
@@ -110,7 +111,7 @@ export async function backupFile(absPath: string, ctx: ToolContext) {
 
   // Auto-create .gitignore in state dir to prevent backups from being committed
   const gitignorePath = path.join(bdir, '.gitignore');
-  await fs.writeFile(gitignorePath, '*\n', { flag: 'wx' }).catch(() => { });
+  await fs.writeFile(gitignorePath, '*\n', { flag: 'wx' }).catch(() => {});
   // 'wx' flag = create only if doesn't exist, silently skip if it does
 
   const st = await fs.stat(absPath).catch(() => null);
@@ -128,7 +129,11 @@ export async function backupFile(absPath: string, ctx: ToolContext) {
   await fs.writeFile(bakPath, content);
   await fs.writeFile(
     metaPath,
-    JSON.stringify({ original_path: absPath, timestamp: ts, size: st.size, sha256_before: hash }, null, 2) + '\n',
+    JSON.stringify(
+      { original_path: absPath, timestamp: ts, size: st.size, sha256_before: hash },
+      null,
+      2
+    ) + '\n',
     'utf8'
   );
 
@@ -143,12 +148,15 @@ export async function atomicWrite(absPath: string, data: string | Buffer) {
   const origStat = await fs.stat(absPath).catch(() => null);
   const origMode = origStat?.mode;
 
-  const tmp = path.join(dir, `.${path.basename(absPath)}.idlehands.tmp.${process.pid}.${Date.now()}`);
+  const tmp = path.join(
+    dir,
+    `.${path.basename(absPath)}.idlehands.tmp.${process.pid}.${Date.now()}`
+  );
   await fs.writeFile(tmp, data);
 
   // Restore original file mode bits if the file existed
   if (origMode != null) {
-    await fs.chmod(tmp, origMode & 0o7777).catch(() => { });
+    await fs.chmod(tmp, origMode & 0o7777).catch(() => {});
   }
 
   await fs.rename(tmp, absPath);
@@ -161,11 +169,15 @@ export async function undo_path(ctx: ToolContext, args: any) {
   const absCwd = path.resolve(ctx.cwd);
   const redactedPath = redactPath(p, absCwd);
   if (!ctx.noConfirm && ctx.confirm) {
-    const ok = await ctx.confirm(`Restore latest backup for:\n  ${redactedPath}\nThis will overwrite the current file. Proceed? (y/N) `);
+    const ok = await ctx.confirm(
+      `Restore latest backup for:\n  ${redactedPath}\nThis will overwrite the current file. Proceed? (y/N) `
+    );
     if (!ok) return 'undo: cancelled';
   }
   if (!ctx.noConfirm && !ctx.confirm) {
-    throw new Error('undo: confirmation required (run with --no-confirm/--yolo or in interactive mode)');
+    throw new Error(
+      'undo: confirmation required (run with --no-confirm/--yolo or in interactive mode)'
+    );
   }
   if (ctx.dryRun) return `dry-run: would restore latest backup for ${redactedPath}`;
   return await restoreLatestBackup(p, ctx);

@@ -14,7 +14,7 @@ function isTTY(): boolean {
   return !!(process.stdin.isTTY && process.stdout.isTTY);
 }
 
-async function askPassphrase(prompt: string, confirm = false): Promise<string> {
+async function askPassphrase(prompt: string): Promise<string> {
   const rl = readline.createInterface({ input, output });
   try {
     const answer = await rl.question(`${prompt}: `);
@@ -40,7 +40,7 @@ async function askSecretValue(prompt: string): Promise<string> {
 
 export async function runSecretsInit(passphrase?: string): Promise<void> {
   const storePath = secretsFilePath();
-  
+
   // Check if secrets file already exists
   try {
     const fs = await import('node:fs/promises');
@@ -68,25 +68,29 @@ export async function runSecretsInit(passphrase?: string): Promise<void> {
   await store.save();
   console.log(`Secrets store initialized at: ${storePath}`);
   console.log('Store passphrase is required to access stored secrets.');
-  console.log('Set IDLEHANDS_SECRETS_PASSPHRASE environment variable or use "idlehands secrets unlock".');
+  console.log(
+    'Set IDLEHANDS_SECRETS_PASSPHRASE environment variable or use "idlehands secrets unlock".'
+  );
 }
 
 export async function runSecretsUnlock(passphrase?: string): Promise<void> {
   const store = new SecretsStore(passphrase ?? process.env.IDLEHANDS_SECRETS_PASSPHRASE ?? null);
-  
+
   try {
     await store.load();
     console.log('Secrets store unlocked successfully.');
     console.log(`Store path: ${secretsFilePath()}`);
     console.log(`Secrets count: ${store.store.size}`);
-    
+
     // Store passphrase in environment for subsequent commands
     if (passphrase) {
       process.env.IDLEHANDS_SECRETS_PASSPHRASE = passphrase;
     }
   } catch (err) {
     if ((err as Error).message.includes('Passphrase required')) {
-      throw new Error('Passphrase required. Set IDLEHANDS_SECRETS_PASSPHRASE or provide via --passphrase.');
+      throw new Error(
+        'Passphrase required. Set IDLEHANDS_SECRETS_PASSPHRASE or provide via --passphrase.'
+      );
     }
     throw new Error(`Failed to unlock secrets: ${(err as Error).message}`);
   }
@@ -112,7 +116,9 @@ export async function runSecretsSet(id: string, value?: string): Promise<void> {
 
   if (!value) {
     if (!isTTY()) {
-      throw new Error('Secret value required in non-TTY mode. Provide as argument or use TTY mode.');
+      throw new Error(
+        'Secret value required in non-TTY mode. Provide as argument or use TTY mode.'
+      );
     }
     value = await askSecretValue(`Enter secret value for "${id}" (will be hidden)`);
   }
@@ -188,7 +194,7 @@ export async function runSecretsVerify(): Promise<void> {
 
   const store = new SecretsStore(passphrase);
   const isValid = await store.verify();
-  
+
   if (isValid) {
     console.log('Secrets store integrity verified.');
   } else {
@@ -196,10 +202,15 @@ export async function runSecretsVerify(): Promise<void> {
   }
 }
 
-export async function runSecretsRotatePassphrase(oldPassphrase?: string, newPassphrase?: string): Promise<void> {
+export async function runSecretsRotatePassphrase(
+  oldPassphrase?: string,
+  newPassphrase?: string
+): Promise<void> {
   const currentPassphrase = oldPassphrase ?? process.env.IDLEHANDS_SECRETS_PASSPHRASE;
   if (!currentPassphrase) {
-    throw new Error('Current passphrase required. Set IDLEHANDS_SECRETS_PASSPHRASE or provide via --passphrase.');
+    throw new Error(
+      'Current passphrase required. Set IDLEHANDS_SECRETS_PASSPHRASE or provide via --passphrase.'
+    );
   }
 
   const store = new SecretsStore(currentPassphrase);
@@ -208,7 +219,9 @@ export async function runSecretsRotatePassphrase(oldPassphrase?: string, newPass
   let finalNewPassphrase = newPassphrase;
   if (!finalNewPassphrase) {
     if (!isTTY()) {
-      throw new Error('New passphrase required in non-TTY mode. Provide via --new-passphrase flag.');
+      throw new Error(
+        'New passphrase required in non-TTY mode. Provide via --new-passphrase flag.'
+      );
     }
     finalNewPassphrase = await askPassphrase('Enter new passphrase');
     const confirm = await askPassphrase('Confirm new passphrase');
@@ -223,9 +236,11 @@ export async function runSecretsRotatePassphrase(oldPassphrase?: string, newPass
     newStore.set(key, value);
   }
   await newStore.save();
-  
+
   console.log('Passphrase rotated successfully.');
-  console.log('Note: Old passphrase is no longer valid. Update IDLEHANDS_SECRETS_PASSPHRASE if needed.');
+  console.log(
+    'Note: Old passphrase is no longer valid. Update IDLEHANDS_SECRETS_PASSPHRASE if needed.'
+  );
 }
 
 export const secretsCommands = [

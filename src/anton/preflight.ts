@@ -68,7 +68,8 @@ export function parseDiscoveryResult(raw: string, projectDir: string): AntonDisc
 
   const abs = path.resolve(parsed.filename);
   if (!path.isAbsolute(abs)) throw new Error('preflight-discovery-filename-not-absolute');
-  if (!isWithinAgentsTasksDir(abs, projectDir)) throw new Error('preflight-discovery-filename-outside-agents-tasks');
+  if (!isWithinAgentsTasksDir(abs, projectDir))
+    throw new Error('preflight-discovery-filename-outside-agents-tasks');
   return { status: 'incomplete', filename: abs };
 }
 
@@ -86,7 +87,8 @@ export function parseRequirementsReviewResult(
 
   const abs = path.resolve(parsed.filename);
   if (!path.isAbsolute(abs)) throw new Error('preflight-review-filename-not-absolute');
-  if (!isWithinAgentsTasksDir(abs, projectDir)) throw new Error('preflight-review-filename-outside-agents-tasks');
+  if (!isWithinAgentsTasksDir(abs, projectDir))
+    throw new Error('preflight-review-filename-outside-agents-tasks');
   return { status: 'ready', filename: abs };
 }
 

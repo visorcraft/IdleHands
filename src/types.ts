@@ -237,9 +237,9 @@ export type IdlehandsConfig = {
   context_summarize?: boolean;
   context_summary_max_tokens?: number;
   compact_at?: number;
-  compact_summary?: boolean;           // LLM-based summarization on compaction (default: true)
+  compact_summary?: boolean; // LLM-based summarization on compaction (default: true)
   compact_summary_max_tokens?: number; // Max tokens for summary (default 300)
-  compact_min_tail?: number;           // Override minTailMessages (default 12)
+  compact_min_tail?: number; // Override minTailMessages (default 12)
   show_change_summary?: boolean;
   step_mode?: boolean;
   editor?: string;
@@ -306,6 +306,8 @@ export type IdlehandsConfig = {
     progress_events?: boolean;
     /** Seconds between periodic "still working" updates while a task attempt is running. Default: 30. */
     progress_heartbeat_sec?: number;
+    /** Auto-pin the session's current working directory before /anton start when not already pinned. Default: false. */
+    auto_pin_current_dir?: boolean;
     preflight?: {
       enabled?: boolean;
       requirements_review?: boolean;

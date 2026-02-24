@@ -1,10 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import fs from 'node:fs/promises';
-import path from 'node:path';
 
 import { shellEscape } from '../utils.js';
-import { SecretsStore, resolveSecretRef } from './secrets.js';
 
+import { SecretsStore, resolveSecretRef } from './secrets.js';
 import type { RuntimeHost } from './types.js';
 
 export interface HostCommandResult {
@@ -89,7 +87,11 @@ export class HostCommandRunner {
    * Run a command on a remote host with sudo
    * Uses sudo -S to read password from stdin (never command line)
    */
-  async runSudoOnHost(host: RuntimeHost, command: string, timeoutSec = 5): Promise<HostCommandResult> {
+  async runSudoOnHost(
+    host: RuntimeHost,
+    command: string,
+    timeoutSec = 5
+  ): Promise<HostCommandResult> {
     if (host.transport === 'local') {
       // For local, use sudo -S
       const sudoCmd = `echo "$SUDO_PASSWORD" | sudo -S ${shellEscape(command)}`;

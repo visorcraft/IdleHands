@@ -67,9 +67,10 @@ export function estimateTokens(text: string): number {
  */
 export function stateDir(): string {
   if (process.env.XDG_STATE_HOME) return path.join(process.env.XDG_STATE_HOME, 'idlehands');
-  const base = process.platform === 'win32'
-    ? (process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'))
-    : path.join(os.homedir(), '.local', 'state');
+  const base =
+    process.platform === 'win32'
+      ? process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local')
+      : path.join(os.homedir(), '.local', 'state');
   return path.join(base, 'idlehands');
 }
 
@@ -81,9 +82,10 @@ export function stateDir(): string {
 export function configDir(): string {
   if (process.env.IDLEHANDS_CONFIG_DIR) return process.env.IDLEHANDS_CONFIG_DIR;
   if (process.env.XDG_CONFIG_HOME) return path.join(process.env.XDG_CONFIG_HOME, 'idlehands');
-  const base = process.platform === 'win32'
-    ? (process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'))
-    : path.join(os.homedir(), '.config');
+  const base =
+    process.platform === 'win32'
+      ? process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming')
+      : path.join(os.homedir(), '.config');
   return path.join(base, 'idlehands');
 }
 

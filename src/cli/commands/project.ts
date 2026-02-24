@@ -7,6 +7,7 @@ import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { expandHome } from '../../bot/dir-guard.js';
 import { unifiedDiffFromBuffers } from '../../replay_cli.js';
 import { colorizeUnifiedDiff, err as errFmt } from '../../term.js';
 import { projectDir } from '../../utils.js';
@@ -22,7 +23,6 @@ import {
   formatChangePrefix,
 } from '../init.js';
 import { parseWatchArgs } from '../watch.js';
-import { expandHome } from '../../bot/dir-guard.js';
 
 export const projectCommands: SlashCommand[] = [
   {
@@ -374,7 +374,9 @@ export const projectCommands: SlashCommand[] = [
       const previousDir = ctx.config.dir || '(none)';
       ctx.config.dir_pinned = false;
       ctx.config.dir = undefined;
-      console.log(`✅ Directory unpinned (was: ${previousDir}). Working directory reset to default.`);
+      console.log(
+        `✅ Directory unpinned (was: ${previousDir}). Working directory reset to default.`
+      );
       return true;
     },
   },

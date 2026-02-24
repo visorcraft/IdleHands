@@ -9,7 +9,6 @@ import * as rlBase from 'node:readline';
 import readline from 'node:readline/promises';
 
 import { createSession } from './agent.js';
-
 // ── Extracted CLI modules ────────────────────────────────────────────
 import { runAgentTurnWithSpinner } from './cli/agent-turn.js';
 import {

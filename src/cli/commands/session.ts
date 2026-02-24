@@ -3,18 +3,26 @@
  * /sessions, /conv, /history, /status, /subagents, /help, /about.
  */
 
-import path from 'node:path';
 import fs from 'node:fs/promises';
-import type { SlashCommand } from '../command-registry.js';
-import { formatStatusLine } from '../status.js';
-import {
-  conversationBranchPath, isSafeBranchName,
-  saveSessionFile, listSavedSessions, listConversationBranches,
-} from '../session-state.js';
-import { err as errFmt } from '../../term.js';
-import { restTokens } from '../command-utils.js';
-import { WATCHDOG_RECOMMENDED_TUNING_TEXT, resolveWatchdogSettings, shouldRecommendWatchdogTuning } from '../../watchdog.js';
+import path from 'node:path';
+
 import { scaffoldHookPlugin } from '../../hooks/index.js';
+import { err as errFmt } from '../../term.js';
+import {
+  WATCHDOG_RECOMMENDED_TUNING_TEXT,
+  resolveWatchdogSettings,
+  shouldRecommendWatchdogTuning,
+} from '../../watchdog.js';
+import type { SlashCommand } from '../command-registry.js';
+import { restTokens } from '../command-utils.js';
+import {
+  conversationBranchPath,
+  isSafeBranchName,
+  saveSessionFile,
+  listSavedSessions,
+  listConversationBranches,
+} from '../session-state.js';
+import { formatStatusLine } from '../status.js';
 
 export const sessionCommands: SlashCommand[] = [
   {
@@ -33,8 +41,12 @@ export const sessionCommands: SlashCommand[] = [
       console.log(
         ctx.S.dim('Commands: ') +
           '/help /quit /edit [seed text] /about /mode [code|sys] /status /toolstats /watchdog [status] /hooks [status|errors|slow|plugins] /plugin init <name> [dir] [--force] /stats /server /perf /offline [on|off|status] /system [edit|reset|tokens] /lsp [status] /mcp [desc|restart <name>|enable <tool>|disable <tool>] /statusbar on|off /approval [mode] /plan /step [on|off] /approve [N] /reject /history /new /compact [topic|hard|dry] /init /git [/diff] /branch [name] /changes [--stat|--full|--since N|reset|<file>] /watch [off|status|<path...> [--max N]] /sessions /conv branch|branches|checkout|merge ... /cost /model <name> /escalate [next|N|model] /deescalate /capture on|off|last /index [run|status|stats|clear] /undo [path] /save <path> /load <path> /vault <query> /notes /note <key> <value> /checkpoints /rewind <id> /diff <id> /subagents [on|off] /theme [name|list] /vim /commands /exit-shell' +
-          '\n' + ctx.S.dim('Shell: !<cmd> run once, !!<cmd> run + inject output, ! toggles shell mode') +
-          '\n' + ctx.S.dim('Templates: /fix /review /test /explain /refactor, plus custom markdown commands in ~/.config/idlehands/commands/')
+          '\n' +
+          ctx.S.dim('Shell: !<cmd> run once, !!<cmd> run + inject output, ! toggles shell mode') +
+          '\n' +
+          ctx.S.dim(
+            'Templates: /fix /review /test /explain /refactor, plus custom markdown commands in ~/.config/idlehands/commands/'
+          )
       );
       return true;
     },
@@ -73,9 +85,17 @@ export const sessionCommands: SlashCommand[] = [
         const stats = getter();
         const t = stats?.telemetry;
         if (t) {
-          const cachePct = Number.isFinite(t.readCacheHitRate) ? `${(t.readCacheHitRate * 100).toFixed(1)}%` : '0.0%';
-          const dedupePct = Number.isFinite(t.dedupeRate) ? `${(t.dedupeRate * 100).toFixed(1)}%` : '0.0%';
-          console.log(ctx.S.dim(`tool-loop: warn=${t.warnings} critical=${t.criticals} cache=${t.readCacheHits}/${t.readCacheLookups} (${cachePct}) dedupe=${t.dedupedReplays}/${t.callsRegistered} (${dedupePct})`));
+          const cachePct = Number.isFinite(t.readCacheHitRate)
+            ? `${(t.readCacheHitRate * 100).toFixed(1)}%`
+            : '0.0%';
+          const dedupePct = Number.isFinite(t.dedupeRate)
+            ? `${(t.dedupeRate * 100).toFixed(1)}%`
+            : '0.0%';
+          console.log(
+            ctx.S.dim(
+              `tool-loop: warn=${t.warnings} critical=${t.criticals} cache=${t.readCacheHits}/${t.readCacheLookups} (${cachePct}) dedupe=${t.dedupedReplays}/${t.callsRegistered} (${dedupePct})`
+            )
+          );
         }
       }
       return true;
@@ -99,12 +119,18 @@ export const sessionCommands: SlashCommand[] = [
       console.log('Tool Loop Stats');
       console.log(`  History entries: ${Number(stats?.totalHistory ?? 0)}`);
       if (t) {
-        const cachePct = Number.isFinite(t.readCacheHitRate) ? `${(t.readCacheHitRate * 100).toFixed(1)}%` : '0.0%';
-        const dedupePct = Number.isFinite(t.dedupeRate) ? `${(t.dedupeRate * 100).toFixed(1)}%` : '0.0%';
+        const cachePct = Number.isFinite(t.readCacheHitRate)
+          ? `${(t.readCacheHitRate * 100).toFixed(1)}%`
+          : '0.0%';
+        const dedupePct = Number.isFinite(t.dedupeRate)
+          ? `${(t.dedupeRate * 100).toFixed(1)}%`
+          : '0.0%';
         console.log(`  Calls registered: ${t.callsRegistered}`);
         console.log(`  Dedupe replays: ${t.dedupedReplays} (${dedupePct})`);
         console.log(`  Read-cache hits: ${t.readCacheHits}/${t.readCacheLookups} (${cachePct})`);
-        console.log(`  Loop detections: warnings=${t.warnings}, critical=${t.criticals}, recovery=${t.recoveryRecommended}`);
+        console.log(
+          `  Loop detections: warnings=${t.warnings}, critical=${t.criticals}, recovery=${t.recoveryRecommended}`
+        );
       }
       console.log('  Top signatures:');
       if (!sigs.length) console.log('    (none)');
@@ -157,7 +183,10 @@ export const sessionCommands: SlashCommand[] = [
       }
 
       const snap = manager.getSnapshot();
-      const totalEvents = Object.values(snap.eventCounts).reduce((a: number, b: any) => a + Number(b || 0), 0);
+      const totalEvents = Object.values(snap.eventCounts).reduce(
+        (a: number, b: any) => a + Number(b || 0),
+        0
+      );
 
       if (mode === 'errors') {
         console.log('Hook Errors (recent):');
@@ -247,7 +276,9 @@ export const sessionCommands: SlashCommand[] = [
         console.log(`Scaffolded plugin '${result.pluginName}' at ${result.targetDir}`);
         for (const f of result.files) console.log(`  - ${f}`);
         console.log('\nNext steps:');
-        console.log(`1) Build plugin TS to JS (example target: ${path.join(result.targetDir, 'dist/index.js')})`);
+        console.log(
+          `1) Build plugin TS to JS (example target: ${path.join(result.targetDir, 'dist/index.js')})`
+        );
         console.log('2) Add plugin path to config.hooks.plugin_paths');
         console.log('3) Restart Idle Hands');
       } catch (e: any) {
@@ -295,7 +326,9 @@ export const sessionCommands: SlashCommand[] = [
       }
       const enabled = arg === 'on';
       ctx.config.sub_agents = { ...(ctx.config.sub_agents ?? {}), enabled };
-      console.log(`✅ Sub-agents ${enabled ? 'on' : 'off'}${!enabled ? ' — spawn_task disabled for this session' : ''}`);
+      console.log(
+        `✅ Sub-agents ${enabled ? 'on' : 'off'}${!enabled ? ' — spawn_task disabled for this session' : ''}`
+      );
       return true;
     },
   },
@@ -305,7 +338,7 @@ export const sessionCommands: SlashCommand[] = [
     async execute(ctx, args) {
       const hard = /^hard\b/i.test(args);
       const dry = /^dry\b/i.test(args);
-      const topic = (!hard && !dry && args) ? args : undefined;
+      const topic = !hard && !dry && args ? args : undefined;
 
       try {
         const res = await ctx.session.compactHistory({ topic, hard, dry });
@@ -386,13 +419,18 @@ export const sessionCommands: SlashCommand[] = [
       const sub = (parts[0] || '').toLowerCase();
 
       if (!sub || sub === 'help') {
-        console.log('Usage: /conv branch <name> | /conv branches | /conv checkout <name> | /conv merge <name>');
+        console.log(
+          'Usage: /conv branch <name> | /conv branches | /conv checkout <name> | /conv merge <name>'
+        );
         return true;
       }
 
       if (sub === 'branch') {
         const name = (parts[1] || '').trim();
-        if (!name) { console.log('Usage: /conv branch <name>'); return true; }
+        if (!name) {
+          console.log('Usage: /conv branch <name>');
+          return true;
+        }
         if (!isSafeBranchName(name)) {
           console.log('Invalid branch name. Allowed: letters, numbers, dot, underscore, hyphen.');
           return true;
@@ -426,8 +464,14 @@ export const sessionCommands: SlashCommand[] = [
 
       if (sub === 'checkout') {
         const name = (parts[1] || '').trim();
-        if (!name) { console.log('Usage: /conv checkout <name>'); return true; }
-        if (!isSafeBranchName(name)) { console.log('Invalid branch name.'); return true; }
+        if (!name) {
+          console.log('Usage: /conv checkout <name>');
+          return true;
+        }
+        if (!isSafeBranchName(name)) {
+          console.log('Invalid branch name.');
+          return true;
+        }
         const filePath = conversationBranchPath(name);
         const raw = await fs.readFile(filePath, 'utf8').catch(() => '');
         if (!raw.trim()) {
@@ -443,7 +487,9 @@ export const sessionCommands: SlashCommand[] = [
           }
           ctx.session.restore(msgs as any);
           if (parsed?.model) {
-            try { ctx.session.setModel(String(parsed.model)); } catch {}
+            try {
+              ctx.session.setModel(String(parsed.model));
+            } catch {}
           }
           console.log(`[conv] checked out '${name}' (${msgs.length} messages)`);
         } catch (e: any) {
@@ -454,8 +500,14 @@ export const sessionCommands: SlashCommand[] = [
 
       if (sub === 'merge') {
         const name = (parts[1] || '').trim();
-        if (!name) { console.log('Usage: /conv merge <name>'); return true; }
-        if (!isSafeBranchName(name)) { console.log('Invalid branch name.'); return true; }
+        if (!name) {
+          console.log('Usage: /conv merge <name>');
+          return true;
+        }
+        if (!isSafeBranchName(name)) {
+          console.log('Invalid branch name.');
+          return true;
+        }
         const filePath = conversationBranchPath(name);
         const raw = await fs.readFile(filePath, 'utf8').catch(() => '');
         if (!raw.trim()) {
@@ -469,7 +521,9 @@ export const sessionCommands: SlashCommand[] = [
             console.log(`Conversation branch '${name}' has no messages.`);
             return true;
           }
-          const toAppend = msgs.filter((m: any, idx: number) => !(idx === 0 && m?.role === 'system'));
+          const toAppend = msgs.filter(
+            (m: any, idx: number) => !(idx === 0 && m?.role === 'system')
+          );
           if (!toAppend.length) {
             console.log(`Conversation branch '${name}' has no mergeable messages.`);
             return true;
@@ -482,7 +536,9 @@ export const sessionCommands: SlashCommand[] = [
         return true;
       }
 
-      console.log('Usage: /conv branch <name> | /conv branches | /conv checkout <name> | /conv merge <name>');
+      console.log(
+        'Usage: /conv branch <name> | /conv branches | /conv checkout <name> | /conv merge <name>'
+      );
       return true;
     },
   },

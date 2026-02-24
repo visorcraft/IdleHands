@@ -47,7 +47,9 @@ export function checkCwdWarning(tool: string, resolvedPath: string, ctx: ToolCon
   const absCwd = path.resolve(ctx.cwd);
   if (isWithinDir(resolvedPath, absCwd)) return '';
   const warning = `\n[WARNING] Path "${resolvedPath}" is OUTSIDE the working directory "${absCwd}". You MUST use relative paths and work within the project directory. Do NOT create or edit files outside the cwd.`;
-  console.warn(`[warning] ${tool}: path "${resolvedPath}" is outside the working directory "${absCwd}".`);
+  console.warn(
+    `[warning] ${tool}: path "${resolvedPath}" is outside the working directory "${absCwd}".`
+  );
   return warning;
 }
 
@@ -56,7 +58,11 @@ export function checkCwdWarning(tool: string, resolvedPath: string, ctx: ToolCon
  * In code mode, writing outside cwd is always blocked to prevent accidental edits
  * in the wrong repository. System mode keeps broader path freedom for /etc workflows.
  */
-export function enforceMutationWithinCwd(tool: string, resolvedPath: string, ctx: ToolContext): void {
+export function enforceMutationWithinCwd(
+  tool: string,
+  resolvedPath: string,
+  ctx: ToolContext
+): void {
   if (ctx.mode === 'sys') return;
 
   const absTarget = path.resolve(resolvedPath);
@@ -74,7 +80,9 @@ export function enforceMutationWithinCwd(tool: string, resolvedPath: string, ctx
     });
     if (!cwdMatchesCandidate) {
       const hint = candidates.length ? ` Candidates: ${candidates.slice(0, 8).join(', ')}` : '';
-      throw new Error(`${tool}: BLOCKED — multiple repository candidates detected. Set repo root explicitly with /dir <path> before editing files.${hint}`);
+      throw new Error(
+        `${tool}: BLOCKED — multiple repository candidates detected. Set repo root explicitly with /dir <path> before editing files.${hint}`
+      );
     }
   }
 
@@ -82,7 +90,9 @@ export function enforceMutationWithinCwd(tool: string, resolvedPath: string, ctx
   if (roots.length > 0 && !allowAny) {
     const inAllowed = roots.some((root) => isWithinDir(absTarget, root));
     if (!inAllowed) {
-      throw new Error(`${tool}: BLOCKED — path "${absTarget}" is outside allowed directories: ${roots.join(', ')}`);
+      throw new Error(
+        `${tool}: BLOCKED — path "${absTarget}" is outside allowed directories: ${roots.join(', ')}`
+      );
     }
   }
 
@@ -91,6 +101,8 @@ export function enforceMutationWithinCwd(tool: string, resolvedPath: string, ctx
 
   // In code mode, keep edits scoped to current working directory unless explicitly sys mode.
   if (!isWithinDir(absTarget, absCwd)) {
-    throw new Error(`${tool}: BLOCKED — path "${absTarget}" is outside the working directory "${absCwd}". Run /dir <project-root> first, then retry with relative paths.`);
+    throw new Error(
+      `${tool}: BLOCKED — path "${absTarget}" is outside the working directory "${absCwd}". Run /dir <project-root> first, then retry with relative paths.`
+    );
   }
 }

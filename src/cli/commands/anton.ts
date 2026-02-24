@@ -142,15 +142,14 @@ function formatAgeShort(msAgo: number): string {
   return `${Math.round(msAgo / 3_600_000)}h ago`;
 }
 
-function summarizeLoopEvent(
-  ev: NonNullable<ReplContext['antonLastLoopEvent']>
-): string {
+function summarizeLoopEvent(ev: NonNullable<ReplContext['antonLastLoopEvent']>): string {
   const emoji = ev.kind === 'final-failure' ? '🔴' : ev.kind === 'auto-recovered' ? '🟠' : '🟡';
-  const kind = ev.kind === 'final-failure'
-    ? 'final failure'
-    : ev.kind === 'auto-recovered'
-      ? 'auto-recovered'
-      : 'loop event';
+  const kind =
+    ev.kind === 'final-failure'
+      ? 'final failure'
+      : ev.kind === 'auto-recovered'
+        ? 'auto-recovered'
+        : 'loop event';
   const msg = ev.message.length > 120 ? ev.message.slice(0, 117) + '...' : ev.message;
   return `${emoji} Last loop: ${kind} (${formatAgeShort(Date.now() - ev.at)})\n${msg}`;
 }
@@ -180,7 +179,9 @@ function showStatus(ctx: ReplContext): void {
   }
 
   if (ctx.antonLastLoopEvent) {
-    console.log(`🤖 Anton is running (no progress data yet).\n\n${summarizeLoopEvent(ctx.antonLastLoopEvent)}`);
+    console.log(
+      `🤖 Anton is running (no progress data yet).\n\n${summarizeLoopEvent(ctx.antonLastLoopEvent)}`
+    );
     return;
   }
 
@@ -234,11 +235,14 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
     taskFile: filePath,
     preflightEnabled: defaults.preflight?.enabled ?? false,
     preflightRequirementsReview: defaults.preflight?.requirements_review ?? true,
-    preflightDiscoveryTimeoutSec: defaults.preflight?.discovery_timeout_sec ?? defaults.task_timeout_sec ?? 600,
-    preflightReviewTimeoutSec: defaults.preflight?.review_timeout_sec ?? defaults.task_timeout_sec ?? 600,
+    preflightDiscoveryTimeoutSec:
+      defaults.preflight?.discovery_timeout_sec ?? defaults.task_timeout_sec ?? 600,
+    preflightReviewTimeoutSec:
+      defaults.preflight?.review_timeout_sec ?? defaults.task_timeout_sec ?? 600,
     preflightMaxRetries: defaults.preflight?.max_retries ?? 2,
     preflightSessionMaxIterations: defaults.preflight?.session_max_iterations ?? 500,
-    preflightSessionTimeoutSec: defaults.preflight?.session_timeout_sec ?? 120,
+    preflightSessionTimeoutSec:
+      defaults.preflight?.session_timeout_sec ?? defaults.task_timeout_sec ?? 600,
     projectDir: cwd,
     maxRetriesPerTask: parsed.maxRetries ?? defaults.max_retries ?? 3,
     maxIterations: parsed.maxIterations ?? defaults.max_iterations ?? 200,
@@ -355,6 +359,11 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
     },
     onVerification(taskText, verification) {
       emitAntonUpdate(ctx, formatVerificationDetail(taskText, verification));
+    },
+    onStage(message) {
+      if (defaults.progress_events !== false) {
+        emitAntonUpdate(ctx, message);
+      }
     },
   };
 

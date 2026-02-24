@@ -81,7 +81,8 @@ export function stashWorkingTree(cwd: string): { ok: boolean; message: string } 
 export async function loadGitStartupSummary(cwd: string): Promise<string> {
   if (!isInsideWorkTree(cwd)) return '';
 
-  const branch = runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'], 1000).stdout.trim() || 'unknown';
+  const branch =
+    runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'], 1000).stdout.trim() || 'unknown';
   const status = runGit(cwd, ['status', '--porcelain'], 2000).stdout.split(/\r?\n/).filter(Boolean);
   const modified = status.filter(
     (l) => /^[ MARC][MDARC]/.test(l) || /^[MDARC][ MARC]/.test(l)
@@ -116,7 +117,9 @@ export function commitAll(cwd: string, message: string): string {
     if (status.status === 0 && status.stdout.trim().length === 0) {
       return '';
     }
-    throw new Error(`git commit failed: ${commitRes.stderr || commitRes.stdout || 'unknown error'}`);
+    throw new Error(
+      `git commit failed: ${commitRes.stderr || commitRes.stdout || 'unknown error'}`
+    );
   }
 
   const hashRes = runGit(cwd, ['rev-parse', '--short', 'HEAD'], 30000);
@@ -147,7 +150,10 @@ export function cleanUntracked(cwd: string): void {
 
 export function getUntrackedFiles(cwd: string): string[] {
   const res = runGit(cwd, ['ls-files', '--others', '--exclude-standard'], 30000);
-  return res.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  return res.stdout
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
 }
 
 export function removeUntrackedFiles(cwd: string, files: string[]): void {
@@ -162,7 +168,10 @@ export function removeUntrackedFiles(cwd: string, files: string[]): void {
 export function getChangedFiles(cwd: string): string[] {
   if (!isInsideWorkTree(cwd)) return [];
   const res = runGit(cwd, ['diff', '--name-only', 'HEAD'], 10000);
-  const tracked = res.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const tracked = res.stdout
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
   const untracked = getUntrackedFiles(cwd);
   return [...new Set([...tracked, ...untracked])];
 }

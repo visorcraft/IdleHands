@@ -113,7 +113,11 @@ function git(cwd: string, command: string): string {
     if (!seg.startsWith('git ')) {
       throw new Error(`git helper only supports git commands, got: ${seg}`);
     }
-    const args = seg.slice(4).match(/(?:"[^"]*"|'[^']*'|\S+)/g)?.map((t) => t.replace(/^['"]|['"]$/g, '')) ?? [];
+    const args =
+      seg
+        .slice(4)
+        .match(/(?:"[^"]*"|'[^']*'|\S+)/g)
+        ?.map((t) => t.replace(/^['"]|['"]$/g, '')) ?? [];
     const res = spawnSync('git', args, { cwd, encoding: 'utf8' });
     if (res.status !== 0) {
       const msg = `${String(res.stdout || '')}${String(res.stderr || '')}`.trim();

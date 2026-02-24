@@ -39,7 +39,11 @@ test('checkProgressThrottle returns user_active when user recently active', () =
 test('checkProgressThrottle can throttle with retryAfter', () => {
   const state = createProgressThrottleState({ now: () => 1000 });
   state.lastUserActivityAt = -100000; // not user-active path
-  const result = checkProgressThrottle(state, { now: () => 12000, progressIntervalMs: 30000, heartbeatIntervalMs: 20000 });
+  const result = checkProgressThrottle(state, {
+    now: () => 12000,
+    progressIntervalMs: 30000,
+    heartbeatIntervalMs: 20000,
+  });
   assert.strictEqual(result.allow, false);
   assert.strictEqual(result.reason, 'throttled');
   assert.ok((result.retryAfter ?? 0) > 0);
@@ -55,8 +59,14 @@ test('checkProgressThrottle returns heartbeat_required when due', () => {
 
 test('checkHeartbeatRequired respects interval', () => {
   const state = createProgressThrottleState({ now: () => 1000 });
-  assert.strictEqual(checkHeartbeatRequired(state, { now: () => 2000, heartbeatIntervalMs: 4000 }), false);
-  assert.strictEqual(checkHeartbeatRequired(state, { now: () => 6000, heartbeatIntervalMs: 4000 }), true);
+  assert.strictEqual(
+    checkHeartbeatRequired(state, { now: () => 2000, heartbeatIntervalMs: 4000 }),
+    false
+  );
+  assert.strictEqual(
+    checkHeartbeatRequired(state, { now: () => 6000, heartbeatIntervalMs: 4000 }),
+    true
+  );
 });
 
 test('record* functions mutate state in place', () => {

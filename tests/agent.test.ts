@@ -14,7 +14,7 @@ before(async () => {
 });
 
 after(async () => {
-  await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => { });
+  await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
 });
 
 function baseConfig(tmpDir: string, overrides?: Record<string, any>): any {
@@ -147,7 +147,7 @@ describe('context overflow recovery', () => {
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         calls++;
         if (calls === 1) {
@@ -190,18 +190,18 @@ describe('agent failure persistence', () => {
   it('persists a failure note when max iterations are exceeded', async () => {
     const notes: Array<{ key: string; value: string }> = [];
     const fakeVault: any = {
-      setProjectDir() { },
+      setProjectDir() {},
       async note(key: string, value: string) {
         notes.push({ key, value });
       },
-      async upsertNote() { },
+      async upsertNote() {},
     };
 
     const fakeClient: any = {
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         return {
           id: 'fake',
@@ -252,18 +252,18 @@ describe('agent failure persistence', () => {
     const notes: Array<{ key: string; value: string }> = [];
     let calls = 0;
     const fakeVault: any = {
-      setProjectDir() { },
+      setProjectDir() {},
       async note(key: string, value: string) {
         notes.push({ key, value });
       },
-      async upsertNote() { },
+      async upsertNote() {},
     };
 
     const fakeClient: any = {
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         calls += 1;
         throw new Error('should not be called when timeout is exceeded before first request');
@@ -298,7 +298,7 @@ describe('agent no-progress watchdog', () => {
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         calls += 1;
         return {
@@ -336,7 +336,7 @@ describe('agent no-tool reprompt recovery', () => {
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         callNo += 1;
 
@@ -429,7 +429,7 @@ describe('agent no-tool reprompt recovery', () => {
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         callNo += 1;
         return {
@@ -468,7 +468,7 @@ describe('agent package-install retry guard', () => {
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         callNo += 1;
 
@@ -560,7 +560,7 @@ describe('agent vault + replay synergy', () => {
     const archived: any[] = [];
 
     const fakeVault: any = {
-      setProjectDir() { },
+      setProjectDir() {},
       async archiveToolMessages(msgs: any[]) {
         archived.push(...msgs);
         return msgs.length;
@@ -581,7 +581,7 @@ describe('agent vault + replay synergy', () => {
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         calls += 1;
         if (calls === 1) {
@@ -664,7 +664,7 @@ describe('trifecta vault passive injection', () => {
     let seenMessages: any[] = [];
 
     const fakeVault: any = {
-      setProjectDir() { },
+      setProjectDir() {},
       async search(_query: string, _limit: number) {
         return [
           {
@@ -679,14 +679,14 @@ describe('trifecta vault passive injection', () => {
       async archiveToolMessages() {
         return 0;
       },
-      async upsertNote() { },
+      async upsertNote() {},
     };
 
     const fakeClient: any = {
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream(opts: any) {
         seenMessages = opts.messages;
         return {
@@ -733,7 +733,7 @@ describe('review artifact durability', () => {
     const rows = new Map<string, string>();
 
     const fakeVault: any = {
-      setProjectDir() { },
+      setProjectDir() {},
       async getLatestByKey(key: string) {
         const value = rows.get(key);
         if (!value) return null;
@@ -760,7 +760,7 @@ describe('review artifact durability', () => {
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         llmCalls += 1;
         return {
@@ -805,7 +805,7 @@ describe('agent loop dispatch + hooks', () => {
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         llmCalls += 1;
         if (llmCalls === 1) {
@@ -886,7 +886,7 @@ describe('harness behavioral wiring', () => {
       async models() {
         return { data: [{ id: 'nemotron-3-nano' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         calls++;
         // Always emit the same tool call — nemotron loops on errors
@@ -938,7 +938,7 @@ describe('harness behavioral wiring', () => {
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         calls++;
         if (calls <= 7) {
@@ -998,7 +998,7 @@ describe('harness behavioral wiring', () => {
       assert.equal(sawLoopReuseHint, true, 'expected loop-reuse hint in tool output');
     } finally {
       await session.close();
-      await fs.rm(work, { recursive: true, force: true }).catch(() => { });
+      await fs.rm(work, { recursive: true, force: true }).catch(() => {});
     }
   });
 
@@ -1011,7 +1011,7 @@ describe('harness behavioral wiring', () => {
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         calls++;
         // With threshold of 6 for read_file, we need 9+ calls to see caching behavior
@@ -1067,7 +1067,7 @@ describe('harness behavioral wiring', () => {
       assert.equal(sawCachedHint, true, 'expected cached read hint in tool output');
     } finally {
       await session.close();
-      await fs.rm(work, { recursive: true, force: true }).catch(() => { });
+      await fs.rm(work, { recursive: true, force: true }).catch(() => {});
     }
   });
 
@@ -1077,7 +1077,7 @@ describe('harness behavioral wiring', () => {
       async models() {
         return { data: [{ id: 'nemotron-3-nano' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         calls++;
         // Each call uses `calls` in the args to make every signature unique,
@@ -1127,7 +1127,7 @@ describe('harness behavioral wiring', () => {
       async models() {
         return { data: [{ id: 'mistral-small-3.2' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         return {
           id: 'fake',
@@ -1160,7 +1160,7 @@ describe('harness behavioral wiring', () => {
       async models() {
         return { data: [{ id: 'qwen3-coder-next' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         return {
           id: 'fake',
@@ -1192,7 +1192,7 @@ describe('harness behavioral wiring', () => {
       async models() {
         return { data: [{ id: 'nemotron-3-nano' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         calls++;
         const n = calls;
@@ -1242,7 +1242,7 @@ describe('harness behavioral wiring', () => {
       async models() {
         return { data: [{ id: 'llama-3' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         calls++;
         if (calls === 1) {
@@ -1281,7 +1281,7 @@ describe('harness behavioral wiring', () => {
       async models() {
         return { data: [{ id: 'nemotron-3-nano' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         return {
           id: 'fake',
@@ -1296,11 +1296,11 @@ describe('harness behavioral wiring', () => {
 
     // Session meta is now deferred and prepended to the first user instruction.
     // After ask(), messages[1] should be the user message with meta + instruction.
-    const result = await session.ask('hello');
+    await session.ask('hello');
     const userMsg = session.messages[1];
     assert.ok(
       typeof userMsg.content === 'string' &&
-      userMsg.content.includes('Use the tool_calls mechanism'),
+        userMsg.content.includes('Use the tool_calls mechanism'),
       'expected tool_calls format reminder prepended to first user instruction'
     );
   });
@@ -1317,7 +1317,7 @@ describe('plan mode blocking', () => {
       async models() {
         return [{ id: 'fake-model' }];
       },
-      async chatStream(params: any, callbacks: any) {
+      async chatStream(_params: any, _callbacks: any) {
         turnCount++;
         if (turnCount === 1) {
           // First turn: model tries to edit a file (mutating) + read a file (read-only)
@@ -1622,7 +1622,7 @@ describe('capture tooling', () => {
 
   it('captureLast fails before any request/response exists', async () => {
     const fakeClient: any = {
-      setExchangeHook() { },
+      setExchangeHook() {},
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
@@ -1650,7 +1650,7 @@ describe('capture tooling', () => {
 describe('system prompt controls', () => {
   it('applies config override and supports set/reset', async () => {
     const fakeClient: any = {
-      setExchangeHook() { },
+      setExchangeHook() {},
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
@@ -1689,7 +1689,7 @@ describe('system prompt controls', () => {
 
   it('rejects empty system prompt values', async () => {
     const fakeClient: any = {
-      setExchangeHook() { },
+      setExchangeHook() {},
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
@@ -1717,7 +1717,7 @@ describe('MCP lazy schema loading', () => {
     let calls = 0;
 
     const fakeClient: any = {
-      setExchangeHook() { },
+      setExchangeHook() {},
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
@@ -1808,7 +1808,7 @@ describe('MCP lazy schema loading', () => {
       assert.equal(calls, 3);
     } finally {
       await session.close();
-      await fs.rm(path.dirname(serverScript), { recursive: true, force: true }).catch(() => { });
+      await fs.rm(path.dirname(serverScript), { recursive: true, force: true }).catch(() => {});
     }
   });
 });
@@ -1918,7 +1918,7 @@ process.stdin.on('data', (chunk) => {
       assert.equal(servers[0].running, true);
     } finally {
       await session.close();
-      await fs.rm(dir, { recursive: true, force: true }).catch(() => { });
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
     }
   });
 
@@ -2028,7 +2028,7 @@ process.stdin.on('data', (chunk) => {
       async summarizeFailureMessage(text: string) {
         return text;
       },
-      close() { },
+      close() {},
     };
 
     const session = await createSession({
@@ -2058,8 +2058,8 @@ process.stdin.on('data', (chunk) => {
       );
     } finally {
       await session.close();
-      await fs.rm(dir, { recursive: true, force: true }).catch(() => { });
-      await fs.rm(sourceFile, { force: true }).catch(() => { });
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+      await fs.rm(sourceFile, { force: true }).catch(() => {});
     }
   });
 });
@@ -2068,7 +2068,7 @@ describe('spawn_task tool registration and dispatch', () => {
   it('registers spawn_task tool by default', async () => {
     let toolNames: string[] = [];
     const fakeClient: any = {
-      setExchangeHook() { },
+      setExchangeHook() {},
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
@@ -2098,7 +2098,7 @@ describe('spawn_task tool registration and dispatch', () => {
   it('does not register spawn_task when allowSpawnTask=false', async () => {
     let toolNames: string[] = [];
     const fakeClient: any = {
-      setExchangeHook() { },
+      setExchangeHook() {},
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
@@ -2129,7 +2129,7 @@ describe('spawn_task tool registration and dispatch', () => {
   it('does not register spawn_task when sub_agents.enabled=false', async () => {
     let toolNames: string[] = [];
     const fakeClient: any = {
-      setExchangeHook() { },
+      setExchangeHook() {},
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
@@ -2163,7 +2163,7 @@ describe('spawn_task tool registration and dispatch', () => {
     // Sub-agent uses the same fake client; we track calls to distinguish parent vs child.
     let calls = 0;
     const fakeClient: any = {
-      setExchangeHook() { },
+      setExchangeHook() {},
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
@@ -2246,7 +2246,7 @@ describe('spawn_task tool registration and dispatch', () => {
     const longText = 'word '.repeat(5000); // ~5000 "tokens"
 
     const fakeClient: any = {
-      setExchangeHook() { },
+      setExchangeHook() {},
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
@@ -2329,7 +2329,7 @@ describe('spawn_task tool registration and dispatch', () => {
     let calls = 0;
 
     const fakeClient: any = {
-      setExchangeHook() { },
+      setExchangeHook() {},
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },

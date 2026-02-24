@@ -4,6 +4,7 @@ import { stdin as input, stdout as output } from 'node:process';
 import readline from 'node:readline/promises';
 
 import { probeModelsEndpoint, waitForModelsReady } from '../runtime/health.js';
+import { HostCommandRunner } from '../runtime/host-runner.js';
 import {
   loadRuntimes,
   saveRuntimes,
@@ -12,7 +13,6 @@ import {
   bootstrapRuntimes,
   interpolateTemplate,
 } from '../runtime/store.js';
-import { HostCommandRunner } from '../runtime/host-runner.js';
 import type { RuntimeBackend, RuntimeHost, RuntimeModel } from '../runtime/types.js';
 import { configDir, shellEscape } from '../utils.js';
 

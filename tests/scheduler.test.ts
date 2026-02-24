@@ -1,9 +1,12 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { describe, it, beforeEach, afterEach } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
-import { MessageEditScheduler, classifyTelegramEditError } from '../dist/progress/message-edit-scheduler.js';
+import {
+  MessageEditScheduler,
+  classifyTelegramEditError,
+} from '../dist/progress/message-edit-scheduler.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,27 +15,24 @@ describe('MessageEditScheduler', () => {
   let scheduler: MessageEditScheduler;
   let renderCalls = 0;
   let applyCalls = 0;
-  let lastAppliedText = '';
   let isDirtyFlag = true;
-  let classifyErrorCalls = 0;
-
-  const createScheduler = (opts: Partial<Parameters<typeof MessageEditScheduler['constructor']>[0]>) => {
+  const createScheduler = (
+    opts: Partial<Parameters<(typeof MessageEditScheduler)['constructor']>[0]>
+  ) => {
     return new MessageEditScheduler({
       intervalMs: 10,
       render: () => {
         renderCalls++;
         return `rendered-${renderCalls}`;
       },
-      apply: async (text: string) => {
+      apply: async (_text: string) => {
         applyCalls++;
-        lastAppliedText = text;
       },
       isDirty: () => isDirtyFlag,
       clearDirty: () => {
         isDirtyFlag = false;
       },
-      classifyError: (e: unknown) => {
-        classifyErrorCalls++;
+      classifyError: (_e: unknown) => {
         return { kind: 'retry', retryAfterMs: 100 };
       },
       ...opts,
@@ -42,9 +42,7 @@ describe('MessageEditScheduler', () => {
   beforeEach(() => {
     renderCalls = 0;
     applyCalls = 0;
-    lastAppliedText = '';
     isDirtyFlag = true;
-    classifyErrorCalls = 0;
   });
 
   afterEach(() => {
@@ -236,7 +234,7 @@ describe('MessageEditScheduler in-flight lock', () => {
     return new MessageEditScheduler({
       intervalMs: 5,
       render: () => `rendered-${Date.now()}`,
-      apply: async (text: string) => {
+      apply: async (_text: string) => {
         applyCalls++;
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       },

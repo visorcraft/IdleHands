@@ -13,7 +13,6 @@ import {
   sameSession,
   isTerminal,
   nextSequence,
-  type UXEvent,
   type UXEventCategory,
 } from '../dist/bot/ux/events.js';
 
@@ -22,7 +21,14 @@ import {
 // ============================================================================
 
 test('UXEventCategory types are properly defined', () => {
-  const categories: UXEventCategory[] = ['ACK', 'PROGRESS', 'WARNING', 'ERROR', 'RESULT', 'ACTIONS'];
+  const categories: UXEventCategory[] = [
+    'ACK',
+    'PROGRESS',
+    'WARNING',
+    'ERROR',
+    'RESULT',
+    'ACTIONS',
+  ];
   assert.strictEqual(categories.length, 6);
   assert(categories.includes('ACK'));
   assert(categories.includes('PROGRESS'));
@@ -94,13 +100,11 @@ test('createACKEvent supports optional fields', () => {
   const model = 'gpt-4';
   const timestamp = 1700000000000;
 
-  const event = createACKEvent(
-    sessionId,
-    userId,
-    sequence,
-    'Task started',
-    { estimatedDurationSec, model, timestamp }
-  );
+  const event = createACKEvent(sessionId, userId, sequence, 'Task started', {
+    estimatedDurationSec,
+    model,
+    timestamp,
+  });
 
   assert.strictEqual(event.sessionId, sessionId);
   assert.strictEqual(event.userId, userId);
@@ -152,7 +156,9 @@ test('createPROGRESSEvent supports optional toolName and toolId', () => {
 });
 
 test('createPROGRESSEvent handles progress 0.0 and 1.0', () => {
-  const startEvent = createPROGRESSEvent('session-1', 'user-1', 1, 'Starting...', { progress: 0.0 });
+  const startEvent = createPROGRESSEvent('session-1', 'user-1', 1, 'Starting...', {
+    progress: 0.0,
+  });
   const endEvent = createPROGRESSEvent('session-1', 'user-1', 2, 'Done!', { progress: 1.0 });
 
   assert.strictEqual(startEvent.progress, 0.0);
@@ -266,7 +272,9 @@ test('createACTIONSEvent creates event with actions array', () => {
     { label: 'Cancel', action: 'cancel' },
   ];
 
-  const event = createACTIONSEvent('session-1', 'user-1', 1, actions, { message: 'Choose an action' });
+  const event = createACTIONSEvent('session-1', 'user-1', 1, actions, {
+    message: 'Choose an action',
+  });
 
   assert.strictEqual(event.category, 'ACTIONS');
   assert.strictEqual(event.message, 'Choose an action');
@@ -274,7 +282,9 @@ test('createACTIONSEvent creates event with actions array', () => {
 });
 
 test('createACTIONSEvent supports empty actions array', () => {
-  const event = createACTIONSEvent('session-1', 'user-1', 1, [], { message: 'No actions available' });
+  const event = createACTIONSEvent('session-1', 'user-1', 1, [], {
+    message: 'No actions available',
+  });
 
   assert.deepStrictEqual(event.actions, []);
 });
@@ -307,7 +317,9 @@ test('isRetryable returns true for RESULT with tokensUsed', () => {
 
 test('isRetryable returns false for non-terminal events', () => {
   const ackEvent = createACKEvent('session-1', 'user-1', 1, 'Ack');
-  const progressEvent = createPROGRESSEvent('session-1', 'user-1', 2, 'Progress', { progress: 0.5 });
+  const progressEvent = createPROGRESSEvent('session-1', 'user-1', 2, 'Progress', {
+    progress: 0.5,
+  });
   const warningEvent = createWARNINGEvent('session-1', 'user-1', 3, 'Warning');
   const actionsEvent = createACTIONSEvent('session-1', 'user-1', 4, [], { message: 'Actions' });
 
@@ -348,7 +360,9 @@ test('isTerminal returns true for RESULT and ERROR', () => {
 
 test('isTerminal returns false for non-terminal events', () => {
   const ackEvent = createACKEvent('session-1', 'user-1', 1, 'Ack');
-  const progressEvent = createPROGRESSEvent('session-1', 'user-1', 2, 'Progress', { progress: 0.5 });
+  const progressEvent = createPROGRESSEvent('session-1', 'user-1', 2, 'Progress', {
+    progress: 0.5,
+  });
   const warningEvent = createWARNINGEvent('session-1', 'user-1', 3, 'Warning');
   const actionsEvent = createACTIONSEvent('session-1', 'user-1', 4, [], { message: 'Actions' });
 

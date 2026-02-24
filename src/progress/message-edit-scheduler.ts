@@ -80,7 +80,10 @@ export class MessageEditScheduler {
       if (classified.kind === 'retry' && classified.retryAfterMs) {
         const baseRetry = Math.max(0, classified.retryAfterMs);
         // Keep jitter proportional so very small retry windows stay small in tests/runtime.
-        const jitterCap = Math.min(this.opts.jitterMs ?? 500, Math.max(0, Math.floor(baseRetry / 2)));
+        const jitterCap = Math.min(
+          this.opts.jitterMs ?? 500,
+          Math.max(0, Math.floor(baseRetry / 2))
+        );
         const jitter = jitterCap > 0 ? Math.floor(Math.random() * (jitterCap + 1)) : 0;
         this.backoffMs = Math.min(baseRetry + jitter, this.opts.maxBackoffMs ?? 30_000);
       } else if (classified.kind === 'fatal') {
