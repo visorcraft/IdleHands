@@ -57,6 +57,7 @@ import {
   escapeHtml,
   formatToolCallSummary,
 } from './format.js';
+import { waitForModelEndpoint } from './model-endpoint.js';
 import { SessionManager, type ManagedSession } from './session-manager.js';
 import { registerRuntimeCommands, handleModelSelectCallback } from './telegram-commands.js';
 
@@ -690,37 +691,6 @@ export async function startTelegramBot(
     onStart: () => console.error('[bot] Polling active'),
   });
 }
-
-async function probeModelEndpoint(endpoint: string): Promise<boolean> {
-  const base = endpoint.replace(/\/$/, '');
-  const healthUrl = base.replace(/\/v1$/, '') + '/health';
-  const modelsUrl = base.replace(/\/$/, '') + '/models';
-  try {
-    const h = await fetch(healthUrl, { method: 'GET' as const });
-    if (!h.ok) return false;
-    const m = await fetch(modelsUrl, { method: 'GET' as const });
-    return m.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function waitForModelEndpoint(
-  endpoint: string,
-  totalMs = 60_000,
-  stepMs = 2_500
-): Promise<boolean> {
-  const started = Date.now();
-  while (Date.now() - started < totalMs) {
-    if (await probeModelEndpoint(endpoint)) return true;
-    await new Promise((r) => setTimeout(r, stepMs));
-  }
-  return false;
-}
-
-// ---------------------------------------------------------------------------
-// Core: process a user message through the agent
-// ---------------------------------------------------------------------------
 
 async function processMessage(
   bot: Bot,
