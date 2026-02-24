@@ -396,12 +396,46 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
   const args = text.replace(/^\/anton\s*/, '').trim();
   const sub = firstToken(args);
 
+  let antonStatusMsgId: number | null = null;
   let antonStatusLastText = '';
   const sendAntonUpdate = (t: string) => {
     const isStatusUpdate = t.startsWith('⏳ Still working:');
-    if (isStatusUpdate && t === antonStatusLastText) return;
-    antonStatusLastText = isStatusUpdate ? t : '';
-    ctx.api.sendMessage(chatId, t).catch(() => {});
+
+    // Non-heartbeat updates should be sent as normal messages.
+    if (!isStatusUpdate) {
+      antonStatusMsgId = null;
+      antonStatusLastText = '';
+      ctx.api.sendMessage(chatId, t).catch(() => {});
+      return;
+    }
+
+    // Dedupe exact repeats.
+    if (t === antonStatusLastText) return;
+    antonStatusLastText = t;
+
+    if (antonStatusMsgId != null) {
+      ctx.api.editMessageText(chatId, antonStatusMsgId, t).catch((e: any) => {
+        const msg = String(e?.description || e?.message || e || '').toLowerCase();
+        // Ignore no-op edits; keep existing status message id.
+        if (msg.includes('message is not modified')) return;
+
+        // Fallback: if old status message can no longer be edited, send a new one.
+        ctx.api
+          .sendMessage(chatId, t)
+          .then((m: any) => {
+            antonStatusMsgId = m?.message_id ?? null;
+          })
+          .catch(() => {});
+      });
+      return;
+    }
+
+    ctx.api
+      .sendMessage(chatId, t)
+      .then((m: any) => {
+        antonStatusMsgId = m?.message_id ?? null;
+      })
+      .catch(() => {});
   };
 
   let managed = sessions.get(chatId);
