@@ -313,11 +313,3 @@ export function splitMessage(text: string, maxLen = 4096): string[] {
 
   return chunks;
 }
-
-/** Format a tool call into a one-line summary for display. */
-export function formatToolCallSummary(call: {
-  name: string;
-  args: Record<string, unknown>;
-}): string {
-  return formatSharedToolCallSummary(call as any);
-}

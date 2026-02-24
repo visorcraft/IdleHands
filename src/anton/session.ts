@@ -2,6 +2,8 @@
  * Anton autonomous task runner — session config builders and factory wrapper.
  */
 
+import path from 'node:path';
+
 import type { AgentSession } from '../agent.js';
 import { createSession } from '../agent.js';
 import type { IdlehandsConfig } from '../types.js';
@@ -55,6 +57,8 @@ export function buildPreflightConfig(
       ? Math.floor(Number(config.preflightSessionTimeoutSec))
       : Math.max(10, Math.floor(Number(config.taskTimeoutSec) || 600));
 
+  const tasksDir = path.resolve(config.projectDir, '.agents', 'tasks');
+
   return {
     ...base,
     dir: config.projectDir,
@@ -66,6 +70,10 @@ export function buildPreflightConfig(
     timeout: Math.max(10, Math.min(Math.floor(stageTimeoutSec), preflightTimeoutCapSec)),
     compact_at: 0.65,
     compact_min_tail: 4,
+    // Preflight can write only plan artifacts under .agents/tasks.
+    allowed_write_roots: [tasksDir],
+    require_dir_pin_for_mutations: false,
+    dir_pinned: true,
     no_tools: false,
     trifecta: { enabled: false },
     mcp: { servers: [] },

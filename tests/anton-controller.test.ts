@@ -7,7 +7,7 @@
 
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
-import { mkdtemp, writeFile, readFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, mkdir, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, describe, beforeEach, afterEach } from 'node:test';
@@ -833,7 +833,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.ok(result.skipped >= 1 || result.failed >= 0);
   });
 
-  test('17d. Preflight malformed JSON triggers retry then skip', async () => {
+  test('17d. Preflight malformed JSON degrades to fallback and continues', async () => {
     const tmpDir = await createTempGitRepo();
     const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
     const config = createTestConfig({
@@ -843,22 +843,45 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       skipOnFail: true,
       maxRetriesPerTask: 1,
       preflightMaxRetries: 0,
+      preflightRequirementsReview: false,
     } as any);
 
-    const createSession = async () => createMockSession(['not-json']);
+    const stageMessages: string[] = [];
+    const progress = {
+      ...createMockProgressCallback(),
+      onStage: (m: string) => stageMessages.push(m),
+    } as any;
+
+    const createSession = async () =>
+      ({
+        ...createMockSession(['<anton-result>status: done</anton-result>']),
+        async ask(prompt: string) {
+          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+            return { text: 'not-json', turns: 1, toolCalls: 0 } as any;
+          }
+          return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 } as any;
+        },
+      }) as any;
 
     const result = await runAnton({
       config,
       idlehandsConfig: createTestIdlehandsConfig(),
-      progress: createMockProgressCallback(),
+      progress,
       abortSignal: { aborted: false },
       createSession,
     });
 
-    assert.ok(result.attempts.some((a) => (a.error || '').includes('preflight-error')));
+    assert.equal(result.completedAll, true);
+    assert.ok(
+      stageMessages.some(
+        (m) =>
+          m.includes('Bootstrapped fallback plan and continuing') ||
+          m.includes('Reusing existing plan and continuing')
+      )
+    );
   });
 
-  test('17e. Preflight timeout is handled', async () => {
+  test('17e. Preflight timeout is handled via fallback and does not hard-fail', async () => {
     const tmpDir = await createTempGitRepo();
     const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
     const config = createTestConfig({
@@ -866,30 +889,40 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       projectDir: tmpDir,
       preflightEnabled: true,
       preflightDiscoveryTimeoutSec: 0.05,
+      preflightRequirementsReview: false,
+      preflightMaxRetries: 0,
       skipOnFail: true,
       maxRetriesPerTask: 1,
     } as any);
 
+    const stageMessages: string[] = [];
+    const progress = {
+      ...createMockProgressCallback(),
+      onStage: (m: string) => stageMessages.push(m),
+    } as any;
+
     const createSession = async () =>
       ({
-        ...createMockSession([]),
-        async ask() {
-          await new Promise((r) => setTimeout(r, 120));
-          return { text: '{"status":"complete","filename":""}', turns: 1, toolCalls: 0 } as any;
+        ...createMockSession(['<anton-result>status: done</anton-result>']),
+        async ask(prompt: string) {
+          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+            await new Promise((r) => setTimeout(r, 120));
+            return { text: '{"status":"complete","filename":""}', turns: 1, toolCalls: 0 } as any;
+          }
+          return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 } as any;
         },
       }) as any;
 
     const result = await runAnton({
       config,
       idlehandsConfig: createTestIdlehandsConfig(),
-      progress: createMockProgressCallback(),
+      progress,
       abortSignal: { aborted: false },
       createSession,
     });
 
-    assert.ok(
-      result.attempts.some((a) => a.status === 'timeout' || (a.error || '').includes('timeout'))
-    );
+    assert.equal(result.completedAll, true);
+    assert.ok(stageMessages.some((m) => m.includes('Bootstrapped fallback plan and continuing')));
   });
 
   test('17f. Reporter stage messages are emitted via onStage', async () => {
@@ -1187,6 +1220,65 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.equal(discoveryCalls, 2);
     assert.deepEqual(discoveryCaps.slice(0, 2), [3, 6]);
     assert.ok(stageMessages.some((m) => m.includes('Increasing preflight cap to 6')));
+  });
+
+  test('17k. Discovery final failure degrades to fallback plan and continues', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+
+    const stageMessages: string[] = [];
+    const progress = {
+      ...createMockProgressCallback(),
+      onStage: (m: string) => stageMessages.push(m),
+    } as any;
+
+    let discoveryCalls = 0;
+    const createSession = async () =>
+      ({
+        ...createMockSession(['<anton-result>status: done</anton-result>']),
+        async ask(prompt: string) {
+          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+            discoveryCalls++;
+            return {
+              text: 'not-json-output',
+              turns: 1,
+              toolCalls: 0,
+            } as any;
+          }
+          return {
+            text: '<anton-result>status: done</anton-result>',
+            turns: 1,
+            toolCalls: 0,
+          } as any;
+        },
+      }) as any;
+
+    const result = await runAnton({
+      config: createTestConfig({
+        taskFile,
+        projectDir: tmpDir,
+        preflightEnabled: true,
+        preflightRequirementsReview: false,
+        preflightMaxRetries: 0,
+      } as any),
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress,
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.equal(result.completedAll, true);
+    assert.equal(discoveryCalls, 1);
+    assert.ok(
+      stageMessages.some(
+        (m) =>
+          m.includes('Bootstrapped fallback plan and continuing') ||
+          m.includes('Reusing existing plan and continuing')
+      )
+    );
+
+    const plans = await readdir(join(tmpDir, '.agents', 'tasks'));
+    assert.ok(plans.some((f) => f.endsWith('.md')));
   });
 
   test("17. maxTotalTasks exceeded → stopReason='max_tasks_exceeded'", async () => {
