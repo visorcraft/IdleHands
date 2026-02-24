@@ -6,8 +6,7 @@
  * message composition logic.
  */
 
-// ---------------------------------------------------------------------------
-// Event Types
+import type { UXAction } from './actions.js';
 // ---------------------------------------------------------------------------
 
 /**
@@ -158,27 +157,6 @@ export type UXEventRESULT = UXEventBase & {
 // ---------------------------------------------------------------------------
 
 /**
- * Action buttons/commands available to user.
- */
-export type UXActionType =
-  | 'retry_fast' // Quick retry (e.g., same parameters, faster model)
-  | 'retry_heavy' // Full retry (e.g., different parameters, heavier model)
-  | 'cancel' // Cancel current operation
-  | 'show_diff' // Show diff of changes
-  | 'apply' // Apply proposed changes
-  | 'anton_stop'; // Stop Anton completely
-
-/**
- * Action available to user.
- */
-export type UXAction = {
-  type: UXActionType;
-  label: string;
-  /** Optional payload for the action */
-  payload?: Record<string, unknown>;
-};
-
-/**
  * Event carrying available actions.
  */
 export type UXEventACTIONS = UXEventBase & {
@@ -202,7 +180,6 @@ export type UXEvent =
   | UXEventERROR
   | UXEventRESULT
   | UXEventACTIONS;
-
 // ---------------------------------------------------------------------------
 // Factory Functions
 // ---------------------------------------------------------------------------
@@ -415,10 +392,12 @@ export function sameSession(a: UXEvent, b: UXEvent): boolean {
 export function isTerminal(event: UXEvent): boolean {
   return event.category === 'RESULT' || event.category === 'ERROR';
 }
-
 /**
  * Get the next sequence number for a session.
  */
 export function nextSequence(current: number): number {
   return current + 1;
 }
+
+// Re-export action types for convenience
+export type { UXAction, UXActionType } from './actions.js';
