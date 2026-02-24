@@ -541,6 +541,30 @@ export class TuiController {
     renderTui(this.state);
   }
 
+  /**
+   * For Anton heartbeat updates, update the most-recent heartbeat entry instead of appending.
+   * This keeps the transcript from being spammed while long tasks run.
+   */
+  private pushOrUpdateAntonHeartbeat(text: string): void {
+    const isHeartbeat = text.startsWith('⏳ Still working:');
+    if (!isHeartbeat) {
+      this.pushSystemMessage(text);
+      return;
+    }
+
+    const transcript = [...this.state.transcript];
+    const last = transcript[transcript.length - 1];
+    if (last && last.role === 'system' && last.text.startsWith('⏳ Still working:')) {
+      last.text = text;
+      last.ts = Date.now();
+      this.state = { ...this.state, transcript };
+      renderTui(this.state);
+      return;
+    }
+
+    this.pushSystemMessage(text);
+  }
+
   /** Run a shell command and display output in transcript. */
   private async handleShellCommand(line: string): Promise<void> {
     const result = await runShellCommand(line, this.config);
@@ -680,7 +704,7 @@ export class TuiController {
       () => this.saveTuiSessionSnapshot(),
       (text) => {
         if (!text.trim()) return;
-        this.pushSystemMessage(text);
+        this.pushOrUpdateAntonHeartbeat(text);
       }
     );
     if (!result.found) {
