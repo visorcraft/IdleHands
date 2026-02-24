@@ -782,6 +782,7 @@ When you escalate, your request will be re-run on a more capable model.`;
           ),
         new SlashCommandBuilder().setName('deescalate').setDescription('Return to base model'),
         new SlashCommandBuilder().setName('restart_bot').setDescription('Restart the bot service'),
+        new SlashCommandBuilder().setName('upgrade').setDescription('Upgrade IdleHands and restart'),
       ].map((cmd) => cmd.toJSON());
 
       const rest = new REST({ version: '10' }).setToken(token);
@@ -858,6 +859,7 @@ When you escalate, your request will be re-run on a more capable model.`;
           '/cancel — Abort running task',
           '/reset — Full session reset',
           '/restart_bot — Restart the bot service',
+          '/upgrade — Upgrade IdleHands and restart',
         ];
         await interaction.reply(lines.join('\n'));
         break;
@@ -1030,6 +1032,21 @@ When you escalate, your request will be re-run on a more capable model.`;
           detached: true,
           stdio: 'ignore',
         }).unref();
+        break;
+      }
+      case 'upgrade': {
+        const { performBotUpgrade } = await import('./upgrade-command.js');
+        await interaction.deferReply();
+        const progressLines: string[] = [];
+
+        const result = await performBotUpgrade(async (message) => {
+          progressLines.push(message);
+          const text = progressLines.join('\n');
+          await interaction.editReply(text).catch(() => {});
+        });
+
+        const finalText = progressLines.join('\n') + '\n\n' + result.message;
+        await interaction.editReply(finalText).catch(() => {});
         break;
       }
     }

@@ -13,6 +13,7 @@ import { runtimeCommands } from '../cli/commands/runtime.js';
 import { sessionCommands } from '../cli/commands/session.js';
 import { toolCommands } from '../cli/commands/tools.js';
 import { trifectaCommands } from '../cli/commands/trifecta.js';
+import { upgradeCommands } from '../cli/commands/upgrade.js';
 import type { ReplContext } from '../cli/repl-context.js';
 import { makeStyler } from '../term.js';
 import type { IdlehandsConfig } from '../types.js';
@@ -32,6 +33,7 @@ export function ensureCommandsRegistered(): void {
     ...trifectaCommands,
     ...toolCommands,
     ...antonCommands,
+    ...upgradeCommands,
   ]);
 }
 
