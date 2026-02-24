@@ -62,6 +62,10 @@ export interface AntonRunConfig {
   preflightReviewTimeoutSec?: number;
   /** Max retries for preflight pipeline before falling back to task retry policy. */
   preflightMaxRetries?: number;
+  /** Max inner turns per preflight session (discovery/review). */
+  preflightSessionMaxIterations?: number;
+  /** Hard timeout cap (seconds) applied to each preflight session. */
+  preflightSessionTimeoutSec?: number;
   /** Absolute path to project working directory. */
   projectDir: string;
   /** Max retries per individual task. */

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { buildSessionConfig } from '../dist/anton/session.js';
+import { buildSessionConfig, buildPreflightConfig } from '../dist/anton/session.js';
 
 describe('anton session config', () => {
   it('falls back to 50 task iterations when config value is missing', () => {
@@ -42,5 +42,30 @@ describe('anton session config', () => {
 
     const out = buildSessionConfig(base, runConfig);
     assert.equal(out.max_iterations, 17);
+  });
+
+  it('builds strict no-tools preflight session config with capped timeout', () => {
+    const base = {
+      endpoint: 'x',
+      model: 'm',
+      max_tokens: 1000,
+      timeout: 999,
+      max_iterations: 999,
+    } as any;
+
+    const runConfig = {
+      projectDir: '/tmp',
+      approvalMode: 'yolo',
+      taskTimeoutSec: 600,
+      preflightSessionMaxIterations: 3,
+      preflightSessionTimeoutSec: 120,
+    } as any;
+
+    const out = buildPreflightConfig(base, runConfig, 600);
+    assert.equal(out.max_iterations, 3);
+    assert.equal(out.timeout, 120);
+    assert.equal(out.no_tools, true);
+    assert.equal(out.trifecta?.enabled, false);
+    assert.deepEqual(out.mcp?.servers, []);
   });
 });

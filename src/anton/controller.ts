@@ -44,7 +44,13 @@ import {
   assertPlanFileExists,
 } from './preflight.js';
 import { formatDryRunPlan } from './reporter.js';
-import { buildSessionConfig, buildDecomposeConfig, buildVerifyConfig, defaultCreateSession } from './session.js';
+import {
+  buildSessionConfig,
+  buildPreflightConfig,
+  buildDecomposeConfig,
+  buildVerifyConfig,
+  defaultCreateSession,
+} from './session.js';
 import type {
   AntonRunConfig,
   AntonRunResult,
@@ -452,46 +458,60 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
       const attemptNumber = retries + 1;
 
       // Optional preflight pipeline: discovery -> requirements review.
-      // Only runs on first attempt for each task; retries reuse the same plan file.
+      // Runs on first attempt for each task. Retries are stage-local to avoid churn.
       if (config.preflightEnabled && retries === 0) {
         const preflightMaxRetries = Math.max(0, config.preflightMaxRetries ?? 1);
-        let preflightOk = false;
+        const preflightTotalTries = preflightMaxRetries + 1;
         let preflightMarkedComplete = false;
+        let discoveryOk = false;
 
-        for (let preflightTry = 0; preflightTry <= preflightMaxRetries; preflightTry++) {
-          const preflightStart = Date.now();
+        await ensureAgentsTasksDir(config.projectDir);
+        const plannedFilePath =
+          taskPlanByTaskKey.get(currentTask.key) ?? makeUniqueTaskPlanFilename(config.projectDir);
+
+        // Stage 1: discovery (retry discovery only).
+        for (let discoveryTry = 0; discoveryTry <= preflightMaxRetries; discoveryTry++) {
+          const stageStart = Date.now();
+          const discoveryTimeoutSec = config.preflightDiscoveryTimeoutSec ?? config.taskTimeoutSec;
+          const discoveryTimeoutMs = discoveryTimeoutSec * 1000;
+          let discoverySession: AgentSession | undefined;
+
           try {
             progress.onStage?.('🔎 Discovery: checking if already done...');
-            await ensureAgentsTasksDir(config.projectDir);
-            const planFilePath = makeUniqueTaskPlanFilename(config.projectDir);
+            discoverySession = await createSessionFn(
+              buildPreflightConfig(idlehandsConfig, config, discoveryTimeoutSec),
+              apiKey
+            );
 
-            const discoverySession = await createSessionFn(buildSessionConfig(idlehandsConfig, config), apiKey);
             const discoveryPrompt = buildDiscoveryPrompt({
               task: currentTask,
               taskFilePath: config.taskFile,
               projectDir: config.projectDir,
-              planFilePath,
+              planFilePath: plannedFilePath,
             });
 
-            const discoveryTimeoutMs = (config.preflightDiscoveryTimeoutSec ?? config.taskTimeoutSec) * 1000;
             const discoveryRes = await Promise.race([
               discoverySession.ask(discoveryPrompt),
               new Promise<never>((_, reject) =>
                 setTimeout(() => {
-                  try { discoverySession.cancel(); } catch { }
+                  try {
+                    discoverySession?.cancel();
+                  } catch {
+                    // best effort
+                  }
                   reject(new Error('preflight-discovery-timeout'));
                 }, discoveryTimeoutMs)
               ),
             ]);
-            await discoverySession.close();
 
             const discoveryTokens = discoverySession.usage.prompt + discoverySession.usage.completion;
             totalTokens += discoveryTokens;
             const discovery = parseDiscoveryResult(discoveryRes.text, config.projectDir);
+
             preflightRecords.push({
               taskKey: currentTask.key,
               stage: 'discovery',
-              durationMs: Date.now() - preflightStart,
+              durationMs: Date.now() - stageStart,
               tokensUsed: discoveryTokens,
               status: discovery.status,
               filename: discovery.filename || undefined,
@@ -502,76 +522,56 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               await autoCompleteAncestors(config.taskFile, currentTask.key);
               autoCompleted += 1;
               progress.onStage?.(`✅ Discovery confirmed already complete: ${currentTask.text}`);
-              preflightOk = true;
               preflightMarkedComplete = true;
+              discoveryOk = true;
               break;
             }
 
+            await assertPlanFileExists(discovery.filename);
             taskPlanByTaskKey.set(currentTask.key, discovery.filename);
             progress.onStage?.(`📝 Discovery plan file: ${discovery.filename}`);
-
-            if (config.preflightRequirementsReview) {
-              const reviewStart = Date.now();
-              progress.onStage?.('🧪 Requirements review: refining plan...');
-              const reviewSession = await createSessionFn(buildSessionConfig(idlehandsConfig, config), apiKey);
-              const reviewPrompt = buildRequirementsReviewPrompt(discovery.filename);
-              const reviewTimeoutMs = (config.preflightReviewTimeoutSec ?? config.taskTimeoutSec) * 1000;
-              const reviewRes = await Promise.race([
-                reviewSession.ask(reviewPrompt),
-                new Promise<never>((_, reject) =>
-                  setTimeout(() => {
-                    try { reviewSession.cancel(); } catch { }
-                    reject(new Error('preflight-review-timeout'));
-                  }, reviewTimeoutMs)
-                ),
-              ]);
-              await reviewSession.close();
-
-              const reviewTokens = reviewSession.usage.prompt + reviewSession.usage.completion;
-              totalTokens += reviewTokens;
-              const review = parseRequirementsReviewResult(reviewRes.text, config.projectDir);
-              await assertPlanFileExists(review.filename);
-              preflightRecords.push({
-                taskKey: currentTask.key,
-                stage: 'requirements-review',
-                durationMs: Date.now() - reviewStart,
-                tokensUsed: reviewTokens,
-                status: 'ready',
-                filename: review.filename,
-              });
-              taskPlanByTaskKey.set(currentTask.key, review.filename);
-              progress.onStage?.(`✅ Requirements review ready: ${review.filename}`);
-            }
-
-            preflightOk = true;
+            discoveryOk = true;
             break;
           } catch (error) {
             const errMsg = error instanceof Error ? error.message : String(error);
-            const timeout = /timeout/.test(errMsg);
+            const timeout = /timeout/i.test(errMsg);
+
             preflightRecords.push({
               taskKey: currentTask.key,
               stage: 'discovery',
-              durationMs: Date.now() - preflightStart,
+              durationMs: Date.now() - stageStart,
               tokensUsed: 0,
               status: timeout ? 'timeout' : 'error',
               error: errMsg,
             });
 
-            if (preflightTry >= preflightMaxRetries) {
-              const preflightAttempt: AntonAttempt = {
-                taskKey: currentTask.key,
-                taskText: currentTask.text,
-                attempt: attemptNumber,
-                durationMs: Date.now() - preflightStart,
-                tokensUsed: 0,
-                status: timeout ? 'timeout' : 'error',
-                verification: undefined,
-                error: `preflight-error: ${errMsg}`,
-                commitHash: undefined,
-              };
-              attempts.push(preflightAttempt);
-              taskRetryCount.set(currentTask.key, retries + 1);
-              if (!config.skipOnFail) break mainLoop;
+            if (discoveryTry < preflightMaxRetries) {
+              const short = errMsg.length > 180 ? `${errMsg.slice(0, 177)}...` : errMsg;
+              progress.onStage?.(
+                `⚠️ Discovery failed (${discoveryTry + 1}/${preflightTotalTries}): ${short}. Retrying discovery...`
+              );
+              continue;
+            }
+
+            const preflightAttempt: AntonAttempt = {
+              taskKey: currentTask.key,
+              taskText: currentTask.text,
+              attempt: attemptNumber,
+              durationMs: Date.now() - stageStart,
+              tokensUsed: 0,
+              status: timeout ? 'timeout' : 'error',
+              verification: undefined,
+              error: `preflight-error(discovery): ${errMsg}`,
+              commitHash: undefined,
+            };
+            attempts.push(preflightAttempt);
+            taskRetryCount.set(currentTask.key, retries + 1);
+            if (!config.skipOnFail) break mainLoop;
+          } finally {
+            try {
+              await discoverySession?.close();
+            } catch {
+              // best effort
             }
           }
         }
@@ -581,8 +581,108 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           continue;
         }
 
-        if (!preflightOk) {
+        if (!discoveryOk) {
           continue;
+        }
+
+        // Stage 2: requirements review (retry review only; keep same plan file).
+        if (config.preflightRequirementsReview) {
+          const reviewPlanFile = taskPlanByTaskKey.get(currentTask.key) ?? plannedFilePath;
+          let reviewOk = false;
+
+          for (let reviewTry = 0; reviewTry <= preflightMaxRetries; reviewTry++) {
+            const stageStart = Date.now();
+            const reviewTimeoutSec = config.preflightReviewTimeoutSec ?? config.taskTimeoutSec;
+            const reviewTimeoutMs = reviewTimeoutSec * 1000;
+            let reviewSession: AgentSession | undefined;
+
+            try {
+              progress.onStage?.('🧪 Requirements review: refining plan...');
+              reviewSession = await createSessionFn(
+                buildPreflightConfig(idlehandsConfig, config, reviewTimeoutSec),
+                apiKey
+              );
+
+              const reviewPrompt = buildRequirementsReviewPrompt(reviewPlanFile);
+              const reviewRes = await Promise.race([
+                reviewSession.ask(reviewPrompt),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => {
+                    try {
+                      reviewSession?.cancel();
+                    } catch {
+                      // best effort
+                    }
+                    reject(new Error('preflight-review-timeout'));
+                  }, reviewTimeoutMs)
+                ),
+              ]);
+
+              const reviewTokens = reviewSession.usage.prompt + reviewSession.usage.completion;
+              totalTokens += reviewTokens;
+              const review = parseRequirementsReviewResult(reviewRes.text, config.projectDir);
+              await assertPlanFileExists(review.filename);
+
+              preflightRecords.push({
+                taskKey: currentTask.key,
+                stage: 'requirements-review',
+                durationMs: Date.now() - stageStart,
+                tokensUsed: reviewTokens,
+                status: 'ready',
+                filename: review.filename,
+              });
+
+              taskPlanByTaskKey.set(currentTask.key, review.filename);
+              progress.onStage?.(`✅ Requirements review ready: ${review.filename}`);
+              reviewOk = true;
+              break;
+            } catch (error) {
+              const errMsg = error instanceof Error ? error.message : String(error);
+              const timeout = /timeout/i.test(errMsg);
+
+              preflightRecords.push({
+                taskKey: currentTask.key,
+                stage: 'requirements-review',
+                durationMs: Date.now() - stageStart,
+                tokensUsed: 0,
+                status: timeout ? 'timeout' : 'error',
+                error: errMsg,
+              });
+
+              if (reviewTry < preflightMaxRetries) {
+                const short = errMsg.length > 180 ? `${errMsg.slice(0, 177)}...` : errMsg;
+                progress.onStage?.(
+                  `⚠️ Requirements review failed (${reviewTry + 1}/${preflightTotalTries}): ${short}. Retrying review with existing plan file...`
+                );
+                continue;
+              }
+
+              const preflightAttempt: AntonAttempt = {
+                taskKey: currentTask.key,
+                taskText: currentTask.text,
+                attempt: attemptNumber,
+                durationMs: Date.now() - stageStart,
+                tokensUsed: 0,
+                status: timeout ? 'timeout' : 'error',
+                verification: undefined,
+                error: `preflight-error(requirements-review): ${errMsg}`,
+                commitHash: undefined,
+              };
+              attempts.push(preflightAttempt);
+              taskRetryCount.set(currentTask.key, retries + 1);
+              if (!config.skipOnFail) break mainLoop;
+            } finally {
+              try {
+                await reviewSession?.close();
+              } catch {
+                // best effort
+              }
+            }
+          }
+
+          if (!reviewOk) {
+            continue;
+          }
         }
       }
 

@@ -213,6 +213,8 @@ anton:
     discovery_timeout_sec: 600
     review_timeout_sec: 600
     max_retries: 1
+    session_max_iterations: 3
+    session_timeout_sec: 120
 ```
 
 ### Preflight artifacts
@@ -220,6 +222,10 @@ anton:
 When preflight is enabled, Anton stores discovery/review plans under:
 
 - `.agents/tasks/*.md`
+
+Preflight retries are stage-local:
+- Discovery retries only discovery.
+- Requirements-review retries only review and reuses the existing plan file.
 
 These artifacts are local planning files and are ignored by git by default in this repo.
 
