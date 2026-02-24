@@ -34,8 +34,8 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Test
-        run: npm test --silent
+      - name: Smoke tests (full suite runs in CI workflow)
+        run: npm run test:smoke --silent
 
       - name: Verify package contents
         run: npm pack --dry-run

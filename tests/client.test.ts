@@ -1,9 +1,17 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 
 import { OpenAIClient, RateLimiter, BackpressureMonitor } from '../dist/client.js';
 
 describe('OpenAIClient retry behavior', () => {
+  const prevRetryDelay = process.env.IDLEHANDS_TEST_RETRY_DELAY_MS;
+  before(() => {
+    process.env.IDLEHANDS_TEST_RETRY_DELAY_MS = '1';
+  });
+  after(() => {
+    if (prevRetryDelay === undefined) delete process.env.IDLEHANDS_TEST_RETRY_DELAY_MS;
+    else process.env.IDLEHANDS_TEST_RETRY_DELAY_MS = prevRetryDelay;
+  });
   it('connection timeout follows response timeout by default and is overrideable', () => {
     const client: any = new OpenAIClient('http://example.invalid/v1', undefined, false);
 
