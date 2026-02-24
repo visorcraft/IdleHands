@@ -1960,9 +1960,19 @@ export async function createSession(opts: {
 
     const askId = `ask-${timestampedId()}`;
     const hooksEnabled = hookManager.isEnabled();
+    const hasOnToolCall = Boolean(hookObj.onToolCall);
+    const hasOnToolResult = Boolean(hookObj.onToolResult);
+    const hasOnToolLoop = Boolean(hookObj.onToolLoop);
+    const hasOnTurnEnd = Boolean(hookObj.onTurnEnd);
 
-    const emitToolCall = async (call: ToolCallEvent): Promise<void> => {
-      hookObj.onToolCall?.(call);
+    const emitToolCall = async (
+      id: string,
+      name: string,
+      args: Record<string, unknown>
+    ): Promise<void> => {
+      if (!hasOnToolCall && !hooksEnabled) return;
+      const call: ToolCallEvent = { id, name, args };
+      if (hasOnToolCall) hookObj.onToolCall?.(call);
       if (hooksEnabled) {
         await hookManager.emit('tool_call', { askId, turn: turns, call });
       }
@@ -1992,21 +2002,24 @@ export async function createSession(opts: {
     };
 
     const emitToolResult = async (result: ToolResultEvent): Promise<void> => {
-      await hookObj.onToolResult?.(result);
+      if (!hasOnToolResult && !hooksEnabled) return;
+      if (hasOnToolResult) await hookObj.onToolResult?.(result);
       if (hooksEnabled) {
         await hookManager.emit('tool_result', { askId, turn: turns, result });
       }
     };
 
     const emitToolLoop = async (loop: ToolLoopEvent): Promise<void> => {
-      await hookObj.onToolLoop?.(loop);
+      if (!hasOnToolLoop && !hooksEnabled) return;
+      if (hasOnToolLoop) await hookObj.onToolLoop?.(loop);
       if (hooksEnabled) {
         await hookManager.emit('tool_loop', { askId, turn: turns, loop });
       }
     };
 
     const emitTurnEnd = async (stats: TurnEndEvent): Promise<void> => {
-      await hookObj.onTurnEnd?.(stats);
+      if (!hasOnTurnEnd && !hooksEnabled) return;
+      if (hasOnTurnEnd) await hookObj.onTurnEnd?.(stats);
       if (hooksEnabled) {
         await hookManager.emit('turn_end', { askId, stats });
       }
@@ -3326,7 +3339,7 @@ export async function createSession(opts: {
 
               // Fix 1: Hard cumulative budget — refuse reads past hard cap
               if (cumulativeReadOnlyCalls > READ_BUDGET_HARD) {
-                await emitToolCall({ id: callId, name, args });
+                await emitToolCall(callId, name, args);
                 await emitToolResult({
                   id: callId,
                   name,
@@ -3353,7 +3366,7 @@ export async function createSession(opts: {
                   blockedDirs.add(parentDir);
                 }
                 if (blockedDirs.has(parentDir) && uniqueCount > 8) {
-                  await emitToolCall({ id: callId, name, args });
+                  await emitToolCall(callId, name, args);
                   await emitToolResult({
                     id: callId,
                     name,
@@ -3374,7 +3387,7 @@ export async function createSession(opts: {
                 if (!searchTermFiles.has(key)) searchTermFiles.set(key, new Set());
                 searchTermFiles.get(key)!.add(filePath);
                 if (searchTermFiles.get(key)!.size >= 3) {
-                  await emitToolCall({ id: callId, name, args });
+                  await emitToolCall(callId, name, args);
                   await emitToolResult({
                     id: callId,
                     name,
@@ -3414,7 +3427,7 @@ export async function createSession(opts: {
               });
 
               // Hook: onToolCall + onToolResult for plan-blocked actions
-              await emitToolCall({ id: callId, name, args });
+              await emitToolCall(callId, name, args);
               await emitToolResult({
                 id: callId,
                 name,
@@ -3427,7 +3440,7 @@ export async function createSession(opts: {
             }
 
             // Hook: onToolCall (Phase 8.5)
-            await emitToolCall({ id: callId, name, args });
+            await emitToolCall(callId, name, args);
 
             if (cfg.step_mode) {
               const stepPrompt = `Step mode: execute ${name}(${JSON.stringify(args).slice(0, 200)}) ? [Y/n]`;
