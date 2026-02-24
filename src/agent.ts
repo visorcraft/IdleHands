@@ -2417,8 +2417,14 @@ export async function createSession(opts: {
             toolSchemaTokens: estimateToolSchemaTokens(getToolsSchema()),
           });
 
-          const compactedByRefs = new Set(compacted);
-          const dropped = beforeMsgs.filter((m) => !compactedByRefs.has(m));
+          let dropped: ChatMessage[];
+          if (compacted.length === beforeMsgs.length) {
+            // Fast path: no drops expected when lengths match.
+            dropped = [];
+          } else {
+            const compactedByRefs = new Set(compacted);
+            dropped = beforeMsgs.filter((m) => !compactedByRefs.has(m));
+          }
 
           if (dropped.length && vault) {
             try {
