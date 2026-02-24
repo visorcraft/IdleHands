@@ -5,6 +5,9 @@
  * Structured as a deterministic orchestration flow for autonomous task execution.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
+
 import type { AgentSession } from '../agent.js';
 import { isToolLoopBreak, AUTO_CONTINUE_PROMPT } from '../bot/auto-continue.js';
 import {
@@ -61,6 +64,137 @@ import type {
 } from './types.js';
 import { captureLintBaseline, detectVerificationCommands, runVerification } from './verifier.js';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// L2 Retry Enhancement Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Extract file paths mentioned in an L2 failure reason.
+ * Looks for patterns like: app/Models/Channel.php, src/foo/bar.ts, etc.
+ */
+function extractFilePathsFromL2Reason(reason: string): string[] {
+  const patterns = [
+    // PHP/Laravel style: app/Models/Channel.php, app/Http/Controllers/Foo.php
+    /\b(app\/[\w\/]+\.php)\b/gi,
+    // General file paths with extensions
+    /\b((?:src|lib|tests?)\/[\w\/.-]+\.\w+)\b/gi,
+    // Model names that can be mapped to files: "Channel model" -> app/Models/Channel.php
+    /\b(\w+)\s+model\b/gi,
+  ];
+
+  const found = new Set<string>();
+  for (const pattern of patterns) {
+    const matches = reason.matchAll(pattern);
+    for (const match of matches) {
+      const p = match[1];
+      // If it's a model name reference like "Channel model", convert to path
+      if (/model$/i.test(match[0]) && !/\.php$/i.test(p)) {
+        found.add(`app/Models/${p}.php`);
+      } else {
+        found.add(p);
+      }
+    }
+  }
+  return [...found];
+}
+
+/**
+ * Detect if L2 reason indicates a "missing implementation" pattern.
+ * Returns true if the model wrote tests but forgot the actual implementation.
+ */
+function isL2MissingImplementation(reason: string): boolean {
+  const missingPatterns = [
+    /missing\s+(?:from|in)\s+/i,
+    /no\s+(?:corresponding|evidence|actual)/i,
+    /relationship\s+(?:method\s+)?is\s+missing/i,
+    /but\s+(?:the|there['']?s?\s+no)/i,
+    /tests?\s+(?:expect|added|written).*but/i,
+    /should\s+be\s+(?:hasMany|hasOne|belongsTo|morphMany)/i,
+  ];
+  return missingPatterns.some((p) => p.test(reason));
+}
+
+/**
+ * Try to read a file's contents for injection into retry context.
+ * Returns null if file doesn't exist or is too large.
+ */
+function readFileForL2Injection(projectDir: string, filePath: string): string | null {
+  const MAX_FILE_SIZE = 15000; // ~15KB, reasonable for injection
+  try {
+    const fullPath = path.resolve(projectDir, filePath);
+    if (!fs.existsSync(fullPath)) return null;
+    const stat = fs.statSync(fullPath);
+    if (stat.size > MAX_FILE_SIZE) return null;
+    return fs.readFileSync(fullPath, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build enhanced retry context when L2 fails due to missing implementation.
+ * - On first L2 failure: Add strong guidance about which files to modify
+ * - On 2+ L2 failures: Inject the actual file contents so model can see what's missing
+ */
+function buildL2EnhancedRetryContext(
+  l2Reason: string,
+  l2FailCount: number,
+  projectDir: string,
+  taskText: string
+): string {
+  const parts: string[] = [];
+  const filePaths = extractFilePathsFromL2Reason(l2Reason);
+  const isMissingImpl = isL2MissingImplementation(l2Reason);
+
+  if (!isMissingImpl || filePaths.length === 0) {
+    // Not a "missing implementation" pattern, no enhancement needed
+    return '';
+  }
+
+  parts.push('');
+  parts.push('═══════════════════════════════════════════════════════════════════════');
+  parts.push('⚠️  CRITICAL: AI REVIEW FAILED — MISSING IMPLEMENTATION DETECTED');
+  parts.push('═══════════════════════════════════════════════════════════════════════');
+  parts.push('');
+  parts.push(`The AI review found that you wrote tests but FORGOT THE ACTUAL IMPLEMENTATION.`);
+  parts.push(`Task: "${taskText}"`);
+  parts.push('');
+  parts.push('YOU MUST MODIFY THESE FILES:');
+  for (const fp of filePaths) {
+    parts.push(`  → ${fp}`);
+  }
+  parts.push('');
+
+  // After 2+ identical L2 failures, inject file contents
+  if (l2FailCount >= 2) {
+    parts.push('Since you have failed this verification multiple times, here are the current');
+    parts.push('contents of the files you need to modify:');
+    parts.push('');
+
+    for (const fp of filePaths) {
+      const contents = readFileForL2Injection(projectDir, fp);
+      if (contents !== null) {
+        parts.push(`┌─── ${fp} ───`);
+        parts.push(contents);
+        parts.push(`└─── end of ${fp} ───`);
+        parts.push('');
+      } else {
+        parts.push(`[Could not read ${fp} — file may not exist or is too large]`);
+        parts.push('');
+      }
+    }
+  }
+
+  parts.push('INSTRUCTIONS:');
+  parts.push('1. READ the files listed above (they are your existing code)');
+  parts.push('2. ADD the missing method/relationship to the model file');
+  parts.push('3. Do NOT just modify tests — the MODEL/SOURCE file must change');
+  parts.push('4. The L2 review expects to see your implementation in the diff');
+  parts.push('');
+
+  return parts.join('\n');
+}
+
 export interface RunAntonOpts {
   config: AntonRunConfig;
   idlehandsConfig: IdlehandsConfig;
@@ -89,6 +223,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
   const taskRetryCount: Map<string, number> = new Map();
   const lastFailureReason: Map<string, string> = new Map();
   const consecutiveIdenticalCount: Map<string, number> = new Map();
+  const l2FailCount: Map<string, number> = new Map(); // Track consecutive L2 failures per task
   let lockHeartbeatTimer: NodeJS.Timeout | null = null;
 
   // SIGINT handler
@@ -201,7 +336,21 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           if (v.l1_build === false) parts.push('- Build command failed');
           if (v.l1_test === false) parts.push('- Test command failed');
           if (v.l1_lint === false) parts.push('- Lint command failed');
-          if (v.l2_ai === false && v.l2_reason) parts.push(`- AI review: ${v.l2_reason}`);
+          if (v.l2_ai === false && v.l2_reason) {
+            parts.push(`- AI review: ${v.l2_reason}`);
+
+            // Enhanced L2 retry context: stronger guidance + file injection on repeated failures
+            const currentL2Count = l2FailCount.get(currentTask.key) || 0;
+            const l2Enhancement = buildL2EnhancedRetryContext(
+              v.l2_reason,
+              currentL2Count,
+              config.projectDir,
+              currentTask.text
+            );
+            if (l2Enhancement) {
+              parts.push(l2Enhancement);
+            }
+          }
 
           // Include error output (filtered to errors only, no warnings) so the
           // agent can see and fix the exact issues.
@@ -1120,6 +1269,17 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         }
 
         lastFailureReason.set(currentTask.key, currentReason);
+
+        // Track L2-specific failures for enhanced retry context
+        if (attempt.verification?.l2_ai === false) {
+          l2FailCount.set(currentTask.key, (l2FailCount.get(currentTask.key) || 0) + 1);
+          console.error(
+            `[anton:l2-fail] task="${currentTask.text.slice(0, 40)}" l2_fail_count=${l2FailCount.get(currentTask.key)}`
+          );
+        }
+      } else {
+        // Task passed — reset L2 fail count
+        l2FailCount.delete(currentTask.key);
       }
 
       // Report task end
