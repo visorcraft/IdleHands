@@ -1959,10 +1959,13 @@ export async function createSession(opts: {
     };
 
     const askId = `ask-${timestampedId()}`;
+    const hooksEnabled = hookManager.isEnabled();
 
     const emitToolCall = async (call: ToolCallEvent): Promise<void> => {
       hookObj.onToolCall?.(call);
-      await hookManager.emit('tool_call', { askId, turn: turns, call });
+      if (hooksEnabled) {
+        await hookManager.emit('tool_call', { askId, turn: turns, call });
+      }
     };
 
     const emitToolStream = (stream: ToolStreamEvent): void => {
@@ -1971,10 +1974,12 @@ export async function createSession(opts: {
       } catch {
         // best effort
       }
-      try {
-        void hookManager.emit('tool_stream', { askId, turn: turns, stream });
-      } catch {
-        // best effort
+      if (hooksEnabled) {
+        try {
+          void hookManager.emit('tool_stream', { askId, turn: turns, stream });
+        } catch {
+          // best effort
+        }
       }
     };
 
@@ -1988,17 +1993,23 @@ export async function createSession(opts: {
 
     const emitToolResult = async (result: ToolResultEvent): Promise<void> => {
       await hookObj.onToolResult?.(result);
-      await hookManager.emit('tool_result', { askId, turn: turns, result });
+      if (hooksEnabled) {
+        await hookManager.emit('tool_result', { askId, turn: turns, result });
+      }
     };
 
     const emitToolLoop = async (loop: ToolLoopEvent): Promise<void> => {
       await hookObj.onToolLoop?.(loop);
-      await hookManager.emit('tool_loop', { askId, turn: turns, loop });
+      if (hooksEnabled) {
+        await hookManager.emit('tool_loop', { askId, turn: turns, loop });
+      }
     };
 
     const emitTurnEnd = async (stats: TurnEndEvent): Promise<void> => {
       await hookObj.onTurnEnd?.(stats);
-      await hookManager.emit('turn_end', { askId, stats });
+      if (hooksEnabled) {
+        await hookManager.emit('turn_end', { askId, stats });
+      }
     };
 
     const finalizeAsk = async (text: string): Promise<AgentResult> => {
@@ -2035,7 +2046,8 @@ export async function createSession(opts: {
         }
       }
 
-      await hookManager.emit('ask_end', { askId, text: finalText, turns, toolCalls });
+      if (hooksEnabled)
+        await hookManager.emit('ask_end', { askId, text: finalText, turns, toolCalls });
       if (perfEnabled) {
         const wallMs = Date.now() - wallStart;
         const avgTtft = perf.ttftSamples > 0 ? Math.round(perf.ttftMsSum / perf.ttftSamples) : 0;
@@ -2049,7 +2061,8 @@ export async function createSession(opts: {
     const rawInstructionText = userContentToText(instruction).trim();
     lastAskInstructionText = rawInstructionText;
     lastCompactionReminderObjective = '';
-    await hookManager.emit('ask_start', { askId, instruction: rawInstructionText });
+    if (hooksEnabled)
+      await hookManager.emit('ask_start', { askId, instruction: rawInstructionText });
     const reviewKeys = reviewArtifactKeys(projectDir);
     const retrievalRequested = looksLikeReviewRetrievalRequest(rawInstructionText);
     const shouldPersistReviewArtifact =
@@ -2380,7 +2393,7 @@ export async function createSession(opts: {
         if (inFlight?.signal?.aborted) break;
 
         turns++;
-        await hookManager.emit('turn_start', { askId, turn: turns });
+        if (hooksEnabled) await hookManager.emit('turn_start', { askId, turn: turns });
 
         const wallElapsed = (Date.now() - wallStart) / 1000;
         if (wallElapsed > cfg.timeout) {
@@ -4134,12 +4147,13 @@ export async function createSession(opts: {
           `BUG: threw undefined in agent.ask() (turn=${turns}). lastMsg=${lastMsg?.role ?? 'unknown'}:${lastMsgPreview}`
         );
         await persistFailure(err, `ask turn ${turns}`);
-        await hookManager.emit('ask_error', {
-          askId,
-          error: err.message,
-          turns,
-          toolCalls,
-        });
+        if (hooksEnabled)
+          await hookManager.emit('ask_error', {
+            askId,
+            error: err.message,
+            turns,
+            toolCalls,
+          });
         throw err;
       }
 
@@ -4151,12 +4165,13 @@ export async function createSession(opts: {
       // Never rethrow undefined; normalize to Error for debuggability.
       if (e === undefined) {
         const normalized = new Error('BUG: threw undefined (normalized at ask() boundary)');
-        await hookManager.emit('ask_error', {
-          askId,
-          error: normalized.message,
-          turns,
-          toolCalls,
-        });
+        if (hooksEnabled)
+          await hookManager.emit('ask_error', {
+            askId,
+            error: normalized.message,
+            turns,
+            toolCalls,
+          });
         throw normalized;
       }
 
