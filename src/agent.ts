@@ -3169,9 +3169,10 @@ export async function createSession(opts: {
         let resp;
         try {
           try {
-            const toolsForTurn = (cfg.no_tools || forceToollessRecoveryTurn)
-              ? []
-              : getToolsSchema().filter(t => !suppressedTools.has(t.function.name));
+            const toolsForTurn =
+              cfg.no_tools || forceToollessRecoveryTurn
+                ? []
+                : getToolsSchema().filter((t) => !suppressedTools.has(t.function.name));
             const toolChoiceForTurn = cfg.no_tools || forceToollessRecoveryTurn ? 'none' : 'auto';
             resp = await client.chatStream({
               model,
@@ -3484,7 +3485,7 @@ export async function createSession(opts: {
             onMutation: (absPath: string) => {
               lastEditedPath = absPath;
               mutationVersion++;
-              suppressedTools.clear();  // file changed, re-enable all tools
+              suppressedTools.clear(); // file changed, re-enable all tools
             },
           });
 
