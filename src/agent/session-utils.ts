@@ -49,11 +49,14 @@ export function capApprovalMode(requested: ApprovalMode, parentMode: ApprovalMod
 /** Flatten user content (text or rich parts) into plain text. */
 export function userContentToText(content: UserContent): string {
   if (typeof content === 'string') return content;
-  return content
-    .filter((p) => p.type === 'text')
-    .map((p: any) => p.text)
-    .join('\n')
-    .trim();
+  let out = '';
+  for (const p of content as any[]) {
+    if (p?.type !== 'text') continue;
+    const t = typeof p.text === 'string' ? p.text : '';
+    if (!t) continue;
+    out = out ? `${out}\n${t}` : t;
+  }
+  return out.trim();
 }
 
 const DELEGATION_MENTION_RE = /\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b/;
