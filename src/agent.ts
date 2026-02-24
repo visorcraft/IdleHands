@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { AgentLoopBreak } from './agent/errors.js';
 import {
   execRcShouldSignalFailure,
   looksLikeReadOnlyExecCommand,
@@ -96,14 +97,6 @@ import { stateDir, timestampedId } from './utils.js';
 import { VaultStore } from './vault.js';
 
 export { parseToolCallsFromContent };
-
-/** Errors that should break the outer agent loop, not be caught by per-tool handlers */
-class AgentLoopBreak extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'AgentLoopBreak';
-  }
-}
 
 export type AgentResult = {
   text: string;
