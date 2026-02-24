@@ -27,6 +27,7 @@ import {
 import { getActiveRuntimeEndpoint } from './runtime-detect.js';
 import { setupBotStep } from './setup-bot-step.js';
 import { addBackendTUI, addHostTUI, addModelTUI } from './setup-runtime-forms.js';
+import { BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW } from './setup-style.js';
 import {
   ask,
   askYN,
@@ -48,14 +49,6 @@ import {
 // ── Main wizard ──────────────────────────────────────────────────────
 
 // ── Bot setup helper (used by Step 5) ────────────────────────────────
-
-const BOLD = '\x1b[1m';
-const DIM = '\x1b[2m';
-const GREEN = '\x1b[32m';
-const YELLOW = '\x1b[33m';
-const RED = '\x1b[31m';
-const CYAN = '\x1b[36m';
-const RESET = '\x1b[0m';
 
 export type SetupResult = 'run' | 'exit';
 

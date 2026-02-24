@@ -1,10 +1,8 @@
 import type readline from 'node:readline/promises';
 
 import { parseUserIds, validateBotConfig, type BotSetupConfig } from './bot.js';
+import { BOLD, RESET } from './setup-style.js';
 import { ask, drawHeader, info, pause, warn } from './setup-ui.js';
-
-const BOLD = '\x1b[1m';
-const RESET = '\x1b[0m';
 
 export async function setupBotStep(
   rl: readline.Interface,
