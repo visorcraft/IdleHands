@@ -2451,7 +2451,10 @@ export async function createSession(opts: {
 
           let summaryUsed = false;
           if (dropped.length) {
-            const droppedTokens = estimateTokensCached(dropped as ChatMessage[]);
+            let droppedTokens = 0;
+            if (cfg.compact_summary !== false) {
+              droppedTokens = estimateTokensCached(dropped as ChatMessage[]);
+            }
             if (cfg.compact_summary !== false && droppedTokens > 200) {
               try {
                 const summaryContent = buildCompactionSummaryPrompt(dropped as ChatMessage[]);
