@@ -14,6 +14,7 @@ import {
   checkCwdWarning,
   enforceMutationWithinCwd,
 } from './tools/path-safety.js';
+import { hasRg, bigramSimilarity, globishMatch } from './tools/search-utils.js';
 import { autoNoteSysChange, snapshotBeforeEdit } from './tools/sys-notes.js';
 import {
   guessMimeType,
@@ -1618,55 +1619,3 @@ export async function sys_context(ctx: ToolContext, args: any) {
 
 // Path safety helpers imported from tools/path-safety.ts:
 // isWithinDir, resolvePath, redactPath, checkCwdWarning, enforceMutationWithinCwd
-
-async function hasRg() {
-  const isWin = process.platform === 'win32';
-  if (!isWin) {
-    try {
-      await fs.access('/usr/bin/rg');
-      return true;
-    } catch {
-      /* skip */
-    }
-  }
-
-  // try PATH
-  return await new Promise<boolean>((resolve) => {
-    const selector = isWin ? 'where' : 'command -v';
-    const sub = isWin ? ['rg'] : ['-c', `${selector} rg >/dev/null 2>&1`];
-    const cmd = isWin ? selector : BASH_PATH;
-
-    const c = spawn(cmd, sub, { stdio: 'ignore' });
-    c.on('error', () => resolve(false));
-    c.on('close', (code) => resolve(code === 0));
-  });
-}
-
-/** Sørensen-Dice coefficient on character bigrams. Returns 0–1. */
-function bigramSimilarity(a: string, b: string): number {
-  if (a.length < 2 && b.length < 2) return a === b ? 1 : 0;
-  const bigrams = (s: string): Map<string, number> => {
-    const m = new Map<string, number>();
-    for (let i = 0; i < s.length - 1; i++) {
-      const bi = s.slice(i, i + 2);
-      m.set(bi, (m.get(bi) ?? 0) + 1);
-    }
-    return m;
-  };
-  const aB = bigrams(a);
-  const bB = bigrams(b);
-  let overlap = 0;
-  for (const [k, v] of aB) {
-    overlap += Math.min(v, bB.get(k) ?? 0);
-  }
-  const total = a.length - 1 + (b.length - 1);
-  return total > 0 ? (2 * overlap) / total : 0;
-}
-
-function globishMatch(name: string, glob: string) {
-  // supports only simple '*.ext' and exact matches
-  if (glob === name) return true;
-  const m = /^\*\.(.+)$/.exec(glob);
-  if (m) return name.endsWith('.' + m[1]);
-  return false;
-}
