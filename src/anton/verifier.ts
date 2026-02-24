@@ -14,6 +14,8 @@ import { join, extname } from 'node:path';
 import { getChangedFiles } from '../git.js';
 import { runCommand } from '../runtime/executor.js';
 
+import { countLintErrors, filterLintErrorLines } from './lint-baseline.js';
+export { captureLintBaseline } from './lint-baseline.js';
 import type {
   DetectedCommands,
   AntonVerificationResult,
@@ -395,90 +397,3 @@ export async function tryAutofixChangedFiles(projectDir: string): Promise<boolea
 }
 
 // Helper functions
-
-export function filterLintErrorLines(output: string): string {
-  const lines = output.split('\n');
-  const result: string[] = [];
-  let lastFilePath = '';
-
-  for (const line of lines) {
-    // File path line (eslint): "/path/to/file.ts"
-    if (/^\/.*\.\w+$/.test(line.trim()) || /^[A-Z]:\\/.test(line.trim())) {
-      lastFilePath = line;
-      continue;
-    }
-    // Error line: "  1:1  error  ..."
-    if (
-      /\d+:\d+\s+error\s/.test(line) ||
-      /\berror\s+TS\d+/.test(line) ||
-      /\berror\[E\d+\]/.test(line)
-    ) {
-      if (lastFilePath && (result.length === 0 || result[result.length - 1] !== lastFilePath)) {
-        result.push(lastFilePath);
-      }
-      result.push(line);
-    }
-    // Summary line: "✖ N problems (N errors, N warnings)"
-    if (/^\u2716\s+\d+\s+problem/.test(line) || /^\d+\s+error/.test(line)) {
-      result.push(line);
-    }
-  }
-
-  return result.join('\n');
-}
-
-// ── Lint baseline helpers ───────────────────────────────────────────
-
-/**
- * Count the number of "error" lines in lint output.
- * Works for eslint, tsc, ruff, clippy — all emit lines containing "error".
- */
-export function countLintErrors(output: string): number {
-  // Match lines like:
-  //   1:1  error  `./types.js` ...     (eslint)
-  //   error TS2322: ...                 (tsc)
-  //   src/foo.rs:1:1: error[E0308]: ... (clippy)
-  //   src/foo.py:1:1: E302 ...          (ruff — codes starting with E/W/F)
-  const lines = output.split('\n');
-  let count = 0;
-  for (const line of lines) {
-    // eslint: "  1:1  error  ..."
-    if (/\d+:\d+\s+error\s/.test(line)) {
-      count++;
-      continue;
-    }
-    // tsc: "error TS..."  or  "file.ts(1,1): error TS..."
-    if (/\berror\s+TS\d+/.test(line)) {
-      count++;
-      continue;
-    }
-    // clippy/rustc: "error[E"
-    if (/\berror\[E\d+\]/.test(line)) {
-      count++;
-      continue;
-    }
-  }
-  return count;
-}
-
-/**
- * Capture baseline lint error count before Anton starts modifying files.
- * Returns the count, or undefined if lint is not configured or passes cleanly.
- */
-export async function captureLintBaseline(
-  lintCommand: string | undefined,
-  projectDir: string
-): Promise<number | undefined> {
-  if (!lintCommand) return undefined;
-  try {
-    const result = await runCommand(lintCommand, 180_000, projectDir);
-    if (result.exitCode === 0) return 0; // clean baseline
-    const count = countLintErrors(result.stdout + '\n' + result.stderr);
-    if (count > 0) {
-      console.error(`[anton:baseline] pre-existing lint errors: ${count}`);
-    }
-    return count;
-  } catch {
-    return undefined;
-  }
-}
