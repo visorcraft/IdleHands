@@ -859,7 +859,11 @@ describe('Anton Controller', { concurrency: 1 }, () => {
           if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
             return { text: 'not-json', turns: 1, toolCalls: 0 } as any;
           }
-          return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 } as any;
+          return {
+            text: '<anton-result>status: done</anton-result>',
+            turns: 1,
+            toolCalls: 0,
+          } as any;
         },
       }) as any;
 
@@ -909,7 +913,11 @@ describe('Anton Controller', { concurrency: 1 }, () => {
             await new Promise((r) => setTimeout(r, 120));
             return { text: '{"status":"complete","filename":""}', turns: 1, toolCalls: 0 } as any;
           }
-          return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 } as any;
+          return {
+            text: '<anton-result>status: done</anton-result>',
+            turns: 1,
+            toolCalls: 0,
+          } as any;
         },
       }) as any;
 

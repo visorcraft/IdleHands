@@ -180,8 +180,12 @@ If task is incomplete:
 - Then return EXACT JSON only:
 {"status":"incomplete","filename":"${opts.planFilePath}"}
 
-${opts.retryHint ? `RETRY CONTEXT: ${opts.retryHint}
-If prior attempts failed, keep output minimal, write/update only the plan file above, and return valid JSON.` : ''}
+${
+  opts.retryHint
+    ? `RETRY CONTEXT: ${opts.retryHint}
+If prior attempts failed, keep output minimal, write/update only the plan file above, and return valid JSON.`
+    : ''
+}
 
 Return JSON only. No markdown fences. No commentary.`;
 }
