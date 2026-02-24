@@ -33,7 +33,7 @@ export function buildSessionConfig(base: IdlehandsConfig, config: AntonRunConfig
 
 /**
  * Build session config for preflight discovery/review sessions.
- * Uses stricter limits and no tools to avoid long exploratory churn.
+ * Uses stricter limits while keeping core tools available for plan-file writes.
  */
 export function buildPreflightConfig(
   base: IdlehandsConfig,
@@ -63,7 +63,7 @@ export function buildPreflightConfig(
     timeout: Math.max(10, Math.min(Math.floor(stageTimeoutSec), preflightTimeoutCapSec)),
     compact_at: 0.65,
     compact_min_tail: 4,
-    no_tools: true,
+    no_tools: false,
     trifecta: { enabled: false },
     mcp: { servers: [] },
     lsp: { enabled: false },

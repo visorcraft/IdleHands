@@ -974,7 +974,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.ok(stageMessages.some((m) => m.includes('Retrying review with existing plan file')));
   });
 
-  test('17h. Preflight sessions enforce capped no-tools config', async () => {
+  test('17h. Preflight sessions enforce capped config while keeping tools enabled', async () => {
     const tmpDir = await createTempGitRepo();
     const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
     const planFile = join(tmpDir, '.agents', 'tasks', 'plan.md');
@@ -1016,9 +1016,51 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.equal(result.completedAll, true);
     assert.ok(sessionConfigs.length >= 2);
     const preflightSession = sessionConfigs[0];
-    assert.equal(preflightSession.no_tools, true);
+    assert.equal(preflightSession.no_tools, false);
     assert.equal(preflightSession.max_iterations, 2);
     assert.equal(preflightSession.timeout, 45);
+  });
+
+  test('17i. Missing discovery plan file is bootstrapped instead of failing preflight', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+    const planFile = join(tmpDir, '.agents', 'tasks', 'missing-plan.md');
+
+    const stageMessages: string[] = [];
+    const progress = {
+      ...createMockProgressCallback(),
+      onStage: (m: string) => stageMessages.push(m),
+    } as any;
+
+    const config = createTestConfig({
+      taskFile,
+      projectDir: tmpDir,
+      preflightEnabled: true,
+      preflightRequirementsReview: false,
+    } as any);
+
+    const createSession = async () => ({
+      ...createMockSession(['<anton-result>status: done</anton-result>']),
+      async ask(prompt: string) {
+        if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+          return { text: `{"status":"incomplete","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
+        }
+        return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 } as any;
+      },
+    } as any);
+
+    const result = await runAnton({
+      config,
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress,
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.equal(result.completedAll, true);
+    const fallbackBody = await readFile(planFile, 'utf8');
+    assert.match(fallbackBody, /auto-generated fallback/i);
+    assert.ok(stageMessages.some((m) => m.includes('Created fallback plan file')));
   });
 
   test("17. maxTotalTasks exceeded → stopReason='max_tasks_exceeded'", async () => {

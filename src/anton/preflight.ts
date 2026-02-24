@@ -3,7 +3,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { AntonTask } from './types.js';
@@ -93,6 +93,50 @@ export function parseRequirementsReviewResult(
 export async function assertPlanFileExists(absPath: string): Promise<void> {
   const s = await stat(absPath);
   if (!s.isFile()) throw new Error(`preflight-plan-not-a-file:${absPath}`);
+}
+
+/**
+ * Ensure a plan file exists. If the model returned a filename but failed to write it,
+ * bootstrap a deterministic fallback file so preflight can continue.
+ */
+export async function ensurePlanFileExistsOrBootstrap(opts: {
+  absPath: string;
+  task: AntonTask;
+  source: 'discovery' | 'requirements-review';
+}): Promise<'existing' | 'bootstrapped'> {
+  try {
+    await assertPlanFileExists(opts.absPath);
+    return 'existing';
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (!/ENOENT/.test(msg)) {
+      throw error;
+    }
+
+    await mkdir(path.dirname(opts.absPath), { recursive: true });
+    const body = [
+      '# Anton preflight plan (auto-generated fallback)',
+      '',
+      `> Generated because ${opts.source} returned a plan filename but did not write a valid file.`,
+      '',
+      '## Task (verbatim)',
+      opts.task.text,
+      '',
+      '## Missing',
+      '- Discovery/review did not persist structured details to disk.',
+      '',
+      '## Recommendation',
+      '- Re-run requirements review to refine this plan before implementation.',
+      '- Keep implementation scoped to this task only.',
+      '',
+      '## Likely files',
+      '- TBD',
+      '',
+    ].join('\n');
+
+    await writeFile(opts.absPath, body, 'utf8');
+    return 'bootstrapped';
+  }
 }
 
 export function buildDiscoveryPrompt(opts: {
