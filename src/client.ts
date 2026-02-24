@@ -53,7 +53,7 @@ export class RateLimiter {
     readonly windowMs = 60_000,
     readonly threshold = 5,
     readonly maxBackoffMs = 60_000
-  ) { }
+  ) {}
 
   recordRetryableError(): void {
     this.timestamps.push(Date.now());
@@ -248,7 +248,7 @@ export class OpenAIClient {
     private endpoint: string,
     private readonly apiKey?: string,
     private verbose: boolean = false
-  ) { }
+  ) {}
 
   /** Set the default response timeout (in seconds) for all requests. */
   setResponseTimeout(seconds: number): void {
@@ -325,7 +325,7 @@ export class OpenAIClient {
 
   private emitExchange(record: ExchangeRecord): void {
     if (!this.exchangeHook) return;
-    void Promise.resolve(this.exchangeHook(record)).catch(() => { });
+    void Promise.resolve(this.exchangeHook(record)).catch(() => {});
   }
 
   private rootEndpoint(): string {
@@ -342,6 +342,36 @@ export class OpenAIClient {
 
   private log(msg: string) {
     if (this.verbose) console.error(`[idlehands] ${msg}`);
+  }
+
+  /**
+   * Detect server-side tool-call incompatibilities that are fixed by content-mode.
+   */
+  private detectToolCallCompatFailure(text: string): {
+    kind: 'template-items-string' | 'tool-args-json-parse';
+    reason: string;
+  } | null {
+    const body = String(text ?? '');
+
+    if (/filter.*items.*String|items.*type.*String/i.test(body)) {
+      return {
+        kind: 'template-items-string',
+        reason: 'tool-call template incompatibility (|items on String)',
+      };
+    }
+
+    if (
+      /failed to parse tool call arguments as JSON|parse tool call arguments as JSON|json\.exception\.parse_error|invalid string:\s*missing closing quote/i.test(
+        body
+      )
+    ) {
+      return {
+        kind: 'tool-args-json-parse',
+        reason: 'server failed to parse tool-call arguments JSON',
+      };
+    }
+
+    return null;
   }
 
   async models(signal?: AbortSignal): Promise<ModelsResponse> {
@@ -452,8 +482,8 @@ export class OpenAIClient {
             if (fn?.name) {
               const params = fn.parameters?.properties
                 ? Object.entries(fn.parameters.properties)
-                  .map(([k, v]: [string, any]) => `${k}: ${(v as any).type ?? 'any'}`)
-                  .join(', ')
+                    .map(([k, v]: [string, any]) => `${k}: ${(v as any).type ?? 'any'}`)
+                    .join(', ')
                 : '';
               toolBlock += `- ${fn.name}(${params}): ${fn.description ?? ''}\n`;
             }
@@ -591,6 +621,8 @@ export class OpenAIClient {
       true
     );
     const reqStart = Date.now();
+    const seen5xxMessages: string[] = [];
+    let switchedToContentModeThisCall = false;
 
     for (let attempt = 0; attempt < 3; attempt++) {
       // Build a combined signal that fires on caller abort OR response timeout.
@@ -617,6 +649,57 @@ export class OpenAIClient {
             503,
             true
           );
+          if (attempt < 2) {
+            await delay(backoff);
+            continue;
+          }
+          throw lastErr;
+        }
+
+        if (res.status >= 500 && res.status <= 599) {
+          const text = await res.text().catch(() => '');
+          const errSig = `${res.status}:${text.slice(0, 500)}`;
+
+          const compat = this.detectToolCallCompatFailure(text);
+          if (compat) {
+            if (switchedToContentModeThisCall) {
+              throw makeClientError(
+                `Tool-call compatibility failure persisted after content-mode switch (${compat.kind}).\n${text.slice(0, 2000)}`,
+                res.status,
+                false
+              );
+            }
+
+            this.log(`Detected ${compat.reason} — switching to content-mode tool calls`);
+            console.warn(
+              `[warn] Server cannot parse tool_calls reliably (${compat.kind}). Switching to content-mode (tools in system prompt).`
+            );
+            this.contentModeToolCalls = true;
+            this.compatTelemetry.autoSwitches += 1;
+            switchedToContentModeThisCall = true;
+            return this.chat(opts);
+          }
+
+          if (seen5xxMessages.includes(errSig)) {
+            this.log(
+              `Deterministic server error detected (same ${res.status} repeated) — not retrying`
+            );
+            throw makeClientError(
+              `Server returns the same error repeatedly (${res.status}). This is likely a template or model compatibility issue, not a transient failure.\n${text.slice(0, 2000)}`,
+              res.status,
+              false
+            );
+          }
+          seen5xxMessages.push(errSig);
+
+          lastErr = makeClientError(
+            `POST /chat/completions failed: ${res.status} ${res.statusText}${text ? `\n${text.slice(0, 2000)}` : ''}`,
+            res.status,
+            true
+          );
+
+          const backoff = Math.pow(2, attempt + 1) * 1000;
+          this.log(`HTTP ${res.status} on non-stream request, retrying in ${backoff}ms...`);
           if (attempt < 2) {
             await delay(backoff);
             continue;
@@ -828,22 +911,19 @@ export class OpenAIClient {
           true
         );
 
-        // Detect template incompatibility (|items filter on string arguments)
-        // and auto-switch to content-mode tool calls
-        if (/filter.*items.*String|items.*type.*String/i.test(text)) {
+        // Detect known tool-call compatibility failures and auto-switch to content mode.
+        const compat = this.detectToolCallCompatFailure(text);
+        if (compat) {
           if (switchedToContentModeThisCall) {
             throw makeClientError(
-              `Template incompatibility persisted after content-mode switch. Aborting to avoid retry loop.
-${text.slice(0, 2000)}`,
+              `Tool-call compatibility failure persisted after content-mode switch (${compat.kind}). Aborting to avoid retry loop.\n${text.slice(0, 2000)}`,
               res.status,
               false
             );
           }
-          this.log(
-            'Detected tool-call template incompatibility (|items on String) — switching to content-mode tool calls'
-          );
+          this.log(`Detected ${compat.reason} — switching to content-mode tool calls`);
           console.warn(
-            '[warn] Server template cannot handle tool_calls format. Switching to content-mode (tools in system prompt).'
+            `[warn] Server cannot parse tool_calls reliably (${compat.kind}). Switching to content-mode (tools in system prompt).`
           );
           this.contentModeToolCalls = true;
           this.compatTelemetry.autoSwitches += 1;
@@ -921,7 +1001,7 @@ ${text.slice(0, 2000)}`,
         const result = await Promise.race([readPromise, timeoutPromise]);
 
         if (result === 'TIMEOUT') {
-          reader.cancel().catch(() => { });
+          reader.cancel().catch(() => {});
 
           // If we got *some* deltas, returning partial content is usually worse UX for tool-using agents:
           // it often leaves a truncated tool call / JSON args which then fails downstream.
