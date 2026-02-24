@@ -102,7 +102,7 @@ Rules:
 - **L2** (optional): AI review approves diff quality
 
 When L1 commands fail, Anton captures the **full stdout and stderr** from the failing commands (up to 4 KB). This output is stored in the attempt's verification result and used for:
-- Rich error reporting in progress messages (Telegram/Discord/CLI)
+- Rich error reporting in progress messages (Telegram/Discord/TUI/CLI)
 - Contextual retry prompts (see Smart Retry below)
 
 ## Smart retry system
@@ -220,7 +220,7 @@ anton:
 | `IDLEHANDS_ANTON_TOTAL_TIMEOUT_SEC` | Total time budget |
 | `IDLEHANDS_ANTON_MAX_TOTAL_TOKENS` | Total token budget |
 | `IDLEHANDS_ANTON_VERIFY_AI` | Enable AI verification |
-| `IDLEHANDS_ANTON_PROGRESS_EVENTS` | Enable mid-task Telegram/Discord updates |
+| `IDLEHANDS_ANTON_PROGRESS_EVENTS` | Enable mid-task progress updates (Telegram/Discord/TUI) |
 | `IDLEHANDS_ANTON_PROGRESS_HEARTBEAT_SEC` | Seconds between "still working" heartbeat messages |
 
 ## Troubleshooting

@@ -42,7 +42,8 @@ export function buildReplContext(
   session: AgentSession | null,
   config: IdlehandsConfig,
   cleanupFn: (() => Promise<void>) | null,
-  saveFn: () => Promise<void>
+  saveFn: () => Promise<void>,
+  emitRuntimeUpdate?: (text: string) => void
 ): ReplContext {
   const noop = () => {},
     asyncNoop = async () => {};
@@ -87,6 +88,8 @@ export function buildReplContext(
     antonAbortSignal: null,
     antonLastResult: null,
     antonProgress: null,
+    antonLastLoopEvent: null,
+    emitRuntimeUpdate,
     shutdown: async () => {
       if (cleanupFn) await cleanupFn();
     },
@@ -163,7 +166,8 @@ export async function runSlashCommand(
   session: AgentSession | null,
   config: IdlehandsConfig,
   cleanupFn: (() => Promise<void>) | null,
-  saveFn: () => Promise<void>
+  saveFn: () => Promise<void>,
+  emitRuntimeUpdate?: (text: string) => void
 ): Promise<{ found: boolean; output: string }> {
   ensureCommandsRegistered();
   const cmd = findCommand(line);
@@ -176,7 +180,7 @@ export async function runSlashCommand(
   console.error = (...args: unknown[]) => captured.push(args.map(String).join(' '));
 
   try {
-    const ctx = buildReplContext(session, config, cleanupFn, saveFn);
+    const ctx = buildReplContext(session, config, cleanupFn, saveFn, emitRuntimeUpdate);
     const args = line.replace(/^\S+\s*/, '');
     await cmd.execute(ctx, args, line);
   } catch (e: any) {

@@ -53,6 +53,15 @@ export interface ReplContext {
   antonAbortSignal: { aborted: boolean } | null;
   antonLastResult: AntonRunResult | null;
   antonProgress: AntonProgress | null;
+  antonLastLoopEvent?: {
+    kind: 'auto-recovered' | 'final-failure' | 'other';
+    taskText: string;
+    message: string;
+    at: number;
+  } | null;
+
+  /** Optional live output callback for long-running slash commands (used by TUI). */
+  emitRuntimeUpdate?: (text: string) => void;
 
   shutdown(code: number): Promise<void>;
   readServerHealth(force?: boolean): Promise<ServerHealthSnapshot | null>;

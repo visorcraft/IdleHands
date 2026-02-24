@@ -672,8 +672,16 @@ export class TuiController {
       return true;
     }
 
-    const result = await runSlashCommand(line, this.session, this.config, this.cleanupFn, () =>
-      this.saveTuiSessionSnapshot()
+    const result = await runSlashCommand(
+      line,
+      this.session,
+      this.config,
+      this.cleanupFn,
+      () => this.saveTuiSessionSnapshot(),
+      (text) => {
+        if (!text.trim()) return;
+        this.pushSystemMessage(text);
+      }
     );
     if (!result.found) {
       this.dispatch({
