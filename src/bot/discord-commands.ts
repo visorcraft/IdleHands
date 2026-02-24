@@ -13,7 +13,6 @@ import type { BotDiscordConfig, IdlehandsConfig } from '../types.js';
 import { PKG_VERSION } from '../utils.js';
 
 import { shouldAutoPinBeforeAntonStart } from './anton-auto-pin.js';
-import { formatMarkdown } from './command-format.js';
 import {
   startCommand,
   helpCommand,
@@ -36,10 +35,11 @@ import {
   escalateSetCommand,
   deescalateCommand,
   gitStatusCommand,
-  antonCommand,
+  type CmdResult,
   type ManagedLike,
 } from './command-logic.js';
 import { detectRepoCandidates, expandHome, isPathAllowed } from './dir-guard.js';
+import { handleDiscordAnton } from './discord-anton.js';
 import { sendDiscordResult } from './discord-result.js';
 import { splitDiscord } from './discord-routing.js';
 import type { ManagedSession } from './discord.js';
@@ -79,8 +79,7 @@ export async function handleTextCommand(
     maxQueue,
   } = ctx;
   const m = managed as unknown as ManagedLike;
-  const send = (r: Parameters<typeof formatMarkdown>[0]) =>
-    sendDiscordResult(msg, sendUserVisible, r);
+  const send = (r: CmdResult) => sendDiscordResult(msg, sendUserVisible, r);
 
   if (content === '/cancel') {
     const res = cancelActive(managed);
@@ -609,62 +608,4 @@ export async function handleTextCommand(
   }
 
   return false;
-}
-
-const DISCORD_RATE_LIMIT_MS = 3_000;
-
-export async function handleDiscordAnton(
-  managed: ManagedSession,
-  msg: Message,
-  content: string,
-  ctx: Pick<DiscordCommandContext, 'sendUserVisible'>
-): Promise<void> {
-  const { sendUserVisible } = ctx;
-  const args = content.replace(/^\/anton\s*/, '').trim();
-  const m = managed as unknown as ManagedLike;
-  const channel = msg.channel as { send: (c: string) => Promise<any> };
-
-  let antonStatusMsg: { edit: (content: string) => Promise<any> } | null = null;
-  let antonStatusLastText = '';
-
-  const result = await antonCommand(
-    m,
-    args,
-    (t) => {
-      const isStatusUpdate = t.startsWith('⏳ Still working:');
-
-      if (!isStatusUpdate) {
-        antonStatusMsg = null;
-        antonStatusLastText = '';
-        channel.send(t).catch(() => {});
-        return;
-      }
-
-      if (t === antonStatusLastText) return;
-      antonStatusLastText = t;
-
-      if (antonStatusMsg) {
-        antonStatusMsg.edit(t).catch(() => {
-          channel
-            .send(t)
-            .then((m: any) => {
-              antonStatusMsg = m;
-            })
-            .catch(() => {});
-        });
-        return;
-      }
-
-      channel
-        .send(t)
-        .then((m: any) => {
-          antonStatusMsg = m;
-        })
-        .catch(() => {});
-    },
-    DISCORD_RATE_LIMIT_MS
-  );
-
-  const text = formatMarkdown(result);
-  if (text) await sendUserVisible(msg, text).catch(() => {});
 }
