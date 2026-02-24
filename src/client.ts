@@ -38,6 +38,7 @@ export class OpenAIClient {
   readonly backpressure = new BackpressureMonitor();
   private exchangeHook?: (record: ExchangeRecord) => void | Promise<void>;
   private cachedHeaders?: Record<string, string>;
+  private cachedRootEndpoint?: string;
 
   /** Default response timeout in ms (overridable per-call). */
   private defaultResponseTimeoutMs = 600_000;
@@ -141,7 +142,9 @@ export class OpenAIClient {
     private endpoint: string,
     private readonly apiKey?: string,
     private verbose: boolean = false
-  ) {}
+  ) {
+    this.cachedRootEndpoint = this.endpoint.replace(/\/v1\/?$/, '');
+  }
 
   /** Set the default response timeout (in seconds) for all requests. */
   setResponseTimeout(seconds: number): void {
@@ -206,6 +209,7 @@ export class OpenAIClient {
 
   setEndpoint(endpoint: string): void {
     this.endpoint = endpoint.replace(/\/+$/, '');
+    this.cachedRootEndpoint = this.endpoint.replace(/\/v1\/?$/, '');
   }
 
   getEndpoint(): string {
@@ -222,7 +226,9 @@ export class OpenAIClient {
   }
 
   private rootEndpoint(): string {
-    return this.endpoint.replace(/\/v1\/?$/, '');
+    if (this.cachedRootEndpoint) return this.cachedRootEndpoint;
+    this.cachedRootEndpoint = this.endpoint.replace(/\/v1\/?$/, '');
+    return this.cachedRootEndpoint;
   }
 
   private headers() {
