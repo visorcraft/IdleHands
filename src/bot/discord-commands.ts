@@ -12,7 +12,6 @@ import type { Message } from 'discord.js';
 import type { BotDiscordConfig, IdlehandsConfig } from '../types.js';
 import { PKG_VERSION } from '../utils.js';
 
-import { shouldAutoPinBeforeAntonStart } from './anton-auto-pin.js';
 import {
   startCommand,
   helpCommand,
@@ -39,6 +38,7 @@ import {
   type ManagedLike,
 } from './command-logic.js';
 import { detectRepoCandidates, expandHome, isPathAllowed } from './dir-guard.js';
+import { maybeAutoPinDiscordAntonStart } from './discord-anton-autopin.js';
 import { handleDiscordAnton } from './discord-anton.js';
 import { sendDiscordResult } from './discord-result.js';
 import { splitDiscord } from './discord-routing.js';
@@ -573,35 +573,15 @@ export async function handleTextCommand(
 
   if (content === '/anton' || content.startsWith('/anton ')) {
     const args = content.replace(/^\/anton\s*/, '').trim();
-    const autoPinEnabled = managed.config?.anton?.auto_pin_current_dir === true;
-    if (shouldAutoPinBeforeAntonStart({ args, autoPinEnabled, dirPinned: managed.dirPinned })) {
-      const currentDir = path.resolve(expandHome(managed.config.dir || defaultDir));
-      if (!isPathAllowed(currentDir, managed.allowedDirs)) {
-        await sendUserVisible(
-          msg,
-          '❌ Anton auto-pin failed: current directory is not allowed. Use /dir <path> first.'
-        ).catch(() => {});
-        return true;
-      }
-
-      const repoCandidates = await detectRepoCandidates(currentDir, managed.allowedDirs).catch(
-        () => managed.repoCandidates
-      );
-      const cfg: IdlehandsConfig = {
-        ...managed.config,
-        dir: currentDir,
-        allowed_write_roots: managed.allowedDirs,
-        dir_pinned: true,
-        repo_candidates: repoCandidates,
-      };
-      await recreateSession(managed, cfg);
-      managed.dirPinned = true;
-      managed.repoCandidates = repoCandidates;
-      await sendUserVisible(
-        msg,
-        `📌 Anton auto-pinned working directory to \`${currentDir}\``
-      ).catch(() => {});
-    }
+    const autoPin = await maybeAutoPinDiscordAntonStart(
+      managed,
+      msg,
+      args,
+      defaultDir,
+      recreateSession,
+      sendUserVisible
+    );
+    if (autoPin.handled) return true;
 
     await handleDiscordAnton(managed, msg, content, ctx);
     return true;
