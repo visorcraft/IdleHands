@@ -56,23 +56,17 @@ export function userContentToText(content: UserContent): string {
     .trim();
 }
 
+const DELEGATION_MENTION_RE = /\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b/;
+const NEGATION_BEFORE_DELEGATION_RE =
+  /\b(?:do not|don't|dont|no|without|avoid|skip|never)\b[^\n.]{0,90}\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b/;
+const NEGATION_AFTER_DELEGATION_RE =
+  /\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b[^\n.]{0,50}\b(?:do not|don't|dont|not allowed|forbidden|no)\b/;
+
 /** Honor explicit anti-delegation instructions in user prompt. */
 export function userDisallowsDelegation(content: UserContent): boolean {
   const text = userContentToText(content).toLowerCase();
   if (!text) return false;
 
-  const mentionsDelegation = /\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b/.test(
-    text
-  );
-  if (!mentionsDelegation) return false;
-
-  const negationNearDelegation =
-    /\b(?:do not|don't|dont|no|without|avoid|skip|never)\b[^\n.]{0,90}\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b/.test(
-      text
-    ) ||
-    /\b(?:spawn[_\-\s]?task|sub[\-\s]?agents?|delegate|delegation)\b[^\n.]{0,50}\b(?:do not|don't|dont|not allowed|forbidden|no)\b/.test(
-      text
-    );
-
-  return negationNearDelegation;
+  if (!DELEGATION_MENTION_RE.test(text)) return false;
+  return NEGATION_BEFORE_DELEGATION_RE.test(text) || NEGATION_AFTER_DELEGATION_RE.test(text);
 }
