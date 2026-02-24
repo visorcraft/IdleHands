@@ -222,7 +222,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.equal(sessionCount, 3);
   });
 
-  test('2. Retry then pass → attempts.length=2', async () => {
+  test('2. Retry then pass → attempts.length=2 and failed=0', async () => {
     const tmpDir = await createTempGitRepo();
     const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
 
@@ -249,6 +249,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
 
     const taskAttempts = result.attempts.filter((a) => a.taskKey === result.attempts[0]?.taskKey);
     assert.equal(taskAttempts.length, 2);
+    assert.equal(result.failed, 0, 'intermediate failed attempts should not count as final failed tasks');
     assert.equal(sessionCount, 2);
   });
 
