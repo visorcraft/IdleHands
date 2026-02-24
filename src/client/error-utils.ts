@@ -1,5 +1,9 @@
 import type { ClientError } from '../client.js';
 
+const RE_CONN_REFUSED = /ECONNREFUSED|fetch failed/i;
+const RE_FETCH_FAILED = /fetch failed/i;
+const RE_CONN_TIMEOUT = /Connection timeout \(\d+ms\)/i;
+
 export function makeClientError(msg: string, status?: number, retryable?: boolean): ClientError {
   const e = new Error(msg) as ClientError;
   e.status = status;
@@ -9,16 +13,16 @@ export function makeClientError(msg: string, status?: number, retryable?: boolea
 
 export function isConnRefused(e: any): boolean {
   const msg = String(e?.message ?? '');
-  return e?.cause?.code === 'ECONNREFUSED' || /ECONNREFUSED|fetch failed/i.test(msg);
+  return e?.cause?.code === 'ECONNREFUSED' || RE_CONN_REFUSED.test(msg);
 }
 
 export function isFetchFailed(e: any): boolean {
-  return /fetch failed/i.test(String(e?.message ?? ''));
+  return RE_FETCH_FAILED.test(String(e?.message ?? ''));
 }
 
 export function isConnTimeout(e: any): boolean {
   const msg = String(e?.message ?? '');
-  return Boolean(e?.retryable) && /Connection timeout \(\d+ms\)/i.test(msg);
+  return Boolean(e?.retryable) && RE_CONN_TIMEOUT.test(msg);
 }
 
 export function asError(e: unknown, fallback = 'unknown error'): Error {
