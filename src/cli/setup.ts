@@ -40,6 +40,7 @@ import {
   type BotSetupConfig,
 } from './bot.js';
 import { splitTokens } from './command-utils.js';
+import { getActiveRuntimeEndpoint } from './runtime-detect.js';
 
 // ── ANSI codes ───────────────────────────────────────────────────────
 
@@ -223,16 +224,6 @@ async function selectChoice(
 }
 
 // ── Runtime detection ────────────────────────────────────────────────
-
-async function getActiveRuntimeEndpoint(): Promise<string | null> {
-  try {
-    const { loadActiveRuntime } = await import('../runtime/executor.js');
-    const active = await loadActiveRuntime();
-    return active?.endpoint ?? null;
-  } catch {
-    return null;
-  }
-}
 
 // ── Fullscreen TUI runtime add forms ─────────────────────────────────
 
