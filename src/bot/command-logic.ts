@@ -46,6 +46,7 @@ export {
   escalateSetCommand,
   escalateShowCommand,
 } from './escalation-commands.js';
+export { gitStatusCommand } from './git-status-command.js';
 
 // ── Structured result types ─────────────────────────────────────────
 
@@ -295,50 +296,6 @@ export function watchdogCommand(
   }
 
   return { title: 'Watchdog Status', kv, lines };
-}
-
-export async function gitStatusCommand(cwd: string): Promise<CmdResult> {
-  if (!cwd) return { error: 'No working directory set. Use /dir to set one.' };
-
-  const { spawnSync } = await import('node:child_process');
-
-  const statusResult = spawnSync('git', ['status', '-s'], {
-    cwd,
-    encoding: 'utf8',
-    timeout: 5000,
-  });
-
-  if (statusResult.status !== 0) {
-    const err = String(statusResult.stderr || statusResult.error || 'Unknown error');
-    if (err.includes('not a git repository') || err.includes('not in a git')) {
-      return { error: '❌ Not a git repository.' };
-    }
-    return { error: `❌ git status failed: ${err.slice(0, 200)}` };
-  }
-
-  const statusOut = String(statusResult.stdout || '').trim();
-
-  const branchResult = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-    cwd,
-    encoding: 'utf8',
-    timeout: 2000,
-  });
-  const branch = branchResult.status === 0 ? String(branchResult.stdout || '').trim() : 'unknown';
-
-  if (!statusOut) {
-    return {
-      lines: [`📁 ${cwd}`, `🌿 Branch: ${branch}`, '', '✅ Working tree clean'],
-    };
-  }
-
-  const allLines = statusOut.split('\n');
-  const lines = allLines.slice(0, 30);
-  const truncated = allLines.length > 30;
-
-  return {
-    lines: [`📁 ${cwd}`, `🌿 Branch: ${branch}`],
-    preformatted: lines.join('\n') + (truncated ? '\n...' : ''),
-  };
 }
 
 // ── Anton ───────────────────────────────────────────────────────────
