@@ -3,49 +3,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import {
+  asError,
+  getRetryDelayMs,
+  isConnRefused,
+  isConnTimeout,
+  isFetchFailed,
+  makeClientError,
+} from './client/error-utils.js';
 import type { ChatCompletionResponse, ChatMessage, ModelsResponse, ToolSchema } from './types.js';
 
 export type ClientError = Error & {
   status?: number;
   retryable?: boolean;
 };
-
-function makeClientError(msg: string, status?: number, retryable?: boolean): ClientError {
-  const e = new Error(msg) as ClientError;
-  e.status = status;
-  e.retryable = retryable;
-  return e;
-}
-
-function isConnRefused(e: any): boolean {
-  const msg = String(e?.message ?? '');
-  // Node fetch sometimes throws `TypeError: fetch failed` for transient network errors.
-  // Treat it as retryable in the same bucket as ECONNREFUSED.
-  return e?.cause?.code === 'ECONNREFUSED' || /ECONNREFUSED|fetch failed/i.test(msg);
-}
-
-function isFetchFailed(e: any): boolean {
-  return /fetch failed/i.test(String(e?.message ?? ''));
-}
-
-function isConnTimeout(e: any): boolean {
-  const msg = String(e?.message ?? '');
-  return Boolean(e?.retryable) && /Connection timeout \(\d+ms\)/i.test(msg);
-}
-
-function asError(e: unknown, fallback = 'unknown error'): Error {
-  if (e instanceof Error) return e;
-  if (e === undefined) return new Error(fallback);
-  return new Error(String(e));
-}
-
-function getRetryDelayMs(defaultMs: number): number {
-  const raw = process.env.IDLEHANDS_TEST_RETRY_DELAY_MS;
-  if (raw == null) return defaultMs;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) return defaultMs;
-  return Math.floor(parsed);
-}
 
 // ─── Rate Limiter ────────────────────────────────────────
 
