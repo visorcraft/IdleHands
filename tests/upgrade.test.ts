@@ -18,7 +18,11 @@ describe('needsElevation', () => {
     }
   });
 
-  it('returns true for a non-writable directory', () => {
+  it('returns true for a non-writable directory', function () {
+    if (process.getuid?.() === 0) {
+      this.skip();
+      return;
+    }
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ih-upgrade-test-'));
     const modules = path.join(tmp, 'lib', 'node_modules');
     fs.mkdirSync(modules, { recursive: true });
@@ -31,8 +35,9 @@ describe('needsElevation', () => {
     }
   });
 
-  it('returns true when lib/node_modules does not exist', () => {
-    assert.strictEqual(needsElevation('/nonexistent/path/ih-test'), true);
+  it('returns true when lib/node_modules does not exist (unless root)', () => {
+    const expected = process.getuid?.() === 0 ? false : true;
+    assert.strictEqual(needsElevation('/nonexistent/path/ih-test'), expected);
   });
 
   it('returns false when running as root', function () {
