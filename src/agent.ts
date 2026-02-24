@@ -3700,16 +3700,6 @@ export async function createSession(opts: {
                 }
               }
 
-              // At consec >= 3: poison the result (don't execute, return error).
-              // At consec >= 4: also suppress the tool from the schema entirely.
-              if (consec >= 3) {
-                poisonedToolSigs.add(sig);
-                if (consec >= 4) {
-                  suppressedTools.add(toolName);
-                }
-                continue;
-              }
-
               // At 2x, serve from cache if available
               if (consec >= 2 && isReadFileTool) {
                 const argsForSig = sigMetaBySig.get(sig)?.args ?? {};
@@ -3725,6 +3715,7 @@ export async function createSession(opts: {
               }
 
               // Deterministic recovery at threshold (no hard throw): force one no-tools turn.
+              // IMPORTANT: evaluate this before the generic consec>=3 continue path.
               if (consec >= hardBreakAt) {
                 shouldForceToollessRecovery = true;
                 messages.push({
@@ -3732,6 +3723,17 @@ export async function createSession(opts: {
                   content: `[tool-loop critical] ${toolName} repeated ${consec}x unchanged. Tools disabled next turn; use existing results.`,
                 } as ChatMessage);
               }
+
+              // At consec >= 3: poison the result (don't execute, return error).
+              // At consec >= 4: also suppress the tool from the schema entirely.
+              if (consec >= 3) {
+                poisonedToolSigs.add(sig);
+                if (consec >= 4) {
+                  suppressedTools.add(toolName);
+                }
+                continue;
+              }
+
               continue;
             }
 

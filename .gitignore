@@ -1,6 +1,5 @@
 node_modules/
 dist/
-.openclaw
 .env
 *.log
 *.tgz
@@ -10,3 +9,13 @@ docs/node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
 .release/*.tar.gz
+
+# OpenClaw
+.openclaw
+
+# Codex
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md

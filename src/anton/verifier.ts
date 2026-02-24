@@ -141,6 +141,16 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
     return result;
   }
 
+  // Scope guard: if task text names explicit files, reject out-of-scope edits.
+  const scopeGuard = checkTaskScopeGuard(opts.task.text, opts.projectDir);
+  if (!scopeGuard.ok) {
+    result.passed = false;
+    result.l1_build = false;
+    result.summary = scopeGuard.reason;
+    result.commandOutput = scopeGuard.details;
+    return result;
+  }
+
   // L1: Run build/test/lint commands
   let l1_all = true;
   const failedCommands: string[] = [];
@@ -357,6 +367,53 @@ export async function tryAutofixChangedFiles(projectDir: string): Promise<boolea
 }
 
 // Helper functions
+
+type ScopeGuardResult = { ok: true } | { ok: false; reason: string; details: string };
+
+/**
+ * If task text explicitly names files (e.g. "create src/foo.ts"), enforce that
+ * working tree changes stay within that set. This prevents task scope bleed.
+ */
+function checkTaskScopeGuard(taskText: string, projectDir: string): ScopeGuardResult {
+  const expected = extractExplicitTaskFiles(taskText);
+  if (expected.length === 0) return { ok: true };
+
+  const changed = getChangedFiles(projectDir)
+    .map((p) => p.replace(/^\.\//, ''))
+    .filter(Boolean);
+
+  if (changed.length === 0) return { ok: true };
+
+  const expectedSet = new Set(expected);
+  const outOfScope = changed.filter((f) => !expectedSet.has(f));
+  if (outOfScope.length === 0) return { ok: true };
+
+  return {
+    ok: false,
+    reason: `Scope guard failed: task explicitly targets ${expected.join(', ')} but modified out-of-scope files`,
+    details: `Expected: ${expected.join(', ')}\nChanged: ${changed.join(', ')}\nOut-of-scope: ${outOfScope.join(', ')}`,
+  };
+}
+
+function extractExplicitTaskFiles(taskText: string): string[] {
+  const text = String(taskText || '');
+  const files = new Set<string>();
+
+  // Common explicit path pattern (supports nested dirs and dots/dashes/underscores)
+  const pathRegex = /\b([A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+\.[A-Za-z0-9]{1,8})\b/g;
+  for (const m of text.matchAll(pathRegex)) {
+    files.add(m[1].replace(/^\.\//, ''));
+  }
+
+  // Bare filename pattern (e.g. "agent.ts")
+  const bareRegex = /\b([A-Za-z0-9._-]+\.[A-Za-z0-9]{1,8})\b/g;
+  for (const m of text.matchAll(bareRegex)) {
+    const file = m[1];
+    if (!file.includes('/')) files.add(file);
+  }
+
+  return [...files];
+}
 
 function isCommandAvailable(...cmd: string[]): boolean {
   const command = cmd.length === 1 ? cmd[0] : cmd.join(' ');

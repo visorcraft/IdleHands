@@ -494,7 +494,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       let toolLoopRetryCount = 0;
       const autoContinueCfg = managed.config.tool_loop_auto_continue;
       const autoContinueEnabled = autoContinueCfg?.enabled !== false;
-      const autoContinueMaxRetries = autoContinueCfg?.max_retries ?? 5;
+      const autoContinueMaxRetries = autoContinueCfg?.max_retries ?? 3;
       while (!askComplete) {
         // Create a fresh AbortController for each attempt (watchdog compaction aborts the previous one)
         const attemptController = new AbortController();

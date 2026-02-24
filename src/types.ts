@@ -190,7 +190,7 @@ export type IdlehandsConfig = {
   tool_loop_detection?: ToolLoopDetectionConfig;
   tool_loop_auto_continue?: {
     enabled?: boolean;
-    max_retries?: number; // default 5
+    max_retries?: number; // default 3
   };
 
   // network

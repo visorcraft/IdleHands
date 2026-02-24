@@ -385,7 +385,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
       const retries = taskRetryCount.get(currentTask.key) || 0;
 
       // Check for consecutive identical failures (dedup guard)
-      const maxIdentical = config.maxIdenticalFailures ?? 5;
+      const maxIdentical = config.maxIdenticalFailures ?? 3;
       const identicalCount = consecutiveIdenticalCount.get(currentTask.key) || 0;
       if (identicalCount >= maxIdentical) {
         if (!config.skipOnFail) {
@@ -563,7 +563,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           };
           let toolLoopRetries = 0;
           const toolLoopMaxRetries = idlehandsConfig.tool_loop_auto_continue?.enabled !== false
-            ? (idlehandsConfig.tool_loop_auto_continue?.max_retries ?? 5)
+            ? (idlehandsConfig.tool_loop_auto_continue?.max_retries ?? 3)
             : 0;
           while (true) {
             try {
@@ -612,6 +612,13 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           const taskEndMs = Date.now();
           const durationMs = taskEndMs - taskStartMs;
           const tokensUsed = session.usage.prompt + session.usage.completion;
+
+          // Per-attempt token cost guardrail (not just prompt size).
+          if (tokensUsed > config.maxPromptTokensPerAttempt) {
+            throw new Error(
+              `attempt-token-budget-exceeded: used=${tokensUsed} max=${config.maxPromptTokensPerAttempt}`
+            );
+          }
 
           // Parse structured result
           const agentResult = parseAntonResult(result.text);
@@ -821,8 +828,11 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         if (attempt.status === 'blocked') {
           // Immediately exhaust retries so the task is skipped on next loop iteration
           taskRetryCount.set(currentTask.key, config.maxRetriesPerTask);
-        } else if ((attempt.error ?? '').startsWith('prompt-budget-exceeded')) {
-          // Don't burn retries/tokens on oversized prompts.
+        } else if (
+          (attempt.error ?? '').startsWith('prompt-budget-exceeded') ||
+          (attempt.error ?? '').startsWith('attempt-token-budget-exceeded')
+        ) {
+          // Don't burn retries/tokens on oversized prompts/attempts.
           taskRetryCount.set(currentTask.key, config.maxRetriesPerTask);
         } else {
           taskRetryCount.set(currentTask.key, attemptNumber);
