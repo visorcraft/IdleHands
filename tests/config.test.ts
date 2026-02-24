@@ -576,7 +576,7 @@ describe('anton config', () => {
     assert.equal(config.anton.skip_on_fail, false);
     assert.equal(config.anton.skip_on_blocked, true);
     assert.equal(config.anton.rollback_on_fail, false);
-    assert.equal(config.anton.max_identical_failures, 5);
+    assert.equal(config.anton.max_identical_failures, 3);
     assert.equal(config.anton.approval_mode, 'yolo');
     assert.equal(config.anton.verbose, false);
     assert.equal(config.anton.auto_commit, true);
