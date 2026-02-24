@@ -11,108 +11,14 @@ import {
   isFetchFailed,
   makeClientError,
 } from './client/error-utils.js';
+import { BackpressureMonitor, RateLimiter } from './client/pressure.js';
+export { BackpressureMonitor, RateLimiter } from './client/pressure.js';
 import type { ChatCompletionResponse, ChatMessage, ModelsResponse, ToolSchema } from './types.js';
 
 export type ClientError = Error & {
   status?: number;
   retryable?: boolean;
 };
-
-// ─── Rate Limiter ────────────────────────────────────────
-
-/**
- * Track 503 errors over a rolling 60s window.
- * When count exceeds threshold, imposes escalating back-off.
- */
-export class RateLimiter {
-  private timestamps: number[] = [];
-  private backoffLevel = 0;
-
-  constructor(
-    readonly windowMs = 60_000,
-    readonly threshold = 5,
-    readonly maxBackoffMs = 60_000
-  ) {}
-
-  recordRetryableError(): void {
-    this.timestamps.push(Date.now());
-    this.prune();
-    if (this.timestamps.length >= this.threshold) {
-      this.backoffLevel = Math.min(this.backoffLevel + 1, 6);
-    }
-  }
-
-  private prune(): void {
-    const cutoff = Date.now() - this.windowMs;
-    this.timestamps = this.timestamps.filter((t) => t > cutoff);
-  }
-
-  /** Returns delay in ms to wait before next request (0 = no delay). */
-  getDelay(): number {
-    this.prune();
-    if (this.timestamps.length < this.threshold) {
-      // Decay backoff level when window clears
-      if (this.timestamps.length === 0) this.backoffLevel = 0;
-      return 0;
-    }
-    // Exponential: 2^level * 1000, capped at maxBackoffMs
-    return Math.min(Math.pow(2, this.backoffLevel) * 1000, this.maxBackoffMs);
-  }
-
-  get recentCount(): number {
-    this.prune();
-    return this.timestamps.length;
-  }
-
-  reset(): void {
-    this.timestamps = [];
-    this.backoffLevel = 0;
-  }
-}
-
-// ─── Backpressure Monitor ─────────────────────────────────
-
-/**
- * Track response times and detect backpressure (server overload).
- * Warns when response time exceeds 3× rolling average.
- */
-export class BackpressureMonitor {
-  private times: number[] = [];
-  private readonly maxSamples: number;
-  readonly multiplier: number;
-
-  constructor(opts?: { maxSamples?: number; multiplier?: number }) {
-    this.maxSamples = opts?.maxSamples ?? 20;
-    this.multiplier = opts?.multiplier ?? 3;
-  }
-
-  record(responseMs: number): { warn: boolean; avg: number; current: number } {
-    const avg = this.average;
-    this.times.push(responseMs);
-    if (this.times.length > this.maxSamples) {
-      this.times.shift();
-    }
-
-    // Need at least 3 samples before we judge
-    if (this.times.length < 3) return { warn: false, avg, current: responseMs };
-
-    const warn = avg > 0 && responseMs > avg * this.multiplier;
-    return { warn, avg, current: responseMs };
-  }
-
-  get average(): number {
-    if (this.times.length === 0) return 0;
-    return this.times.reduce((a, b) => a + b, 0) / this.times.length;
-  }
-
-  get samples(): number {
-    return this.times.length;
-  }
-
-  reset(): void {
-    this.times = [];
-  }
-}
 
 export type ExchangeRecord = {
   timestamp: string;
