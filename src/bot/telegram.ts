@@ -63,6 +63,17 @@ import { registerRuntimeCommands, handleModelSelectCallback } from './telegram-c
 
 // Escalation helpers shared with Discord bot
 
+const mentionRegexCache = new Map<string, RegExp>();
+function mentionRegexFor(username: string): RegExp {
+  const key = username.toLowerCase();
+  const existing = mentionRegexCache.get(key);
+  if (existing) return existing;
+  const escaped = username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`@${escaped}\\b`, 'i');
+  mentionRegexCache.set(key, re);
+  return re;
+}
+
 // ---------------------------------------------------------------------------
 // Streaming message helper
 // ---------------------------------------------------------------------------
@@ -460,7 +471,7 @@ export async function startTelegramBot(
     const requireMentionChats = botConfig.routing?.require_mention_chats ?? [];
     if (requireMentionChats.includes(String(chatId))) {
       const botUsername = ctx.me.username;
-      const mentionPattern = botUsername ? new RegExp(`@${botUsername}\\b`, 'i') : null;
+      const mentionPattern = botUsername ? mentionRegexFor(botUsername) : null;
       const isMentioned = mentionPattern && mentionPattern.test(text);
       if (!isMentioned) return; // Silently ignore messages without mention
 
