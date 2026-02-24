@@ -1289,6 +1289,49 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.ok(plans.some((f) => f.endsWith('.md')));
   });
 
+  test('17l. Missing implementation result block is repaired via format-only followup', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+
+    let askCalls = 0;
+    const createSession = async () =>
+      ({
+        ...createMockSession([]),
+        async ask(prompt: string) {
+          askCalls++;
+          if (prompt.includes('did not include a valid <anton-result> block')) {
+            return {
+              text: '<anton-result>\nstatus: done\n</anton-result>',
+              turns: 1,
+              toolCalls: 0,
+            } as any;
+          }
+          return {
+            text: 'Implemented the task changes successfully.',
+            turns: 1,
+            toolCalls: 0,
+          } as any;
+        },
+      }) as any;
+
+    const result = await runAnton({
+      config: createTestConfig({
+        taskFile,
+        projectDir: tmpDir,
+        preflightEnabled: false,
+        maxRetriesPerTask: 1,
+      } as any),
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress: createMockProgressCallback(),
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.equal(result.completedAll, true);
+    assert.equal(askCalls, 2);
+    assert.equal(result.attempts[0]?.status, 'passed');
+  });
+
   test("17. maxTotalTasks exceeded → stopReason='max_tasks_exceeded'", async () => {
     const tmpDir = await createTempGitRepo();
     const taskFile = await createTaskFile(
