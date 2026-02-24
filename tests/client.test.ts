@@ -36,7 +36,7 @@ describe('OpenAIClient retry behavior', () => {
 
     let calls = 0;
     const orig = client.fetchWithConnTimeout.bind(client);
-    client.fetchWithConnTimeout = async (...args: any[]) => {
+    client.fetchWithConnTimeout = async (..._args: any[]) => {
       calls += 1;
       return { ok: true, status: 200, text: async () => 'ok' } as any;
     };
@@ -165,6 +165,120 @@ describe('OpenAIClient retry behavior', () => {
     assert.equal(resp.choices[0].message.content, 'hello');
     assert.equal(calls, 2);
     assert.equal(client.rateLimiter.recentCount, 1);
+  });
+
+  it('auto-switches to content-mode when server cannot parse tool-call JSON args (stream)', async () => {
+    const client: any = new OpenAIClient('http://example.invalid/v1', undefined, false);
+    const requestBodies: any[] = [];
+
+    let calls = 0;
+    client.fetchWithConnTimeout = async (_url: string, init: RequestInit) => {
+      calls += 1;
+      requestBodies.push(JSON.parse(String(init.body ?? '{}')));
+
+      if (calls === 1) {
+        return new Response(
+          '{"error":{"code":500,"message":"Failed to parse tool call arguments as JSON: [json.exception.parse_error.101] parse error: invalid string: missing closing quote"}}',
+          { status: 500, statusText: 'Internal Server Error' }
+        );
+      }
+
+      const enc = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(enc.encode('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'));
+          controller.enqueue(enc.encode('data: [DONE]\n\n'));
+          controller.close();
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    };
+
+    const resp = await client.chatStream({
+      model: 'fake',
+      messages: [{ role: 'user', content: 'u' }],
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'write_file',
+            description: 'Write file',
+            parameters: {
+              type: 'object',
+              properties: {
+                path: { type: 'string' },
+                content: { type: 'string' },
+              },
+              required: ['path', 'content'],
+            },
+          },
+        },
+      ] as any,
+    });
+
+    assert.equal(resp.choices[0].message.content, 'ok');
+    assert.equal(client.contentModeToolCalls, true);
+    assert.equal(calls, 2);
+    assert.ok(Array.isArray(requestBodies[0].tools));
+    assert.equal(requestBodies[1].tools, undefined);
+  });
+
+  it('auto-switches to content-mode when server cannot parse tool-call JSON args (non-stream)', async () => {
+    const client: any = new OpenAIClient('http://example.invalid/v1', undefined, false);
+    const requestBodies: any[] = [];
+
+    let calls = 0;
+    client.fetchWithConnTimeout = async (_url: string, init: RequestInit) => {
+      calls += 1;
+      requestBodies.push(JSON.parse(String(init.body ?? '{}')));
+
+      if (calls === 1) {
+        return new Response(
+          '{"error":{"code":500,"message":"Failed to parse tool call arguments as JSON: [json.exception.parse_error.101] parse error"}}',
+          { status: 500, statusText: 'Internal Server Error' }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          id: 'ok',
+          choices: [{ index: 0, message: { role: 'assistant', content: 'done' } }],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    };
+
+    const resp = await client.chat({
+      model: 'fake',
+      messages: [{ role: 'user', content: 'u' }],
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'write_file',
+            description: 'Write file',
+            parameters: {
+              type: 'object',
+              properties: {
+                path: { type: 'string' },
+                content: { type: 'string' },
+              },
+              required: ['path', 'content'],
+            },
+          },
+        },
+      ] as any,
+    });
+
+    assert.equal(resp.choices[0].message.content, 'done');
+    assert.equal(client.contentModeToolCalls, true);
+    assert.equal(calls, 2);
+    assert.ok(Array.isArray(requestBodies[0].tools));
+    assert.equal(requestBodies[1].tools, undefined);
   });
 });
 
