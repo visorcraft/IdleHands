@@ -875,7 +875,18 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
     const finalTaskFile = await parseTaskFile(config.taskFile);
     const finalCompleted = finalTaskFile.completed.length - initialCompleted;
     const skipped = attempts.filter((a) => a.status === 'skipped').length;
-    const failed = attempts.filter((a) => ['failed', 'error'].includes(a.status)).length;
+
+    // Count failures by FINAL per-task outcome, not per-attempt outcome.
+    // A task that fails on attempt #1 and passes on retry should not contribute
+    // to failed summary counts.
+    const lastAttemptByTask = new Map<string, AntonAttempt>();
+    for (const attempt of attempts) {
+      lastAttemptByTask.set(attempt.taskKey, attempt);
+    }
+    const failed = Array.from(lastAttemptByTask.values()).filter((a) =>
+      ['failed', 'error', 'timeout', 'blocked'].includes(a.status)
+    ).length;
+
     const remaining = finalTaskFile.pending.length;
 
     // Determine stop reason
