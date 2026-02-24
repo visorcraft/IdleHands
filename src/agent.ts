@@ -1939,12 +1939,23 @@ export async function createSession(opts: {
 
     let turns = 0;
     let toolCalls = 0;
+    const tokenEstimateCache = new WeakMap<object, number>();
+    const estimateTokensCached = (msgs: ChatMessage[]): number => {
+      const key = msgs as unknown as object;
+      const cached = tokenEstimateCache.get(key);
+      if (cached !== undefined) return cached;
+      const v = estimateTokensFromMessages(msgs);
+      tokenEstimateCache.set(key, v);
+      return v;
+    };
+
     const perfEnabled = process.env.IDLEHANDS_PERF_TRACE === '1';
     const perf = {
       modelMs: 0,
       ttftMsSum: 0,
       ttftSamples: 0,
       compactions: 0,
+      compactMs: 0,
     };
 
     const askId = `ask-${timestampedId()}`;
@@ -2029,7 +2040,7 @@ export async function createSession(opts: {
         const wallMs = Date.now() - wallStart;
         const avgTtft = perf.ttftSamples > 0 ? Math.round(perf.ttftMsSum / perf.ttftSamples) : 0;
         console.error(
-          `[perf] ask=${askId} turns=${turns} toolCalls=${toolCalls} wallMs=${wallMs} modelMs=${perf.modelMs} avgTTFTms=${avgTtft} compactions=${perf.compactions}`
+          `[perf] ask=${askId} turns=${turns} toolCalls=${toolCalls} wallMs=${wallMs} modelMs=${perf.modelMs} compactMs=${perf.compactMs} avgTTFTms=${avgTtft} compactions=${perf.compactions}`
         );
       }
       return { text: finalText, turns, toolCalls };
@@ -2380,9 +2391,10 @@ export async function createSession(opts: {
 
         await maybeAutoDetectModelChange();
 
+        const compactionStartMs = Date.now();
         await runCompactionWithLock('auto context-budget compaction', async () => {
           const beforeMsgs = messages;
-          const beforeTokens = estimateTokensFromMessages(beforeMsgs);
+          const beforeTokens = estimateTokensCached(beforeMsgs);
           const compacted = enforceContextBudget({
             messages: beforeMsgs,
             contextWindow,
@@ -2439,7 +2451,7 @@ export async function createSession(opts: {
 
           let summaryUsed = false;
           if (dropped.length) {
-            const droppedTokens = estimateTokensFromMessages(dropped as ChatMessage[]);
+            const droppedTokens = estimateTokensCached(dropped as ChatMessage[]);
             if (cfg.compact_summary !== false && droppedTokens > 200) {
               try {
                 const summaryContent = buildCompactionSummaryPrompt(dropped as ChatMessage[]);
@@ -2486,9 +2498,9 @@ export async function createSession(opts: {
           }
 
           // Update token count AFTER injections so downstream reads are accurate
-          currentContextTokens = estimateTokensFromMessages(messages);
+          currentContextTokens = estimateTokensCached(messages);
 
-          const afterTokens = estimateTokensFromMessages(compacted);
+          const afterTokens = estimateTokensCached(compacted);
           const freedTokens = Math.max(0, beforeTokens - afterTokens);
 
           // Emit compaction event for callers (e.g. Anton controller → Discord)
@@ -2517,6 +2529,8 @@ export async function createSession(opts: {
             dryRun: false,
           };
         });
+
+        perf.compactMs += Date.now() - compactionStartMs;
 
         const ac = makeAbortController();
         inFlight = ac;
