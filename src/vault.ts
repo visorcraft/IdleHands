@@ -799,4 +799,181 @@ export class VaultStore {
       // SQLite sync mode may already flush automatically in local file mode.
     }
   }
+
+  // ============================================================================
+  // ENHANCED COMPACTION CONTEXT METHODS
+  // ============================================================================
+
+  /**
+   * Get structured context for recovery after compaction.
+   * Gathers current task, key facts, recent files, and relevant vault entries.
+   */
+  async getCompactionContext(opts?: {
+    query?: string;
+    limit?: number;
+    includeCurrentTask?: boolean;
+    includeFacts?: boolean;
+    includeFiles?: boolean;
+  }): Promise<{
+    currentTask?: string;
+    facts: string[];
+    files: Array<{ path: string; updatedAt: string }>;
+    entries: VaultSearchResult[];
+  }> {
+    const limit = opts?.limit ?? 5;
+    const result: {
+      currentTask?: string;
+      facts: string[];
+      files: Array<{ path: string; updatedAt: string }>;
+      entries: VaultSearchResult[];
+    } = {
+      facts: [],
+      files: [],
+      entries: [],
+    };
+
+    // Get current task if requested
+    if (opts?.includeCurrentTask !== false) {
+      const taskEntry = await this.getLatestByKey('current_task');
+      if (taskEntry?.value) {
+        result.currentTask = taskEntry.value;
+      }
+    }
+
+    // Get key facts if requested
+    if (opts?.includeFacts !== false) {
+      const factsEntry = await this.getLatestByKey('key_facts');
+      if (factsEntry?.value) {
+        try {
+          const parsed = JSON.parse(factsEntry.value);
+          if (Array.isArray(parsed)) {
+            result.facts = parsed.slice(0, 10);
+          }
+        } catch {
+          // Not JSON, treat as single fact
+          result.facts = [factsEntry.value];
+        }
+      }
+    }
+
+    // Get recent files if requested
+    if (opts?.includeFiles !== false) {
+      try {
+        const rows = this.rows<{ path: string; updatedAt: string }>(
+          `SELECT DISTINCT content as path, updated_at as updatedAt 
+           FROM vault_entries 
+           WHERE tool IN ('read_file', 'write_file', 'edit_file') 
+             AND content IS NOT NULL
+             AND (project_dir IS NULL OR project_dir = ?)
+           ORDER BY updated_at DESC 
+           LIMIT ?`,
+          [this._projectDir ?? null, limit]
+        );
+        result.files = rows;
+      } catch {
+        // Ignore errors
+      }
+    }
+
+    // Search for relevant entries if query provided
+    if (opts?.query) {
+      try {
+        const searchResults = await this.search(opts.query, limit);
+        result.entries = searchResults;
+      } catch {
+        // Ignore search errors
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Archive context from a compaction operation.
+   * Stores dropped messages, key facts, and current task.
+   */
+  async archiveCompactionContext(opts: {
+    dropped: import('./types.js').ChatMessage[];
+    keyFacts: string[];
+    currentTask?: string;
+    toolNameByCallId?: Map<string, string>;
+  }): Promise<void> {
+    // Store current task
+    if (opts.currentTask) {
+      await this.upsertNote('current_task', opts.currentTask, 'system');
+    }
+
+    // Store key facts
+    if (opts.keyFacts.length > 0) {
+      // Merge with existing facts
+      const existingEntry = await this.getLatestByKey('key_facts');
+      let allFacts: string[] = opts.keyFacts;
+      if (existingEntry?.value) {
+        try {
+          const parsed = JSON.parse(existingEntry.value);
+          if (Array.isArray(parsed)) {
+            allFacts = [...opts.keyFacts, ...parsed];
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+      // Dedupe and cap
+      const uniqueFacts = [...new Set(allFacts)].slice(0, 20);
+      await this.upsertNote('key_facts', JSON.stringify(uniqueFacts), 'system');
+    }
+
+    // Archive dropped tool messages
+    await this.archiveToolMessages(opts.dropped, opts.toolNameByCallId ?? new Map());
+  }
+
+  /**
+   * Format compaction context for injection into conversation.
+   */
+  formatContextForInjection(
+    context: {
+      currentTask?: string;
+      facts: string[];
+      files: Array<{ path: string; updatedAt: string }>;
+      entries: VaultSearchResult[];
+    },
+    header = '[Vault context after compaction]'
+  ): string {
+    const parts: string[] = [header, ''];
+
+    if (context.currentTask) {
+      parts.push('## Current Task');
+      parts.push(context.currentTask);
+      parts.push('');
+    }
+
+    if (context.facts.length > 0) {
+      parts.push('## Key Facts');
+      for (const fact of context.facts) {
+        parts.push(`- ${fact}`);
+      }
+      parts.push('');
+    }
+
+    if (context.files.length > 0) {
+      parts.push('## Recent Files');
+      for (const file of context.files) {
+        parts.push(`- ${file.path}`);
+      }
+      parts.push('');
+    }
+
+    if (context.entries.length > 0) {
+      parts.push('## Related Context');
+      for (const entry of context.entries) {
+        const snippet = entry.snippet || entry.value || entry.content || '';
+        if (snippet) {
+          parts.push(`- ${snippet.slice(0, 200)}${snippet.length > 200 ? '...' : ''}`);
+        }
+      }
+      parts.push('');
+    }
+
+    return parts.join('\n');
+  }
 }

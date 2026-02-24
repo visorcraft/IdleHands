@@ -190,3 +190,532 @@ function findGroupEnd(msgs: ChatMessage[], startIdx: number): number {
   }
   return i;
 }
+
+// ============================================================================
+// ENHANCED COMPACTION - Importance Scoring, Compression, Semantic Chunking
+// ============================================================================
+
+/**
+ * Get text content from a message for analysis.
+ */
+function getMessageText(msg: ChatMessage): string {
+  const content = (msg as any).content;
+  if (!content) return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((p: any) => p.type === 'text')
+      .map((p: any) => p.text)
+      .join('\n');
+  }
+  return '';
+}
+
+// Pre-compiled regex patterns for importance scoring (avoid re-creation)
+const IMPORTANT_PATTERNS = /\b(important|critical|must|decision|agreed|confirmed|remember|note)\b/i;
+const ERROR_PATTERNS = /\b(error|bug|fix|issue|problem|failed|exception|crash)\b/i;
+const PLANNING_PATTERNS = /\b(todo|next|plan|will|should|need to|going to)\b/i;
+const TRIVIAL_PATTERNS = /^(ok|done|success|completed|yes|no|sure|got it)\.?$/i;
+const BULK_TOOL_PATTERNS = /read_file|list_directory|glob|search_files/i;
+
+/**
+ * Score a message by importance (higher = more important to keep).
+ * Zero LLM cost - pure heuristics.
+ */
+export function scoreMessageImportance(
+  msg: ChatMessage,
+  idx: number,
+  total: number,
+  toolName?: string
+): number {
+  let score = 0;
+  
+  // Recency bonus: newer messages score higher (0-50 points)
+  score += Math.floor((idx / Math.max(1, total - 1)) * 50);
+  
+  const text = getMessageText(msg);
+  const len = text.length;
+  
+  // Role-based scoring
+  switch (msg.role) {
+    case 'user':
+      score += 30; // User messages are high-value context
+      break;
+    case 'assistant':
+      if (!(msg as any).tool_calls?.length) {
+        score += 25; // Substantive assistant responses
+      } else {
+        score += 10; // Tool-calling assistant messages
+      }
+      break;
+    case 'tool':
+      score -= 5; // Tool results are often bulk data
+      break;
+    case 'system':
+      score += 40; // System messages are critical
+      break;
+  }
+  
+  // Content-based scoring (regex, no LLM)
+  if (IMPORTANT_PATTERNS.test(text)) score += 25;
+  if (ERROR_PATTERNS.test(text)) score += 20;
+  if (PLANNING_PATTERNS.test(text)) score += 15;
+  
+  // Penalize trivial/bulk content
+  if (TRIVIAL_PATTERNS.test(text.trim())) score -= 30;
+  
+  // Penalize very large tool outputs (bulk data)
+  if (msg.role === 'tool') {
+    if (len > 10000) score -= 25;
+    else if (len > 5000) score -= 15;
+    else if (len < 50) score -= 10; // Too short = trivial
+    
+    // Penalize repetitive read operations
+    const name = toolName ?? ((msg as any).name || '');
+    if (BULK_TOOL_PATTERNS.test(name)) score -= 10;
+  }
+  
+  // Boost messages with code/technical content (likely important)
+  if (/```[\s\S]+```/.test(text)) score += 10;
+  if (/function |class |const |let |import |export /.test(text)) score += 5;
+  
+  // Boost messages mentioning files (context about what was worked on)
+  if (/\.(ts|js|py|tsx|jsx|json|md|yaml|yml|sh)\b/.test(text)) score += 5;
+  
+  return score;
+}
+
+/**
+ * Compress a large tool result to preserve key information while reducing tokens.
+ * Zero LLM cost - pure string manipulation.
+ */
+export function compressToolResult(content: string, maxChars = 1200): string {
+  if (content.length <= maxChars) return content;
+  
+  const lines = content.split('\n');
+  const totalLines = lines.length;
+  
+  // For very long content, extract structure
+  if (totalLines > 50) {
+    const headLines = 12;
+    const tailLines = 8;
+    const head = lines.slice(0, headLines).join('\n');
+    const tail = lines.slice(-tailLines).join('\n');
+    
+    // Extract "interesting" lines from middle
+    const middle = lines.slice(headLines, -tailLines);
+    const interestingPatterns = /error|warn|fail|success|found|match|import|export|function|class|def |async |interface |type |const |TODO|FIXME|BUG/i;
+    const interesting = middle
+      .filter(line => interestingPatterns.test(line))
+      .slice(0, 8);
+    
+    const omitted = totalLines - headLines - tailLines - interesting.length;
+    
+    const parts = [head];
+    if (interesting.length > 0) {
+      parts.push(`\n... [${omitted} lines omitted] ...\n`);
+      parts.push('[Key lines from middle:]');
+      parts.push(interesting.join('\n'));
+    } else {
+      parts.push(`\n... [${omitted} lines omitted] ...\n`);
+    }
+    parts.push(tail);
+    
+    const result = parts.join('\n');
+    
+    // If still too long, truncate more aggressively
+    if (result.length > maxChars) {
+      return result.slice(0, maxChars - 50) + `\n... [truncated, ${content.length} chars total]`;
+    }
+    
+    return result;
+  }
+  
+  // For medium content, just head + tail
+  const headChars = Math.floor(maxChars * 0.6);
+  const tailChars = Math.floor(maxChars * 0.3);
+  
+  return (
+    content.slice(0, headChars) +
+    `\n... [${content.length - headChars - tailChars} chars omitted] ...\n` +
+    content.slice(-tailChars)
+  );
+}
+
+/**
+ * Apply compression to tool result messages in-place.
+ */
+export function compressToolMessages(
+  messages: ChatMessage[],
+  maxChars = 1200
+): ChatMessage[] {
+  return messages.map(msg => {
+    if (msg.role !== 'tool') return msg;
+    
+    const content = (msg as any).content;
+    if (typeof content !== 'string' || content.length <= maxChars) return msg;
+    
+    return {
+      ...msg,
+      content: compressToolResult(content, maxChars),
+    } as ChatMessage;
+  });
+}
+
+// ============================================================================
+// Semantic Chunking
+// ============================================================================
+
+export type MessageChunk = {
+  messages: ChatMessage[];
+  startIdx: number;
+  endIdx: number;
+  score: number;
+  tokenEstimate: number;
+};
+
+/**
+ * Build a single chunk with aggregate score and token estimate.
+ */
+export function buildChunk(
+  messages: ChatMessage[],
+  startIdx: number,
+  endIdx: number,
+  totalMessages: number
+): MessageChunk {
+  let score = 0;
+  for (let i = 0; i < messages.length; i++) {
+    score += scoreMessageImportance(messages[i], startIdx + i, totalMessages);
+  }
+  return {
+    messages,
+    startIdx,
+    endIdx,
+    score: Math.round(score / Math.max(1, messages.length)), // Average score
+    tokenEstimate: estimateTokensFromMessages(messages),
+  };
+}
+
+/**
+ * Group messages into semantic chunks (user request + response + tool calls).
+ * This keeps related messages together during compaction.
+ */
+export function buildSemanticChunks(
+  messages: ChatMessage[],
+  sysStart: number = 0
+): MessageChunk[] {
+  const chunks: MessageChunk[] = [];
+  let currentChunk: ChatMessage[] = [];
+  let chunkStart = sysStart;
+  
+  // Skip system message
+  const startIdx = messages[0]?.role === 'system' ? 1 : 0;
+  
+  for (let i = startIdx; i < messages.length; i++) {
+    const msg = messages[i];
+    
+    // New user message starts a new chunk (unless current is empty)
+    if (msg.role === 'user' && currentChunk.length > 0) {
+      chunks.push(buildChunk(currentChunk, chunkStart, i, messages.length));
+      currentChunk = [];
+      chunkStart = i;
+    }
+    
+    currentChunk.push(msg);
+  }
+  
+  // Don't forget the last chunk
+  if (currentChunk.length > 0) {
+    chunks.push(buildChunk(currentChunk, chunkStart, messages.length, messages.length));
+  }
+  
+  return chunks;
+}
+
+// ============================================================================
+// Key Fact Extraction
+// ============================================================================
+
+// Pre-compiled patterns for fact extraction
+const DECISION_PATTERNS = /\b(decided|agreed|confirmed|chose|will use|going with|settled on)\b[^.!?\n]{10,100}/gi;
+const FILE_OP_PATTERNS = /\b(created|edited|modified|deleted|renamed|moved)\s+[\w./\\-]+\.(ts|js|py|json|md|yaml|yml|sh|tsx|jsx)/gi;
+const ERROR_FIX_PATTERNS = /\b(fixed|resolved|solved|patched)\b[^.!?\n]{10,80}/gi;
+const TASK_COMPLETE_PATTERNS = /\b(finished|completed|done with|implemented)\b[^.!?\n]{10,80}/gi;
+
+/**
+ * Extract key facts from dropped messages for vault archiving.
+ * Zero LLM cost - regex-based extraction.
+ */
+export function extractKeyFacts(messages: ChatMessage[]): string[] {
+  const facts: string[] = [];
+  const seen = new Set<string>();
+  
+  for (const msg of messages) {
+    if (msg.role !== 'assistant' && msg.role !== 'user') continue;
+    
+    const text = getMessageText(msg);
+    if (!text) continue;
+    
+    // Extract decisions
+    for (const pattern of [DECISION_PATTERNS, FILE_OP_PATTERNS, ERROR_FIX_PATTERNS, TASK_COMPLETE_PATTERNS]) {
+      pattern.lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(text)) !== null) {
+        const fact = match[0].trim().replace(/\s+/g, ' ');
+        const normalized = fact.toLowerCase();
+        if (!seen.has(normalized) && fact.length > 15 && fact.length < 200) {
+          seen.add(normalized);
+          facts.push(fact);
+        }
+      }
+    }
+  }
+  
+  return facts.slice(0, 10); // Cap at 10 facts
+}
+
+// ============================================================================
+// Enhanced Context Budget Enforcement
+// ============================================================================
+
+export type CompactionStats = {
+  beforeCount: number;
+  afterCount: number;
+  beforeTokens: number;
+  afterTokens: number;
+  freedTokens: number;
+  chunksDropped: number;
+  messagesCompressed: number;
+};
+
+export type CompactionResult = {
+  messages: ChatMessage[];
+  dropped: ChatMessage[];
+  keyFacts: string[];
+  stats: CompactionStats;
+};
+
+/**
+ * Enhanced context budget enforcement with full result details.
+ * Returns dropped messages and extracted facts for vault archiving.
+ */
+export function enforceContextBudgetEnhanced(opts: {
+  messages: ChatMessage[];
+  contextWindow: number;
+  maxTokens: number;
+  minTailMessages?: number;
+  compactAt?: number;
+  toolSchemaTokens?: number;
+  force?: boolean;
+  /** Enable enhanced compaction (importance scoring, chunking). Default: true */
+  enhanced?: boolean;
+  /** Max chars for tool result compression. Default: 1200 */
+  compressionMaxChars?: number;
+}): CompactionResult {
+  const { contextWindow, maxTokens } = opts;
+  const minTail = opts.force ? 2 : (opts.minTailMessages ?? 20);
+  const enhanced = opts.enhanced !== false;
+  const compressionMaxChars = opts.compressionMaxChars ?? 1200;
+
+  const toolOverhead = opts.toolSchemaTokens ?? 800;
+  const safetyMargin = 2048 + toolOverhead;
+  const budget = Math.max(1024, contextWindow - maxTokens - safetyMargin);
+  
+  const compactAt = opts.force
+    ? 0.5
+    : Number.isFinite(opts.compactAt)
+      ? Math.min(0.95, Math.max(0.5, Number(opts.compactAt)))
+      : 0.8;
+  const threshold = Math.floor(budget * compactAt);
+
+  let msgs = [...opts.messages];
+  const beforeCount = msgs.length;
+  const beforeTokens = estimateTokensFromMessages(msgs);
+  const allDropped: ChatMessage[] = [];
+  let chunksDropped = 0;
+  let messagesCompressed = 0;
+
+  // Early exit if under threshold
+  if (!opts.force && beforeTokens <= threshold) {
+    return {
+      messages: msgs,
+      dropped: [],
+      keyFacts: [],
+      stats: {
+        beforeCount,
+        afterCount: msgs.length,
+        beforeTokens,
+        afterTokens: beforeTokens,
+        freedTokens: 0,
+        chunksDropped: 0,
+        messagesCompressed: 0,
+      },
+    };
+  }
+
+  const sysStart = msgs[0]?.role === 'system' ? 1 : 0;
+  let currentTokens = beforeTokens;
+
+  // Find protected assistant index
+  let protectedIdx = -1;
+  for (let i = msgs.length - 1; i >= sysStart; i--) {
+    const m = msgs[i];
+    if (
+      m.role === 'assistant' &&
+      !(m as any).tool_calls?.length &&
+      messageContentChars((m as any).content) > 50
+    ) {
+      protectedIdx = i;
+      break;
+    }
+  }
+
+  // ENHANCEMENT: Compress tool results first (reduces tokens without losing messages)
+  if (enhanced) {
+    const beforeCompression = currentTokens;
+    msgs = msgs.map((msg, idx) => {
+      if (msg.role !== 'tool') return msg;
+      if (idx >= msgs.length - minTail) return msg; // Don't compress recent
+      
+      const content = (msg as any).content;
+      if (typeof content !== 'string' || content.length <= compressionMaxChars) return msg;
+      
+      messagesCompressed++;
+      return {
+        ...msg,
+        content: compressToolResult(content, compressionMaxChars),
+      } as ChatMessage;
+    });
+    currentTokens = estimateTokensFromMessages(msgs);
+    
+    if (currentTokens <= threshold && !opts.force) {
+      return {
+        messages: msgs,
+        dropped: [],
+        keyFacts: [],
+        stats: {
+          beforeCount,
+          afterCount: msgs.length,
+          beforeTokens,
+          afterTokens: currentTokens,
+          freedTokens: beforeCompression - currentTokens,
+          chunksDropped: 0,
+          messagesCompressed,
+        },
+      };
+    }
+  }
+
+  // ENHANCEMENT: Use semantic chunking with importance scoring
+  if (enhanced && msgs.length > minTail + 5) {
+    const chunks = buildSemanticChunks(msgs, sysStart);
+    
+    // Sort chunks by score (lowest first = drop first)
+    // But protect the last chunk (recent context)
+    const droppableChunks = chunks.slice(0, -1).sort((a, b) => a.score - b.score);
+    const protectedChunk = chunks[chunks.length - 1];
+    
+    // Drop lowest-scored chunks until under threshold
+    const keptChunks: MessageChunk[] = [];
+    let keptTokens = protectedChunk ? protectedChunk.tokenEstimate : 0;
+    
+    // Add system message tokens
+    if (sysStart === 1) {
+      keptTokens += estimateTokensFromMessages([msgs[0]]);
+    }
+    
+    // Keep chunks from highest score down until we'd exceed budget
+    const sortedByScoreDesc = [...droppableChunks].sort((a, b) => b.score - a.score);
+    
+    for (const chunk of sortedByScoreDesc) {
+      if (keptTokens + chunk.tokenEstimate <= threshold || keptChunks.length < 2) {
+        keptChunks.push(chunk);
+        keptTokens += chunk.tokenEstimate;
+      } else {
+        // This chunk will be dropped
+        allDropped.push(...chunk.messages);
+        chunksDropped++;
+      }
+    }
+    
+    // Rebuild messages array in original order
+    const keptChunkStarts = new Set(keptChunks.map(c => c.startIdx));
+    const newMsgs: ChatMessage[] = [];
+    
+    // Keep system message
+    if (sysStart === 1) {
+      newMsgs.push(msgs[0]);
+    }
+    
+    // Add kept chunks in order
+    for (const chunk of chunks) {
+      if (keptChunkStarts.has(chunk.startIdx) || chunk === protectedChunk) {
+        newMsgs.push(...chunk.messages);
+      }
+    }
+    
+    if (newMsgs.length < msgs.length) {
+      msgs = newMsgs;
+      currentTokens = estimateTokensFromMessages(msgs);
+    }
+  }
+
+  // Fallback: Original algorithm if still over budget
+  // Phase 1: drop oldest tool-call exchange groups first
+  while (msgs.length > 2 && currentTokens > threshold) {
+    if (msgs.length - sysStart <= minTail) break;
+    const groupIdx = findOldestToolCallGroup(msgs, sysStart, msgs.length - minTail, protectedIdx);
+    if (groupIdx === -1) break;
+    
+    const groupEnd = findGroupEnd(msgs, groupIdx);
+    if (protectedIdx > groupIdx) protectedIdx -= groupEnd - groupIdx;
+    
+    const dropped = msgs.splice(groupIdx, groupEnd - groupIdx);
+    allDropped.push(...dropped);
+    
+    for (const d of dropped) {
+      currentTokens -= Math.ceil((messageContentChars((d as any).content) + 20) / 4);
+    }
+  }
+
+  // Phase 2: drop any oldest messages if still over budget
+  while (msgs.length > 2 && currentTokens > threshold) {
+    if (msgs.length - sysStart <= minTail) break;
+    if (sysStart === protectedIdx) break;
+    
+    const [removed] = msgs.splice(sysStart, 1);
+    allDropped.push(removed);
+    if (protectedIdx > sysStart) protectedIdx--;
+    currentTokens -= Math.ceil((messageContentChars((removed as any).content) + 20) / 4);
+  }
+
+  // Extract key facts from dropped messages
+  const keyFacts = enhanced ? extractKeyFacts(allDropped) : [];
+
+  const afterTokens = estimateTokensFromMessages(msgs);
+  const dropped = beforeCount - msgs.length;
+  
+  if (dropped > 0) {
+    const freed = beforeTokens - afterTokens;
+    const usedPct = budget > 0 ? ((beforeTokens / budget) * 100).toFixed(1) : '?';
+    console.error(
+      `[auto-compact] Approaching context limit (${usedPct}%) - compacting ${dropped} old turns, ~${freed} tokens freed` +
+      (enhanced ? ` (${chunksDropped} chunks, ${messagesCompressed} compressed, ${keyFacts.length} facts extracted)` : '')
+    );
+  }
+
+  return {
+    messages: msgs,
+    dropped: allDropped,
+    keyFacts,
+    stats: {
+      beforeCount,
+      afterCount: msgs.length,
+      beforeTokens,
+      afterTokens,
+      freedTokens: beforeTokens - afterTokens,
+      chunksDropped,
+      messagesCompressed,
+    },
+  };
+}

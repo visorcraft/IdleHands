@@ -62,10 +62,13 @@ import { loadGitContext, isGitDirty, stashWorkingTree } from './git.js';
 import { selectHarness } from './harnesses.js';
 import {
   enforceContextBudget,
+  enforceContextBudgetEnhanced,
   stripThinking,
   estimateTokensFromMessages,
   estimateToolSchemaTokens,
+  extractKeyFacts,
 } from './history.js';
+import { truncateToolResultContent } from './agent/context-budget.js';
 import { HookManager, loadHookPlugins } from './hooks/index.js';
 import type { HookSystemConfig } from './hooks/index.js';
 import { projectIndexKeys, parseIndexMeta, isFreshIndex, indexSummaryLine } from './indexer.js';
@@ -3738,7 +3741,16 @@ export async function createSession(opts: {
               }
             }
 
-            return { id: callId, content };
+            // Context-aware truncation: cap oversized tool results before returning
+            // to prevent blowing out the context window on subsequent LLM calls.
+            const truncated = truncateToolResultContent(content, contextWindow);
+            if (truncated.truncated && cfg.verbose) {
+              console.warn(
+                `[context-budget] truncated ${name} result: ${content.length} → ${truncated.content.length} chars`
+              );
+            }
+
+            return { id: callId, content: truncated.content };
           };
 
           const results: Array<{ id: string; content: string }> = [];
