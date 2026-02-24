@@ -325,14 +325,19 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           if (v.l1_lint === false) parts.push('- Lint command failed');
           if (v.l2_ai === false && v.l2_reason) parts.push(`- AI review: ${v.l2_reason}`);
 
-          // Include full command output so the agent can see and fix the exact errors
+          // Include error output (filtered to errors only, no warnings) so the
+          // agent can see and fix the exact issues.
           if (v.commandOutput) {
             parts.push('');
-            parts.push('=== Full error output from failed commands ===');
+            parts.push('=== Error output (errors only, warnings excluded) ===');
             parts.push(v.commandOutput);
             parts.push('=== End of error output ===');
             parts.push('');
-            parts.push('IMPORTANT: Fix the errors shown above. The code from your previous attempt is still in place — do NOT rewrite it from scratch. Read the failing files and fix only the specific issues reported.');
+            parts.push('IMPORTANT: Your previous code changes are STILL IN PLACE — do NOT rewrite from scratch.');
+            parts.push('1. Read the specific files listed in the errors above.');
+            parts.push('2. Fix ONLY the reported errors (e.g. import ordering, missing types).');
+            parts.push('3. Run the lint/build/test command yourself to verify before completing.');
+            parts.push('Do NOT touch files that are not mentioned in the errors.');
           }
         }
         if (lastAttempt.error) {

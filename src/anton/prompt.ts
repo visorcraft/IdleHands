@@ -329,12 +329,13 @@ function buildRetryContextSection(retryContext: string): string {
 
 ${retryContext}
 
-CRITICAL RETRY RULES:
-- Your previous code changes are STILL IN PLACE — do NOT start over or rewrite files from scratch.
-- Read the error output above carefully and fix ONLY the specific issues reported.
-- If there are lint errors, run the lint command yourself first to see current errors, then fix them.
-- After fixing, verify the fix compiles/passes before emitting your result.
-- Do not repeat the same mistake.`;
+RETRY RULES (follow exactly):
+1. Your previous code changes are STILL IN PLACE. Do NOT start over.
+2. The errors above are filtered to show ONLY the issues you need to fix.
+3. Open the specific file(s) mentioned, fix the exact error(s), nothing else.
+4. Do NOT modify files that are not listed in the errors.
+5. After fixing, run the relevant command (lint/build/test) to confirm the fix works.
+6. Emit your structured result immediately after confirming.`;
 }
 
 function buildResultInstructions(decomposeEnabled: boolean): string {

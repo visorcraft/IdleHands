@@ -195,8 +195,13 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
         } else {
           result.l1_lint = false;
           l1_all = false;
-          const combined = combineOutput('lint', lintResult.stdout, lintResult.stderr);
-          failedCommands.push(`lint (${currentErrors - opts.baselineLintErrorCount} new errors): ${truncateOutput(combined, 500)}`);
+          // Filter to only error-level lines so the retry context isn't flooded
+          // with pre-existing warnings (e.g. hundreds of no-explicit-any).
+          const fullOutput = lintResult.stdout + '\n' + lintResult.stderr;
+          const errorOnly = filterLintErrorLines(fullOutput);
+          const combined = combineOutput('lint', errorOnly || lintResult.stdout, '');
+          const newCount = currentErrors - opts.baselineLintErrorCount;
+          failedCommands.push(`lint (${newCount} new error${newCount !== 1 ? 's' : ''}): ${truncateOutput(combined, 500)}`);
           fullOutputParts.push(combined);
         }
       } else {
@@ -384,6 +389,39 @@ function parseVerifierResponse(raw: string): { pass: boolean; reason: string } {
   // 4. Ambiguous — default to pass since L1 already validated build/test
   const snippet = text.length > 200 ? text.slice(0, 200) + '...' : text;
   return { pass: true, reason: `(ambiguous response, defaulting to pass) ${snippet}` };
+}
+
+// ── Lint output filtering ───────────────────────────────────────────
+
+/**
+ * Filter lint output to only include error-level lines (not warnings).
+ * Keeps file path headers for context.  Returns empty string if no errors found.
+ */
+export function filterLintErrorLines(output: string): string {
+  const lines = output.split('\n');
+  const result: string[] = [];
+  let lastFilePath = '';
+
+  for (const line of lines) {
+    // File path line (eslint): "/path/to/file.ts"
+    if (/^\/.*\.\w+$/.test(line.trim()) || /^[A-Z]:\\/.test(line.trim())) {
+      lastFilePath = line;
+      continue;
+    }
+    // Error line: "  1:1  error  ..."
+    if (/\d+:\d+\s+error\s/.test(line) || /\berror\s+TS\d+/.test(line) || /\berror\[E\d+\]/.test(line)) {
+      if (lastFilePath && (result.length === 0 || result[result.length - 1] !== lastFilePath)) {
+        result.push(lastFilePath);
+      }
+      result.push(line);
+    }
+    // Summary line: "✖ N problems (N errors, N warnings)"
+    if (/^\u2716\s+\d+\s+problem/.test(line) || /^\d+\s+error/.test(line)) {
+      result.push(line);
+    }
+  }
+
+  return result.join('\n');
 }
 
 // ── Lint baseline helpers ───────────────────────────────────────────
