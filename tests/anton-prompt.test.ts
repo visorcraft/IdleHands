@@ -132,7 +132,7 @@ describe('buildAntonPrompt', () => {
 
     assert.ok(prompt.includes('Previous Attempt Failed'));
     assert.ok(prompt.includes('Previous attempt failed due to syntax error'));
-    assert.ok(prompt.includes('Do not repeat the same mistake'));
+    assert.ok(prompt.includes('RETRY RULES'));
   });
 
   it('should include decompose instructions when enabled, omit when disabled', async () => {
