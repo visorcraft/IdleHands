@@ -799,6 +799,41 @@ describe('Anton REPL commands', () => {
     }
   });
 
+  it('/anton status includes last loop event details', async () => {
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: any[]) => logs.push(a.join(' '));
+    try {
+      const mockCtx = {
+        antonActive: true,
+        antonAbortSignal: { aborted: false },
+        antonProgress: {
+          totalPending: 8,
+          completedSoFar: 3,
+          skippedSoFar: 0,
+          iterationsUsed: 10,
+          elapsedMs: 90_000,
+          estimatedRemainingMs: 200_000,
+          currentTask: 'Patch status',
+          currentAttempt: 2,
+        },
+        antonLastLoopEvent: {
+          kind: 'auto-recovered',
+          taskText: 'Patch status',
+          message: 'Auto-recovered by continuing (retry 1/3)',
+          at: Date.now() - 61_000,
+        },
+      } as any;
+      await antonCommands[0].execute(mockCtx, 'status', '/anton status');
+      const joined = logs.join('\n');
+      assert.match(joined, /Working on:/i);
+      assert.match(joined, /Last loop:/i);
+      assert.match(joined, /auto-recovered/i);
+    } finally {
+      console.log = origLog;
+    }
+  });
+
   it('/anton stop when no run → "No Anton run in progress"', async () => {
     const logs: string[] = [];
     const origLog = console.log;

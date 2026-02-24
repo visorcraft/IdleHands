@@ -20,6 +20,7 @@ import {
   formatTaskStart,
   formatTaskEnd,
   formatTaskSkip,
+  formatTaskHeartbeat,
   formatToolLoopEvent,
   formatCompactionEvent,
   formatVerificationDetail,
@@ -126,6 +127,34 @@ function parseAntonArgs(args: string): ParsedAntonFlags | null {
 
 // ── Subcommand handlers ─────────────────────────────────────────
 
+function emitAntonUpdate(ctx: ReplContext, text: string): void {
+  if (!text.trim()) return;
+  if (ctx.emitRuntimeUpdate) {
+    ctx.emitRuntimeUpdate(text);
+    return;
+  }
+  console.error(text);
+}
+
+function formatAgeShort(msAgo: number): string {
+  if (msAgo < 60_000) return `${Math.max(1, Math.round(msAgo / 1000))}s ago`;
+  if (msAgo < 3_600_000) return `${Math.round(msAgo / 60_000)}m ago`;
+  return `${Math.round(msAgo / 3_600_000)}h ago`;
+}
+
+function summarizeLoopEvent(
+  ev: NonNullable<ReplContext['antonLastLoopEvent']>
+): string {
+  const emoji = ev.kind === 'final-failure' ? '🔴' : ev.kind === 'auto-recovered' ? '🟠' : '🟡';
+  const kind = ev.kind === 'final-failure'
+    ? 'final failure'
+    : ev.kind === 'auto-recovered'
+      ? 'auto-recovered'
+      : 'loop event';
+  const msg = ev.message.length > 120 ? ev.message.slice(0, 117) + '...' : ev.message;
+  return `${emoji} Last loop: ${kind} (${formatAgeShort(Date.now() - ev.at)})\n${msg}`;
+}
+
 function showStatus(ctx: ReplContext): void {
   if (!ctx.antonActive) {
     console.log('No Anton run in progress.');
@@ -133,14 +162,29 @@ function showStatus(ctx: ReplContext): void {
   }
   if (ctx.antonProgress) {
     const line1 = formatProgressBar(ctx.antonProgress);
+    const lines = [line1];
+
     if (ctx.antonProgress.currentTask) {
-      console.log(`${line1}\n\nWorking on: ${ctx.antonProgress.currentTask} (Attempt ${ctx.antonProgress.currentAttempt})`);
-    } else {
-      console.log(line1);
+      lines.push(
+        '',
+        `Working on: ${ctx.antonProgress.currentTask} (Attempt ${ctx.antonProgress.currentAttempt})`
+      );
     }
-  } else {
-    console.log('🤖 Anton is running (no progress data yet).');
+
+    if (ctx.antonLastLoopEvent) {
+      lines.push('', summarizeLoopEvent(ctx.antonLastLoopEvent));
+    }
+
+    console.log(lines.join('\n'));
+    return;
   }
+
+  if (ctx.antonLastLoopEvent) {
+    console.log(`🤖 Anton is running (no progress data yet).\n\n${summarizeLoopEvent(ctx.antonLastLoopEvent)}`);
+    return;
+  }
+
+  console.log('🤖 Anton is running (no progress data yet).');
 }
 
 function showLast(ctx: ReplContext): void {
@@ -188,6 +232,11 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
   const defaults = ctx.config.anton || {};
   const config: AntonRunConfig = {
     taskFile: filePath,
+    preflightEnabled: defaults.preflight?.enabled ?? false,
+    preflightRequirementsReview: defaults.preflight?.requirements_review ?? true,
+    preflightDiscoveryTimeoutSec: defaults.preflight?.discovery_timeout_sec ?? defaults.task_timeout_sec ?? 600,
+    preflightReviewTimeoutSec: defaults.preflight?.review_timeout_sec ?? defaults.task_timeout_sec ?? 600,
+    preflightMaxRetries: defaults.preflight?.max_retries ?? 1,
     projectDir: cwd,
     maxRetriesPerTask: parsed.maxRetries ?? defaults.max_retries ?? 3,
     maxIterations: parsed.maxIterations ?? defaults.max_iterations ?? 200,
@@ -224,35 +273,86 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
   ctx.antonActive = true;
   ctx.antonAbortSignal = abortSignal;
   ctx.antonProgress = null;
+  ctx.antonLastLoopEvent = null;
 
   // Build progress callback
+  const heartbeatSecRaw = Number(defaults.progress_heartbeat_sec ?? 30);
+  const heartbeatIntervalMs = Number.isFinite(heartbeatSecRaw)
+    ? Math.max(5000, Math.floor(heartbeatSecRaw * 1000))
+    : 30_000;
+
+  let lastProgressAt = 0;
+  let lastHeartbeatNoticeAt = 0;
+  let runStartMs = 0;
+  let lastHeartbeatText = '';
+
   const progress: AntonProgressCallback = {
     onTaskStart(task, attempt, prog) {
+      const now = Date.now();
+      if (!runStartMs) runStartMs = now;
+      lastProgressAt = now;
       ctx.antonProgress = prog;
-      console.error(formatTaskStart(task, attempt, prog));
+      emitAntonUpdate(ctx, formatTaskStart(task, attempt, prog));
     },
     onTaskEnd(task, result, prog) {
+      const now = Date.now();
+      lastProgressAt = now;
       ctx.antonProgress = prog;
-      console.error(formatTaskEnd(task, result, prog));
+      emitAntonUpdate(ctx, formatTaskEnd(task, result, prog));
     },
     onTaskSkip(task, reason, _prog) {
-      console.error(formatTaskSkip(task, reason));
+      emitAntonUpdate(ctx, formatTaskSkip(task, reason));
     },
     onRunComplete(result) {
       ctx.antonLastResult = result;
       ctx.antonActive = false;
       ctx.antonAbortSignal = null;
       ctx.antonProgress = null;
-      console.error(formatRunSummary(result));
+      runStartMs = 0;
+      lastHeartbeatText = '';
+      emitAntonUpdate(ctx, formatRunSummary(result));
+    },
+    onHeartbeat() {
+      const now = Date.now();
+      if (defaults.progress_events === false) return;
+      if (!ctx.antonProgress?.currentTask) return;
+      if (now - lastProgressAt < 3000) return;
+      if (now - lastHeartbeatNoticeAt < heartbeatIntervalMs) return;
+
+      if (!runStartMs) runStartMs = now;
+      ctx.antonProgress = {
+        ...ctx.antonProgress,
+        elapsedMs: now - runStartMs,
+      };
+
+      const hb = formatTaskHeartbeat(ctx.antonProgress);
+      if (hb === lastHeartbeatText) return;
+
+      lastHeartbeatNoticeAt = now;
+      lastHeartbeatText = hb;
+      emitAntonUpdate(ctx, hb);
     },
     onToolLoop(taskText, event) {
-      console.error(formatToolLoopEvent(taskText, event));
+      const detail = String(event.message ?? '');
+      const kind = /final loop failure|retries exhausted/i.test(detail)
+        ? 'final-failure'
+        : /auto-?recover|auto-?continu/i.test(detail)
+          ? 'auto-recovered'
+          : 'other';
+      ctx.antonLastLoopEvent = {
+        kind,
+        taskText,
+        message: detail,
+        at: Date.now(),
+      };
+
+      emitAntonUpdate(ctx, formatToolLoopEvent(taskText, event));
     },
     onCompaction(taskText, event) {
-      console.error(formatCompactionEvent(taskText, event));
+      emitAntonUpdate(ctx, formatCompactionEvent(taskText, event));
     },
     onVerification(taskText, verification) {
-      console.error(formatVerificationDetail(taskText, verification));
+      emitAntonUpdate(ctx, formatVerificationDetail(taskText, verification));
     },
   };
 
@@ -277,7 +377,7 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
     vault: ctx.session.vault,
     lens: ctx.session.lens,
   }).catch((err: Error) => {
-    console.error(`Anton error: ${err.message}`);
+    emitAntonUpdate(ctx, `Anton error: ${err.message}`);
     ctx.antonActive = false;
     ctx.antonAbortSignal = null;
     ctx.antonProgress = null;

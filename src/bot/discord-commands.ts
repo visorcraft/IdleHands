@@ -576,7 +576,7 @@ export async function handleTextCommand(
   return false;
 }
 
-const DISCORD_RATE_LIMIT_MS = 15_000;
+const DISCORD_RATE_LIMIT_MS = 3_000;
 
 export async function handleDiscordAnton(
   managed: ManagedSession,
@@ -589,7 +589,6 @@ export async function handleDiscordAnton(
   const m = managed as unknown as ManagedLike;
   const channel = msg.channel as { send: (c: string) => Promise<any> };
 
-  let antonStatusMsg: { edit: (content: string) => Promise<any> } | null = null;
   let antonStatusLastText = '';
 
   const result = await antonCommand(
@@ -597,28 +596,9 @@ export async function handleDiscordAnton(
     args,
     (t) => {
       const isStatusUpdate = t.startsWith('⏳ Still working:');
-      if (!isStatusUpdate) {
-        antonStatusMsg = null;
-        antonStatusLastText = '';
-        channel.send(t).catch(() => {});
-        return;
-      }
-
-      if (t === antonStatusLastText) return;
-      antonStatusLastText = t;
-
-      if (antonStatusMsg) {
-        antonStatusMsg.edit(t).catch(() => {
-          channel.send(t).then((m: any) => {
-            antonStatusMsg = m;
-          }).catch(() => {});
-        });
-        return;
-      }
-
-      channel.send(t).then((m: any) => {
-        antonStatusMsg = m;
-      }).catch(() => {});
+      if (isStatusUpdate && t === antonStatusLastText) return;
+      antonStatusLastText = isStatusUpdate ? t : '';
+      channel.send(t).catch(() => {});
     },
     DISCORD_RATE_LIMIT_MS,
   );

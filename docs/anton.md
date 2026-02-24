@@ -102,7 +102,7 @@ Rules:
 - **L2** (optional): AI review approves diff quality
 
 When L1 commands fail, Anton captures the **full stdout and stderr** from the failing commands (up to 4 KB). This output is stored in the attempt's verification result and used for:
-- Rich error reporting in progress messages (Telegram/Discord/CLI)
+- Rich error reporting in progress messages (Telegram/Discord/TUI/CLI)
 - Contextual retry prompts (see Smart Retry below)
 
 ## Smart retry system
@@ -135,7 +135,7 @@ is still in place — do NOT rewrite it from scratch.
 
 ### Identical failure dedup guard
 
-If the exact same failure summary occurs **5 consecutive times** (configurable via `max_identical_failures`), Anton stops retrying that task and skips it. This prevents wasting tokens on issues the agent cannot resolve.
+If the exact same failure summary occurs **3 consecutive times** (configurable via `max_identical_failures`), Anton stops retrying that task and skips it. This prevents wasting tokens on issues the agent cannot resolve.
 
 ### Blocked tasks are never retried
 
@@ -202,12 +202,26 @@ anton:
   skip_on_fail: false
   skip_on_blocked: true
   rollback_on_fail: false
-  max_identical_failures: 5
+  max_identical_failures: 3
   approval_mode: yolo
   auto_commit: true
   progress_events: true
   progress_heartbeat_sec: 30
+  preflight:
+    enabled: false
+    requirements_review: true
+    discovery_timeout_sec: 600
+    review_timeout_sec: 600
+    max_retries: 1
 ```
+
+### Preflight artifacts
+
+When preflight is enabled, Anton stores discovery/review plans under:
+
+- `.agents/tasks/*.md`
+
+These artifacts are local planning files and are ignored by git by default in this repo.
 
 ### Environment variables
 
@@ -220,7 +234,7 @@ anton:
 | `IDLEHANDS_ANTON_TOTAL_TIMEOUT_SEC` | Total time budget |
 | `IDLEHANDS_ANTON_MAX_TOTAL_TOKENS` | Total token budget |
 | `IDLEHANDS_ANTON_VERIFY_AI` | Enable AI verification |
-| `IDLEHANDS_ANTON_PROGRESS_EVENTS` | Enable mid-task Telegram/Discord updates |
+| `IDLEHANDS_ANTON_PROGRESS_EVENTS` | Enable mid-task progress updates (Telegram/Discord/TUI) |
 | `IDLEHANDS_ANTON_PROGRESS_HEARTBEAT_SEC` | Seconds between "still working" heartbeat messages |
 
 ## Troubleshooting

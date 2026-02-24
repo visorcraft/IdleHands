@@ -124,6 +124,13 @@ const DEFAULTS: IdlehandsConfig = {
     auto_commit: true,
     progress_events: true,
     progress_heartbeat_sec: 30,
+    preflight: {
+      enabled: false,
+      requirements_review: true,
+      discovery_timeout_sec: 600,
+      review_timeout_sec: 600,
+      max_retries: 1,
+    },
   },
 };
 
@@ -738,6 +745,21 @@ export async function loadConfig(opts: {
       a.max_prompt_tokens_per_attempt = Math.max(1024, Math.floor(a.max_prompt_tokens_per_attempt));
     if (typeof a.progress_heartbeat_sec === 'number')
       a.progress_heartbeat_sec = Math.max(5, Math.min(600, Math.floor(a.progress_heartbeat_sec)));
+    if (a.preflight && typeof a.preflight === 'object') {
+      const enabled = parseBoolLike(a.preflight.enabled);
+      if (enabled !== undefined) a.preflight.enabled = enabled;
+      const rr = parseBoolLike(a.preflight.requirements_review);
+      if (rr !== undefined) a.preflight.requirements_review = rr;
+      if (typeof a.preflight.discovery_timeout_sec === 'number') {
+        a.preflight.discovery_timeout_sec = Math.max(10, Math.floor(a.preflight.discovery_timeout_sec));
+      }
+      if (typeof a.preflight.review_timeout_sec === 'number') {
+        a.preflight.review_timeout_sec = Math.max(10, Math.floor(a.preflight.review_timeout_sec));
+      }
+      if (typeof a.preflight.max_retries === 'number') {
+        a.preflight.max_retries = Math.max(0, Math.floor(a.preflight.max_retries));
+      }
+    }
     const validApprovalModes = ['plan', 'reject', 'default', 'auto-edit', 'yolo'];
     if (a.approval_mode && !validApprovalModes.includes(a.approval_mode)) {
       if (!process.env.IDLEHANDS_QUIET_WARNINGS) {

@@ -17,6 +17,7 @@ export interface AntonPromptOpts {
   projectDir: string;
   config: AntonRunConfig;
   retryContext: string | undefined;
+  taskPlanFile?: string;
   vault: VaultStore | undefined;
   lens: LensStore | undefined;
   maxContextTokens: number;
@@ -66,12 +67,17 @@ Do NOT attempt to read files. Do NOT narrate. Output ONLY the <anton-result> blo
     }
   }
 
-  // 6. Retry context (if retrying)
+  // 6. Vetted plan file context (optional)
+  if (opts.taskPlanFile) {
+    sections.push(buildTaskPlanFileSection(opts.taskPlanFile));
+  }
+
+  // 7. Retry context (if retrying)
   if (opts.retryContext) {
     sections.push(buildRetryContextSection(opts.retryContext));
   }
 
-  // 7. Structured result instructions
+  // 8. Structured result instructions
   sections.push(buildResultInstructions(opts.config.decompose));
 
   return sections.join('\n\n');
@@ -195,6 +201,13 @@ function buildCurrentTaskSection(task: AntonTask, taskFilePath: string): string 
   }
 
   return section;
+}
+
+function buildTaskPlanFileSection(taskPlanFile: string): string {
+  return `## Vetted Implementation Plan
+
+Primary plan file: ${taskPlanFile}
+Implement according to this vetted plan. If there is any conflict, the current task text is authoritative.`;
 }
 
 function buildProgressSummary(taskFile: AntonTaskFile, currentTask: AntonTask): string {
