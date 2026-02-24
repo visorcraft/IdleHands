@@ -39,6 +39,13 @@ export {
   unpinOk,
 } from './session-settings.js';
 export { changesCommand, undoCommand, vaultCommand } from './session-history.js';
+export {
+  agentCommand,
+  agentsCommand,
+  deescalateCommand,
+  escalateSetCommand,
+  escalateShowCommand,
+} from './escalation-commands.js';
 
 // ── Structured result types ─────────────────────────────────────────
 
@@ -125,6 +132,17 @@ export function versionCommand(info: VersionInfo): CmdResult {
       ['Model', info.model || 'auto', true],
       ['Endpoint', info.endpoint || '?', true],
     ],
+  };
+}
+
+export interface AgentsConfig {
+  agents?: Record<string, AgentPersona>;
+  routing?: {
+    default?: string;
+    users?: Record<string, string>;
+    chats?: Record<string, string>;
+    channels?: Record<string, string>;
+    guilds?: Record<string, string>;
   };
 }
 
@@ -278,181 +296,6 @@ export function watchdogCommand(
 
   return { title: 'Watchdog Status', kv, lines };
 }
-
-export function agentCommand(managed: ManagedLike): CmdResult {
-  if (!managed.agentPersona) {
-    return { lines: ['No agent configured. Using global config.'] };
-  }
-
-  const p = managed.agentPersona;
-  const kv: KV[] = [];
-  if (p.model) kv.push(['Model', p.model, true]);
-  if (p.endpoint) kv.push(['Endpoint', p.endpoint, true]);
-  if (p.approval_mode) kv.push(['Approval', p.approval_mode, true]);
-  if (p.default_dir) kv.push(['Default dir', p.default_dir, true]);
-  if (p.allowed_dirs?.length) kv.push(['Allowed dirs', p.allowed_dirs.join(', ')]);
-
-  const lines: string[] = [];
-  if (p.escalation?.models?.length) {
-    lines.push('');
-    kv.push(['Escalation models', p.escalation.models.join(', ')]);
-    if (managed.currentModelIndex > 0) {
-      kv.push(['Current tier', `${managed.currentModelIndex} (escalated)`]);
-    }
-    if (managed.pendingEscalation) {
-      kv.push(['Pending escalation', managed.pendingEscalation]);
-    }
-  }
-
-  return {
-    title: `Agent: ${p.display_name || managed.agentId} (${managed.agentId})`,
-    kv,
-    lines: lines.length ? lines : undefined,
-  };
-}
-
-export interface AgentsConfig {
-  agents?: Record<string, AgentPersona>;
-  routing?: {
-    default?: string;
-    users?: Record<string, string>;
-    chats?: Record<string, string>;
-    channels?: Record<string, string>;
-    guilds?: Record<string, string>;
-  };
-}
-
-export function agentsCommand(managed: ManagedLike, surfaceConfig: AgentsConfig): CmdResult {
-  const agents = surfaceConfig.agents;
-  if (!agents || Object.keys(agents).length === 0) {
-    return { lines: ['No agents configured. Using global config.'] };
-  }
-
-  const lines: string[] = [];
-  for (const [id, agent] of Object.entries(agents)) {
-    const current = id === managed.agentId ? ' <- current' : '';
-    const model = agent.model ? ` (${agent.model})` : '';
-    lines.push(`• ${agent.display_name || id} (${id})${model}${current}`);
-  }
-
-  const routing = surfaceConfig.routing;
-  if (routing) {
-    lines.push('', 'Routing:');
-    if (routing.default) lines.push(`Default: ${routing.default}`);
-    if (routing.users && Object.keys(routing.users).length > 0) {
-      lines.push(
-        `Users: ${Object.entries(routing.users)
-          .map(([u, a]) => `${u}→${a}`)
-          .join(', ')}`
-      );
-    }
-    if (routing.chats && Object.keys(routing.chats).length > 0) {
-      lines.push(
-        `Chats: ${Object.entries(routing.chats)
-          .map(([c, a]) => `${c}→${a}`)
-          .join(', ')}`
-      );
-    }
-    if (routing.channels && Object.keys(routing.channels).length > 0) {
-      lines.push(
-        `Channels: ${Object.entries(routing.channels)
-          .map(([c, a]) => `${c}→${a}`)
-          .join(', ')}`
-      );
-    }
-    if (routing.guilds && Object.keys(routing.guilds).length > 0) {
-      lines.push(
-        `Guilds: ${Object.entries(routing.guilds)
-          .map(([g, a]) => `${g}→${a}`)
-          .join(', ')}`
-      );
-    }
-  }
-
-  return { title: 'Configured Agents', lines };
-}
-
-// ── Escalation / de-escalation ──────────────────────────────────────
-
-// ── Escalation / de-escalation ──────────────────────────────────────
-
-export function escalateShowCommand(managed: ManagedLike, baseModel: string): CmdResult {
-  const escalation = managed.agentPersona?.escalation;
-  if (!escalation?.models?.length) {
-    return { error: '❌ No escalation models configured for this agent.' };
-  }
-
-  const kv: KV[] = [
-    ['Current model', baseModel, true],
-    ['Escalation models', escalation.models.join(', ')],
-  ];
-  const lines = [
-    '',
-    'Usage: /escalate <model> or /escalate next',
-    'Then send your message - it will use the escalated model.',
-  ];
-
-  if (managed.pendingEscalation) {
-    lines.push(
-      '',
-      `⚡ Pending escalation: ${managed.pendingEscalation} (next message will use this)`
-    );
-  }
-
-  return { kv, lines };
-}
-
-export function escalateSetCommand(managed: ManagedLike, arg: string): CmdResult {
-  const escalation = managed.agentPersona?.escalation;
-  if (!escalation?.models?.length) {
-    return { error: '❌ No escalation models configured for this agent.' };
-  }
-
-  let targetModel: string;
-  let targetEndpoint: string | undefined;
-
-  if (arg.toLowerCase() === 'next') {
-    const nextIndex = Math.min(managed.currentModelIndex, escalation.models.length - 1);
-    targetModel = escalation.models[nextIndex];
-    targetEndpoint = escalation.tiers?.[nextIndex]?.endpoint;
-  } else {
-    if (!escalation.models.includes(arg)) {
-      return {
-        error: `❌ Model ${arg} not in escalation chain. Available: ${escalation.models.join(', ')}`,
-      };
-    }
-    targetModel = arg;
-    const idx = escalation.models.indexOf(arg);
-    targetEndpoint = escalation.tiers?.[idx]?.endpoint;
-  }
-
-  managed.pendingEscalation = targetModel;
-  if ('pendingEscalationEndpoint' in managed) {
-    (managed as any).pendingEscalationEndpoint = targetEndpoint || null;
-  }
-
-  return { success: `⚡ Next message will use ${targetModel}. Send your request now.` };
-}
-
-export function deescalateCommand(
-  managed: ManagedLike,
-  _baseModel: string
-): CmdResult | 'recreate' {
-  if (managed.currentModelIndex === 0 && !managed.pendingEscalation) {
-    return { lines: ['Already using base model.'] };
-  }
-
-  managed.pendingEscalation = null;
-  if ('pendingEscalationEndpoint' in managed) {
-    (managed as any).pendingEscalationEndpoint = null;
-  }
-  managed.currentModelIndex = 0;
-
-  // Caller must handle session recreation with baseModel
-  return 'recreate';
-}
-
-// ── Git status ──────────────────────────────────────────────────────
 
 export async function gitStatusCommand(cwd: string): Promise<CmdResult> {
   if (!cwd) return { error: 'No working directory set. Use /dir to set one.' };
