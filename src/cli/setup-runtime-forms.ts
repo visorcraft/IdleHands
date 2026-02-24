@@ -3,11 +3,8 @@ import type readline from 'node:readline/promises';
 import type { RuntimeBackend, RuntimeHost, RuntimeModel } from '../runtime/types.js';
 
 import { splitTokens } from './command-utils.js';
+import { BOLD, DIM, RESET } from './setup-style.js';
 import { ask, drawHeader, info, selectChoice } from './setup-ui.js';
-
-const BOLD = '\x1b[1m';
-const DIM = '\x1b[2m';
-const RESET = '\x1b[0m';
 
 export async function addHostTUI(
   rl: readline.Interface,
