@@ -919,14 +919,14 @@ describe('harness behavioral wiring', () => {
     const config = baseConfig(tmpDir, { max_iterations: 20, model: 'nemotron-3-nano' });
     const session = await createSession({ config, runtime: { client: fakeClient } });
 
-    // With loopsOnToolError=true, nemotron breaks after 2nd turn with identical call
-    // (threshold=2) instead of the normal 3. So we expect failure after very few iterations.
+    // With loopsOnToolError=true, nemotron triggers recovery after 2nd turn with identical call
+    // (threshold=2) instead of the normal 3. After recovery turn still loops, it throws.
     await assert.rejects(
       () => session.ask('do something'),
-      /identical call repeated 2x across turns; breaking loop/
+      /tool-loop.*recovery|Tool loop detected/
     );
-    // Should have broken after just 2 LLM calls (2nd turn triggers the loop detection)
-    assert.ok(calls <= 3, `expected early break but got ${calls} calls`);
+    // Should break after recovery attempt (a few more calls than before, but still bounded)
+    assert.ok(calls <= 6, `expected early break but got ${calls} calls`);
   });
 
   it('reuses cached output for repeated read-only exec observations instead of hard-breaking', async () => {
