@@ -739,19 +739,5 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
 
   return result;
 }
-// ── Guided runtime onboarding (CLI fallback) ─────────────────────────
-/** Called from index.ts when createSession fails — suggests setup. */
-export async function guidedRuntimeOnboarding(): Promise<boolean> {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
-  const { loadRuntimes } = await import('../runtime/store.js');
-  try {
-    const rt = await loadRuntimes();
-    if (rt.hosts.length > 0 && rt.backends.length > 0 && rt.models.length > 0) return false;
-  } catch {
-    return false;
-  }
-  console.log(
-    `\n  ${YELLOW}⚠${RESET} No models found. Run ${BOLD}idlehands setup${RESET} for guided configuration.\n`
-  );
-  return false;
-}
+
+export { guidedRuntimeOnboarding } from './guided-onboarding.js';
