@@ -6,6 +6,8 @@
 import { Bot, InputFile } from 'grammy';
 
 import type { AgentHooks } from '../agent.js';
+import { snapshotToBlocks } from '../bot/ux/renderer.js';
+import { renderTelegramHtml } from '../bot/ux/telegram-renderer.js';
 import {
   MessageEditScheduler,
   classifyTelegramEditError,
@@ -15,6 +17,11 @@ import type { IdlehandsConfig, BotTelegramConfig, ModelEscalation } from '../typ
 import { PKG_VERSION } from '../utils.js';
 import { formatWatchdogCancelMessage, resolveWatchdogSettings } from '../watchdog.js';
 
+import {
+  isToolLoopBreak,
+  formatAutoContinueNotice,
+  AUTO_CONTINUE_PROMPT,
+} from './auto-continue.js';
 import {
   handleStart,
   handleHelp,
@@ -43,6 +50,7 @@ import {
   handleGitStatus,
 } from './commands.js';
 import { TelegramConfirmProvider } from './confirm-telegram.js';
+import { detectEscalation, checkKeywordEscalation } from './discord-routing.js';
 import {
   markdownToTelegramHtml,
   splitMessage,
@@ -50,11 +58,9 @@ import {
   formatToolCallSummary,
 } from './format.js';
 import { SessionManager, type ManagedSession } from './session-manager.js';
-import { isToolLoopBreak, formatAutoContinueNotice, AUTO_CONTINUE_PROMPT } from './auto-continue.js';
 import { registerRuntimeCommands, handleModelSelectCallback } from './telegram-commands.js';
 
 // Escalation helpers shared with Discord bot
-import { detectEscalation, checkKeywordEscalation } from './discord-routing.js';
 
 // ---------------------------------------------------------------------------
 // Streaming message helper
@@ -82,14 +88,14 @@ class StreamingMessage {
     private editIntervalMs: number,
     private replyToId?: number,
     private fileThresholdChars: number = 8192
-  ) { }
+  ) {}
 
   async init(): Promise<void> {
     // Show "typing..." indicator immediately; repeat every 4s (Telegram auto-expires at ~5s)
-    this.bot.api.sendChatAction(this.chatId, 'typing').catch(() => { });
+    this.bot.api.sendChatAction(this.chatId, 'typing').catch(() => {});
     this.typingTimer = setInterval(() => {
       if (!this.finalized) {
-        this.bot.api.sendChatAction(this.chatId, 'typing').catch(() => { });
+        this.bot.api.sendChatAction(this.chatId, 'typing').catch(() => {});
       }
     }, 4_000);
 
@@ -103,7 +109,11 @@ class StreamingMessage {
     if (this.messageId) {
       this.scheduler = new MessageEditScheduler({
         intervalMs: this.editIntervalMs,
-        render: () => this.presenter.renderTelegramHtml(),
+        render: () => {
+          const snap = this.presenter.snapshot('manual');
+          const blocks = snapshotToBlocks(snap, this.presenter['banner']);
+          return renderTelegramHtml(blocks, { maxLen: this.presenter.getBudgets().telegramMaxLen });
+        },
         apply: async (rendered) => {
           if (!this.messageId) return;
           await this.bot.api.editMessageText(this.chatId, this.messageId, rendered, {
@@ -153,7 +163,7 @@ class StreamingMessage {
           .editMessageText(this.chatId, this.messageId, summaryHtml, {
             parse_mode: 'HTML',
           })
-          .catch(() => { });
+          .catch(() => {});
       }
       const fileContent = Buffer.from(text, 'utf-8');
       await this.bot.api
@@ -181,7 +191,7 @@ class StreamingMessage {
         if (desc.includes('message to edit not found')) {
           await this.bot.api
             .sendMessage(this.chatId, chunks[0], { parse_mode: 'HTML' })
-            .catch(() => { });
+            .catch(() => {});
         }
       }
     }
@@ -199,7 +209,7 @@ class StreamingMessage {
     if (chunks.length > 10) {
       await this.bot.api
         .sendMessage(this.chatId, '[truncated — response too long]')
-        .catch(() => { });
+        .catch(() => {});
     }
   }
 
@@ -249,7 +259,7 @@ class StreamingMessage {
     }
     await this.bot.api
       .sendMessage(this.chatId, html.slice(0, 4096), { parse_mode: 'HTML' })
-      .catch(() => { });
+      .catch(() => {});
   }
 
   /**
@@ -280,7 +290,7 @@ class StreamingMessage {
       .editMessageText(this.chatId, this.messageId, html.slice(0, 4096), {
         parse_mode: 'HTML',
       })
-      .catch(() => { });
+      .catch(() => {});
   }
 }
 
@@ -422,7 +432,7 @@ export async function startTelegramBot(
     // Handle confirmation callbacks
     const managed = sessions.get(chatId);
     if (!managed?.confirmProvider) {
-      await ctx.answerCallbackQuery({ text: 'No active session.' }).catch(() => { });
+      await ctx.answerCallbackQuery({ text: 'No active session.' }).catch(() => {});
       return;
     }
 
@@ -430,7 +440,7 @@ export async function startTelegramBot(
     const handled = await provider.handleCallback(ctx.callbackQuery.data);
     await ctx
       .answerCallbackQuery(handled ? undefined : { text: 'Unknown action.' })
-      .catch(() => { });
+      .catch(() => {});
   });
 
   // ---------------------------------------------------------------------------
@@ -513,7 +523,7 @@ export async function startTelegramBot(
           chatId,
           `⚠️ Bot error: ${errMsg.length > 300 ? errMsg.slice(0, 297) + '...' : errMsg}`
         )
-        .catch(() => { });
+        .catch(() => {});
     });
   });
 
@@ -531,7 +541,7 @@ export async function startTelegramBot(
           chatId,
           '⏱ Session expired due to inactivity. Send a new message to start fresh.'
         )
-        .catch(() => { });
+        .catch(() => {});
     }
   };
   // Override the internal cleanup to also notify users
@@ -596,7 +606,7 @@ export async function startTelegramBot(
   ];
 
   for (const opts of commandScopes) {
-    await bot.api.deleteMyCommands(opts as any).catch(() => { });
+    await bot.api.deleteMyCommands(opts as any).catch(() => {});
     await bot.api
       .setMyCommands(telegramCommands, opts as any)
       .catch((e) =>
@@ -648,7 +658,7 @@ export async function startTelegramBot(
     if (!chatId) return;
 
     const userMsg = desc.length > 300 ? desc.slice(0, 297) + '...' : desc;
-    await bot.api.sendMessage(chatId, `⚠️ Bot error: ${userMsg}`).catch(() => { });
+    await bot.api.sendMessage(chatId, `⚠️ Bot error: ${userMsg}`).catch(() => {});
   });
 
   // ---------------------------------------------------------------------------
@@ -906,7 +916,7 @@ async function processMessage(
         );
         try {
           current.activeAbortController?.abort();
-        } catch { }
+        } catch {}
         current.session
           .compactHistory({ force: true })
           .then((result) => {
@@ -1071,10 +1081,17 @@ async function processMessage(
         }
 
         // Auto-continue on tool-loop breaks
-        if (!isAbort && isToolLoopBreak(e) && autoContinueEnabled && toolLoopRetryCount < autoContinueMaxRetries) {
+        if (
+          !isAbort &&
+          isToolLoopBreak(e) &&
+          autoContinueEnabled &&
+          toolLoopRetryCount < autoContinueMaxRetries
+        ) {
           toolLoopRetryCount++;
           const notice = formatAutoContinueNotice(msg, toolLoopRetryCount, autoContinueMaxRetries);
-          console.error(`[bot:telegram] ${managed.chatId} tool-loop auto-continue (retry ${toolLoopRetryCount}/${autoContinueMaxRetries})`);
+          console.error(
+            `[bot:telegram] ${managed.chatId} tool-loop auto-continue (retry ${toolLoopRetryCount}/${autoContinueMaxRetries})`
+          );
           if (sessions.isTurnActive(managed.chatId, turnId)) {
             await streaming.finalizeError(notice);
           }

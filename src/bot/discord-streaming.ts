@@ -1,6 +1,8 @@
 import type { TextBasedChannel } from 'discord.js';
 
 import type { AgentHooks } from '../agent.js';
+import { renderDiscordMarkdown } from '../bot/ux/discord-renderer.js';
+import { snapshotToBlocks } from '../bot/ux/renderer.js';
 import {
   MessageEditScheduler,
   classifyDiscordEditError,
@@ -9,7 +11,6 @@ import { ProgressPresenter } from '../progress/progress-presenter.js';
 import { formatToolCallSummary } from '../progress/tool-summary.js';
 
 import { splitDiscord, safeContent } from './discord-routing.js';
-
 export class DiscordStreamingMessage {
   private banner: string | null = null;
   private finalized = false;
@@ -40,7 +41,12 @@ export class DiscordStreamingMessage {
       const every = Math.max(500, Math.floor(this.opts?.editIntervalMs ?? 1500));
       this.scheduler = new MessageEditScheduler({
         intervalMs: every,
-        render: () => this.presenter.renderDiscordMarkdown(),
+        render: () => {
+          const snap = this.presenter.snapshot('manual');
+          const blocks = snapshotToBlocks(snap, this.banner);
+          const budgets = this.presenter.getBudgets();
+          return renderDiscordMarkdown(blocks, { maxLen: budgets.discordMaxLen });
+        },
         apply: async (text) => {
           if (!this.placeholder) return;
           await this.placeholder.edit(text);

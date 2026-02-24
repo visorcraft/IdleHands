@@ -5,8 +5,6 @@
  * Discord, Telegram, and other platforms without duplicating formatting logic.
  */
 
-import type { TurnProgressSnapshot } from '../../progress/turn-progress.js';
-
 import type {
   UXEvent,
   UXEventACK,
@@ -31,7 +29,6 @@ export type TextBlock = {
   format?: {
     bold?: boolean;
     italic?: boolean;
-    dim?: boolean;
     monospace?: boolean;
     code?: boolean;
     color?: string;
@@ -544,72 +541,4 @@ export function blockToPlainText(block: UXBlock): string {
  */
 export function blocksToPlainText(blocks: UXBlock[]): string {
   return blocks.map(blockToPlainText).join('\n\n');
-}
-
-// ---------------------------------------------------------------------------
-// Snapshot to Blocks Conversion (for ProgressPresenter)
-// ---------------------------------------------------------------------------
-
-/**
- * Convert ProgressPresenter snapshot to UX blocks for shared rendering.
- * This function is used by both Telegram and Discord handlers to avoid
- * duplicating message composition logic.
- *
- * @param snap - The TurnProgressSnapshot from ProgressPresenter
- * @param banner - Optional banner text to display at the top
- * @returns Array of UX blocks ready for platform-specific rendering
- */
-export function snapshotToBlocks(snap: TurnProgressSnapshot, banner?: string | null): UXBlock[] {
-  const blocks: UXBlock[] = [];
-
-  // Header banner (if any)
-  if (banner) {
-    blocks.push({
-      type: 'message',
-      category: 'PROGRESS',
-      content: [
-        {
-          type: 'text',
-          content: banner,
-          format: { bold: true, color: 'orange' },
-        },
-      ],
-    });
-  }
-
-  // Status line
-  if (snap.statusLine) {
-    blocks.push({
-      type: 'message',
-      category: 'PROGRESS',
-      content: [
-        {
-          type: 'text',
-          content: snap.statusLine,
-          format: { dim: true },
-        },
-      ],
-    });
-  }
-
-  // Tool lines
-  if (snap.toolLines && snap.toolLines.length > 0) {
-    blocks.push({
-      type: 'section',
-      title: 'Tools',
-      content: snap.toolLines.map((line: string) => ({
-        type: 'text',
-        content: line,
-      })),
-    });
-  }
-
-  // Progress bar
-  blocks.push({
-    type: 'progress',
-    message: 'Processing...',
-    progress: snap.elapsedMs > 0 ? Math.min(0.95, snap.elapsedMs / 60000) : 0, // Estimate progress based on elapsed time
-  });
-
-  return blocks;
 }
