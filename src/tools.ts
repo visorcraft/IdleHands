@@ -25,6 +25,7 @@ import {
 } from './tools/text-utils.js';
 import { ToolError } from './tools/tool-error.js';
 import { atomicWrite, backupFile } from './tools/undo.js';
+import { vaultNoteTool, vaultSearchTool } from './tools/vault-tools.js';
 import type { ToolStreamEvent, ApprovalMode, ExecResult } from './types.js';
 import { shellEscape, BASH_PATH } from './utils.js';
 import type { VaultStore } from './vault.js';
@@ -1603,44 +1604,11 @@ async function execWithPty(args: ExecWithPtyArgs): Promise<string> {
 }
 
 export async function vault_note(ctx: ToolContext, args: any) {
-  const key = typeof args?.key === 'string' ? args.key.trim() : '';
-  const value = typeof args?.value === 'string' ? args.value : undefined;
-
-  if (!key) throw new Error('vault_note: missing key');
-  if (value == null) throw new Error('vault_note: missing value');
-
-  if (ctx.dryRun) return `dry-run: would add vault note ${JSON.stringify(key)}`;
-
-  if (!ctx.vault) {
-    throw new Error('vault_note: vault disabled');
-  }
-
-  const id = await ctx.vault.note(key, String(value));
-  return `vault_note: saved ${id}`;
+  return vaultNoteTool(ctx, args);
 }
 
 export async function vault_search(ctx: ToolContext, args: any) {
-  const query = typeof args?.query === 'string' ? args.query.trim() : '';
-  const limit = Number(args?.limit);
-
-  if (!query) return 'vault_search: missing query';
-  const n = Number.isFinite(limit) && limit > 0 ? Math.min(50, Math.max(1, Math.floor(limit))) : 8;
-
-  if (!ctx.vault) return 'vault disabled';
-
-  const results = await ctx.vault.search(query, n);
-  if (!results.length) {
-    return `vault_search: no results for ${JSON.stringify(query)}`;
-  }
-
-  const lines = results.map((r) => {
-    const title = r.kind === 'note' ? `note:${r.key}` : `tool:${r.tool || r.key || 'unknown'}`;
-    const body = r.value ?? r.snippet ?? r.content ?? '';
-    const short = body.replace(/\s+/g, ' ').slice(0, 160);
-    return `${r.updatedAt} ${title} ${JSON.stringify(short)}`;
-  });
-
-  return lines.join('\n');
+  return vaultSearchTool(ctx, args);
 }
 
 /** Phase 9: sys_context tool (mode-gated in agent schema). */
