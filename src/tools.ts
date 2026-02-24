@@ -6,6 +6,7 @@ import type { LensStore } from './lens.js';
 import type { ReplayStore } from './replay.js';
 import { checkExecSafety, checkPathSafety, isProtectedDeleteTarget } from './safety.js';
 import { sys_context as sysContextTool } from './sys/context.js';
+import { hasBackgroundExecIntent, makeExecStreamer } from './tools/exec-utils.js';
 import { normalizePatchPath, extractTouchedFilesFromPatch } from './tools/patch.js';
 import {
   isWithinDir,
@@ -1078,107 +1079,6 @@ export async function search_files(ctx: ToolContext, args: any) {
   return out.join('\n');
 }
 
-function stripSimpleQuotedSegments(s: string): string {
-  // Best-effort quote stripping for lightweight shell pattern checks.
-  return s
-    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
-    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
-    .replace(/`(?:[^`\\]|\\.)*`/g, '``');
-}
-
-function hasBackgroundExecIntent(command: string): boolean {
-  const stripped = stripSimpleQuotedSegments(command);
-  // Detect standalone '&' token (background), but ignore && and redirection forms
-  // like >&2, <&, and &>.
-  return /(^|[;\s])&(?![&><\d])(?=($|[;\s]))/.test(stripped);
-}
-
-function safeFireAndForget(fn: (() => void | Promise<void>) | undefined): void {
-  if (!fn) return;
-  try {
-    const r = fn();
-    if (r && typeof (r as any).catch === 'function') (r as any).catch(() => {});
-  } catch {
-    // best effort only
-  }
-}
-
-function makeExecStreamer(ctx: ToolContext) {
-  const cb = ctx.onToolStream;
-  if (!cb) return null;
-
-  const id = ctx.toolCallId ?? '';
-  const name = ctx.toolName ?? 'exec';
-
-  const intervalMs = Math.max(50, Math.floor(ctx.toolStreamIntervalMs ?? 750));
-  const maxChunkChars = Math.max(80, Math.floor(ctx.toolStreamMaxChunkChars ?? 900));
-  const maxBufferChars = Math.max(
-    maxChunkChars,
-    Math.floor(ctx.toolStreamMaxBufferChars ?? 12_000)
-  );
-
-  let outBuf = '';
-  let errBuf = '';
-  let lastEmit = 0;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-
-  const emit = (stream: 'stdout' | 'stderr', chunk: string) => {
-    const trimmed = chunk.length > maxChunkChars ? chunk.slice(-maxChunkChars) : chunk;
-    const ev: ToolStreamEvent = { id, name, stream, chunk: trimmed };
-    safeFireAndForget(() => cb(ev));
-  };
-
-  const schedule = () => {
-    if (timer) return;
-    const delay = Math.max(0, intervalMs - (Date.now() - lastEmit));
-    timer = setTimeout(() => {
-      timer = null;
-      flush(false);
-    }, delay);
-  };
-
-  const flush = (force = false) => {
-    const now = Date.now();
-    if (!force && now - lastEmit < intervalMs) {
-      schedule();
-      return;
-    }
-    lastEmit = now;
-
-    if (outBuf) {
-      emit('stdout', outBuf);
-      outBuf = '';
-    }
-    if (errBuf) {
-      emit('stderr', errBuf);
-      errBuf = '';
-    }
-  };
-
-  const push = (stream: 'stdout' | 'stderr', textRaw: string) => {
-    const text = stripAnsi(textRaw).replace(/\r/g, '\n');
-    if (!text) return;
-
-    if (stream === 'stdout') outBuf += text;
-    else errBuf += text;
-
-    if (outBuf.length > maxBufferChars) outBuf = outBuf.slice(-maxBufferChars);
-    if (errBuf.length > maxBufferChars) errBuf = errBuf.slice(-maxBufferChars);
-
-    schedule();
-  };
-
-  const done = () => {
-    if (timer) {
-      clearTimeout(timer);
-      timer = null;
-    }
-    flush(true);
-  };
-
-  return { push, done };
-}
-
 export async function exec(ctx: ToolContext, args: any) {
   const command = typeof args?.command === 'string' ? args.command : undefined;
   const cwd = args?.cwd ? resolvePath(ctx, args.cwd) : ctx.cwd;
@@ -1394,11 +1294,11 @@ export async function exec(ctx: ToolContext, args: any) {
 
   child.stdout.on('data', (d) => {
     pushCapped(outChunks, d, 'out');
-    streamer?.push('stdout', d.toString('utf8'));
+    streamer?.push('stdout', stripAnsi(d.toString('utf8')));
   });
   child.stderr.on('data', (d) => {
     pushCapped(errChunks, d, 'err');
-    streamer?.push('stderr', d.toString('utf8'));
+    streamer?.push('stderr', stripAnsi(d.toString('utf8')));
   });
 
   const rc: number = await new Promise((resolve, reject) => {
