@@ -515,18 +515,19 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               planFilePath: plannedFilePath,
             });
 
+            let discoveryTimeoutHandle: NodeJS.Timeout;
             const discoveryRes = await Promise.race([
-              discoverySession.ask(discoveryPrompt),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => {
+              discoverySession.ask(discoveryPrompt).finally(() => clearTimeout(discoveryTimeoutHandle)),
+              new Promise<never>((_, reject) => {
+                discoveryTimeoutHandle = setTimeout(() => {
                   try {
                     discoverySession?.cancel();
                   } catch {
                     // best effort
                   }
                   reject(new Error('preflight-discovery-timeout'));
-                }, discoveryTimeoutMs)
-              ),
+                }, discoveryTimeoutMs);
+              }),
             ]);
 
             const discoveryTokens =
@@ -659,18 +660,19 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               );
 
               const reviewPrompt = buildRequirementsReviewPrompt(reviewPlanFile);
+              let reviewTimeoutHandle: NodeJS.Timeout;
               const reviewRes = await Promise.race([
-                reviewSession.ask(reviewPrompt),
-                new Promise<never>((_, reject) =>
-                  setTimeout(() => {
+                reviewSession.ask(reviewPrompt).finally(() => clearTimeout(reviewTimeoutHandle)),
+                new Promise<never>((_, reject) => {
+                  reviewTimeoutHandle = setTimeout(() => {
                     try {
                       reviewSession?.cancel();
                     } catch {
                       // best effort
                     }
                     reject(new Error('preflight-review-timeout'));
-                  }, reviewTimeoutMs)
-                ),
+                  }, reviewTimeoutMs);
+                }),
               ]);
 
               const reviewTokens = reviewSession.usage.prompt + reviewSession.usage.completion;
