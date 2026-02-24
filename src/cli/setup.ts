@@ -16,8 +16,6 @@ import { defaultConfigPath, ensureConfigDir } from '../config.js';
 import type { RuntimesConfig } from '../runtime/types.js';
 
 import {
-  parseUserIds,
-  validateBotConfig,
   maskToken,
   serviceState,
   hasSystemd,
@@ -27,6 +25,7 @@ import {
   type BotSetupConfig,
 } from './bot.js';
 import { getActiveRuntimeEndpoint } from './runtime-detect.js';
+import { setupBotStep } from './setup-bot-step.js';
 import { addBackendTUI, addHostTUI, addModelTUI } from './setup-runtime-forms.js';
 import {
   ask,
@@ -49,69 +48,6 @@ import {
 // ── Main wizard ──────────────────────────────────────────────────────
 
 // ── Bot setup helper (used by Step 5) ────────────────────────────────
-
-async function setupBot(
-  rl: readline.Interface,
-  target: 'Telegram' | 'Discord',
-  defaultDir: string,
-  existing: BotSetupConfig | null
-): Promise<BotSetupConfig | null> {
-  const isTg = target === 'Telegram';
-  drawHeader(`Step 7 of 7 — Bot Setup: ${target}`);
-
-  console.log(`  ${BOLD}Bot token${RESET}`);
-  info(
-    isTg ? 'Get one from @BotFather on Telegram.' : 'Get one from the Discord Developer Portal.'
-  );
-  const token = await ask(rl, 'Token', existing?.token ?? '');
-  if (!token.trim()) {
-    warn(`No token provided. Skipping ${target}.`);
-    await pause();
-    return existing;
-  }
-
-  console.log();
-  console.log(`  ${BOLD}Allowed users${RESET}`);
-  info(`User IDs that can ${isTg ? 'talk to' : 'use'} the bot. Everyone else is ignored.`);
-  const usersStr = await ask(
-    rl,
-    'IDs (comma-separated)',
-    existing?.allowed_users?.join(', ') ?? ''
-  );
-  const users = parseUserIds(usersStr);
-  if (users.length === 0) {
-    warn(`No valid user IDs. Skipping ${target}.`);
-    await pause();
-    return existing;
-  }
-
-  let guildId: string | undefined;
-  if (!isTg) {
-    console.log();
-    console.log(`  ${BOLD}Guild / server${RESET}`);
-    info('Leave blank for DM-only mode.');
-    const gid = await ask(rl, 'Guild ID', existing?.guild_id ?? '');
-    guildId = gid.trim() || undefined;
-  }
-
-  console.log();
-  console.log(`  ${BOLD}Working directory${RESET}`);
-  info('Default project directory for bot sessions.');
-  const dir = await ask(rl, 'Path', existing?.default_dir ?? defaultDir);
-  const cfg: BotSetupConfig = {
-    token: token.trim(),
-    allowed_users: users,
-    default_dir: dir.trim() || defaultDir,
-    ...(guildId ? { guild_id: guildId, allow_guilds: true } : {}),
-  };
-  const err = validateBotConfig(cfg);
-  if (err) {
-    warn(err);
-    await pause();
-    return existing;
-  }
-  return cfg;
-}
 
 const BOLD = '\x1b[1m';
 const DIM = '\x1b[2m';
@@ -587,10 +523,10 @@ export async function runSetup(existingConfigPath?: string): Promise<SetupResult
       if (botAction === 'continue') break;
 
       if (botAction === 'add-tg' || botAction === 'edit-tg') {
-        botTelegram = await setupBot(rl, 'Telegram', resolvedDir, botTelegram);
+        botTelegram = await setupBotStep(rl, 'Telegram', resolvedDir, botTelegram);
       }
       if (botAction === 'add-dc' || botAction === 'edit-dc') {
-        botDiscord = await setupBot(rl, 'Discord', resolvedDir, botDiscord);
+        botDiscord = await setupBotStep(rl, 'Discord', resolvedDir, botDiscord);
       }
     }
 
