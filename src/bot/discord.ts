@@ -425,6 +425,17 @@ When you escalate, your request will be re-run on a more capable model.`;
     });
     streamer.start();
 
+    // Send typing indicator and refresh it periodically (Discord typing lasts ~10s)
+    const sendTyping = () => {
+      if ('sendTyping' in msg.channel && typeof msg.channel.sendTyping === 'function') {
+        (msg.channel.sendTyping as () => Promise<void>)().catch(() => {});
+      }
+    };
+    sendTyping();
+    const typingTimer = setInterval(() => {
+      if (isTurnActive(managed, turnId)) sendTyping();
+    }, 8000);
+
     const baseHooks: AgentHooks = {
       onToken: () => {
         if (!isTurnActive(managed, turnId)) return;
@@ -580,6 +591,7 @@ When you escalate, your request will be re-run on a more capable model.`;
 
               // Finish this turn and re-run with escalated model
               clearInterval(watchdog);
+              clearInterval(typingTimer);
               finishTurn(managed, turnId);
 
               // Re-process the original message with the escalated model
@@ -650,6 +662,7 @@ When you escalate, your request will be re-run on a more capable model.`;
       }
     } finally {
       clearInterval(watchdog);
+      clearInterval(typingTimer);
       streamer.stop();
       finishTurn(managed, turnId);
 
