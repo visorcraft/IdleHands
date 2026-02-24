@@ -1,6 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import {
+  DEFAULT_SUB_AGENT_RESULT_TOKEN_CAP,
+  DEFAULT_SUB_AGENT_SYSTEM_PROMPT,
+  MCP_TOOLS_REQUEST_TOKEN,
+} from './agent/constants.js';
 import { AgentLoopBreak } from './agent/errors.js';
 import {
   execRcShouldSignalFailure,
@@ -150,19 +155,6 @@ Tool call format:
 - Use tool_calls. Do not write JSON tool invocations in your message text.
 `;
 
-const MCP_TOOLS_REQUEST_TOKEN = '[[MCP_TOOLS_REQUEST]]';
-
-const DEFAULT_SUB_AGENT_SYSTEM_PROMPT = `You are a focused coding sub-agent. Execute only the delegated task.
-- Work in the current directory. Use relative paths for all file operations.
-- Read the target file before editing. You need the exact text for search/replace.
-- Keep tool usage tight and efficient.
-- Prefer surgical edits over rewrites.
-- Do NOT create files outside the working directory unless explicitly requested.
-- When running commands in a subdirectory, use exec's cwd parameter — NOT "cd /path && cmd".
-- Run verification commands when relevant.
-- Return a concise outcome summary.`;
-
-const DEFAULT_SUB_AGENT_RESULT_TOKEN_CAP = 4000;
 function buildToolsSchema(opts?: {
   activeVaultTools?: boolean;
   passiveVault?: boolean;
