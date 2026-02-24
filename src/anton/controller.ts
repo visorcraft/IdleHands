@@ -114,6 +114,20 @@ function isL2MissingImplementation(reason: string): boolean {
   return missingPatterns.some((p) => p.test(reason));
 }
 
+function isRecoverablePreflightDiscoveryError(errMsg: string): boolean {
+  return (
+    /preflight-json-missing-object|preflight-discovery-invalid-status|preflight-discovery-invalid-filename|preflight-discovery-filename/i.test(
+      errMsg
+    ) || /identical call repeated|breaking loop|tool\s+edit_range/i.test(errMsg)
+  );
+}
+
+function isRecoverablePreflightReviewError(errMsg: string): boolean {
+  return /preflight-json-missing-object|preflight-review-invalid-status|preflight-review-invalid-filename|preflight-review-filename/i.test(
+    errMsg
+  );
+}
+
 /**
  * Try to read a file's contents for injection into retry context.
  * Returns null if file doesn't exist or is too large.
@@ -606,6 +620,28 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             const short = errMsg.length > 180 ? `${errMsg.slice(0, 177)}...` : errMsg;
             discoveryRetryHint = `Previous discovery attempt failed: ${short}. Do not edit source files. Only update ${plannedFilePath} and return strict JSON.`;
 
+            // If discovery returns malformed/non-JSON output (or loops on source edits),
+            // degrade immediately to fallback plan instead of burning retries.
+            if (isRecoverablePreflightDiscoveryError(errMsg)) {
+              const fallbackState = await ensurePlanFileExistsOrBootstrap({
+                absPath: plannedFilePath,
+                task: currentTask,
+                source: 'discovery',
+              });
+              if (fallbackState === 'bootstrapped') {
+                progress.onStage?.(
+                  `⚠️ Discovery returned invalid output (${short}). Bootstrapped fallback plan and continuing: ${plannedFilePath}`
+                );
+              } else {
+                progress.onStage?.(
+                  `⚠️ Discovery returned invalid output (${short}). Reusing existing plan and continuing: ${plannedFilePath}`
+                );
+              }
+              taskPlanByTaskKey.set(currentTask.key, plannedFilePath);
+              discoveryOk = true;
+              break;
+            }
+
             if (discoveryTry < preflightMaxRetries) {
               if (/max iterations exceeded/i.test(errMsg)) {
                 const nextCap = Math.min(
@@ -743,9 +779,30 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                 error: errMsg,
               });
 
-              if (reviewTry < preflightMaxRetries) {
-                const short = errMsg.length > 180 ? `${errMsg.slice(0, 177)}...` : errMsg;
+              const short = errMsg.length > 180 ? `${errMsg.slice(0, 177)}...` : errMsg;
 
+              // If review returns malformed/non-JSON output, keep moving with existing plan.
+              if (isRecoverablePreflightReviewError(errMsg)) {
+                const fallbackState = await ensurePlanFileExistsOrBootstrap({
+                  absPath: reviewPlanFile,
+                  task: currentTask,
+                  source: 'requirements-review',
+                });
+                if (fallbackState === 'bootstrapped') {
+                  progress.onStage?.(
+                    `⚠️ Requirements review returned invalid output (${short}). Bootstrapped fallback plan and continuing: ${reviewPlanFile}`
+                  );
+                } else {
+                  progress.onStage?.(
+                    `⚠️ Requirements review returned invalid output (${short}). Reusing existing plan and continuing: ${reviewPlanFile}`
+                  );
+                }
+                taskPlanByTaskKey.set(currentTask.key, reviewPlanFile);
+                reviewOk = true;
+                break;
+              }
+
+              if (reviewTry < preflightMaxRetries) {
                 if (/max iterations exceeded/i.test(errMsg)) {
                   const nextCap = Math.min(
                     Math.max(reviewIterationCap * 2, reviewIterationCap + 2),
