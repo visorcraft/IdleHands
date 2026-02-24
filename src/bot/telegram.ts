@@ -13,6 +13,7 @@ import {
   classifyTelegramEditError,
 } from '../progress/message-edit-scheduler.js';
 import { ProgressPresenter } from '../progress/progress-presenter.js';
+import { formatToolCallSummary } from '../progress/tool-summary.js';
 import type { IdlehandsConfig, BotTelegramConfig } from '../types.js';
 import { PKG_VERSION } from '../utils.js';
 import { formatWatchdogCancelMessage, resolveWatchdogSettings } from '../watchdog.js';
@@ -51,15 +52,10 @@ import {
 } from './commands.js';
 import { TelegramConfirmProvider } from './confirm-telegram.js';
 import { detectEscalation, checkKeywordEscalation } from './discord-routing.js';
-import {
-  markdownToTelegramHtml,
-  splitMessage,
-  escapeHtml,
-} from './format.js';
-import { formatToolCallSummary } from '../progress/tool-summary.js';
+import { markdownToTelegramHtml, splitMessage, escapeHtml } from './format.js';
+import { waitForModelEndpoint } from './model-endpoint.js';
 import { SessionManager, type ManagedSession } from './session-manager.js';
 import { registerRuntimeCommands, handleModelSelectCallback } from './telegram-commands.js';
-import { waitForModelEndpoint } from './model-endpoint.js';
 
 // Escalation helpers shared with Discord bot
 
