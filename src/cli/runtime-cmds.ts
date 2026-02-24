@@ -725,6 +725,7 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
 
   const rtConfig = await loadRuntimes();
   const active = await loadActiveRuntime();
+  const hostById = new Map(rtConfig.hosts.map((h) => [h.id, h]));
   const mode = dryRun ? ('dry-run' as const) : ('live' as const);
 
   const result = plan(
@@ -823,7 +824,7 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
   if (execResult.ok && waitReady) {
     const timeoutSec = waitTimeoutSec ?? executedPlan.model.launch.probe_timeout_sec ?? 60;
     for (const resolvedHost of executedPlan.hosts) {
-      const hostCfg = rtConfig.hosts.find((h) => h.id === resolvedHost.id);
+      const hostCfg = hostById.get(resolvedHost.id);
       if (!hostCfg) continue;
       const port = executedPlan.model.runtime_defaults?.port ?? 8080;
 
@@ -873,8 +874,7 @@ export async function runSelectSubcommand(args: any, _config: any): Promise<void
       console.log(`Runtime switched to "${executedPlan.model.display_name}" successfully.`);
     }
     // Show the derived endpoint so the user knows where requests will go
-    const { loadActiveRuntime: loadAR } = await import('../runtime/executor.js');
-    const activeNow = await loadAR();
+    const activeNow = await loadActiveRuntime();
     if (activeNow?.endpoint) {
       console.log(`Endpoint: ${activeNow.endpoint}`);
     }
