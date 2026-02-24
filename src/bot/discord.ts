@@ -1,5 +1,14 @@
 import path from 'node:path';
 
+const discordMentionStripCache = new Map<string, RegExp>();
+function mentionStripRegexFor(botUserId: string): RegExp {
+  const cached = discordMentionStripCache.get(botUserId);
+  if (cached) return cached;
+  const re = new RegExp(`<@!?${botUserId}>`, 'g');
+  discordMentionStripCache.set(botUserId, re);
+  return re;
+}
+
 import {
   Client,
   Events,
@@ -1106,8 +1115,8 @@ When you escalate, your request will be re-run on a more capable model.`;
       if (!isMentioned) return; // Silently ignore messages without mention
 
       // Strip the bot mention from content so the agent sees clean text
-      if (botMention && botMentionNick) {
-        content = content.split(botMention).join('').split(botMentionNick).join('').trim();
+      if (client.user) {
+        content = content.replace(mentionStripRegexFor(client.user.id), '').trim();
       }
       if (!content) return; // Nothing left after stripping mention
     }
