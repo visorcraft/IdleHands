@@ -396,8 +396,32 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
   const args = text.replace(/^\/anton\s*/, '').trim();
   const sub = firstToken(args);
 
+  let antonStatusMsgId: number | null = null;
+  let antonStatusLastText = '';
   const sendAntonUpdate = (t: string) => {
-    ctx.api.sendMessage(chatId, t).catch(() => {});
+    const isStatusUpdate = t.startsWith('⏳ Still working:');
+    if (!isStatusUpdate) {
+      antonStatusMsgId = null;
+      antonStatusLastText = '';
+      ctx.api.sendMessage(chatId, t).catch(() => {});
+      return;
+    }
+
+    if (t === antonStatusLastText) return;
+    antonStatusLastText = t;
+
+    if (antonStatusMsgId != null) {
+      ctx.api.editMessageText(chatId, antonStatusMsgId, t).catch(() => {
+        ctx.api.sendMessage(chatId, t)
+          .then((m) => { antonStatusMsgId = (m as any)?.message_id ?? null; })
+          .catch(() => {});
+      });
+      return;
+    }
+
+    ctx.api.sendMessage(chatId, t)
+      .then((m) => { antonStatusMsgId = (m as any)?.message_id ?? null; })
+      .catch(() => {});
   };
 
   let managed = sessions.get(chatId);
