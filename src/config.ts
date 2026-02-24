@@ -130,6 +130,8 @@ const DEFAULTS: IdlehandsConfig = {
       discovery_timeout_sec: 600,
       review_timeout_sec: 600,
       max_retries: 1,
+      session_max_iterations: 3,
+      session_timeout_sec: 120,
     },
   },
 };
@@ -758,6 +760,18 @@ export async function loadConfig(opts: {
       }
       if (typeof a.preflight.max_retries === 'number') {
         a.preflight.max_retries = Math.max(0, Math.floor(a.preflight.max_retries));
+      }
+      if (typeof a.preflight.session_max_iterations === 'number') {
+        a.preflight.session_max_iterations = Math.max(
+          1,
+          Math.min(10, Math.floor(a.preflight.session_max_iterations))
+        );
+      }
+      if (typeof a.preflight.session_timeout_sec === 'number') {
+        a.preflight.session_timeout_sec = Math.max(
+          10,
+          Math.min(600, Math.floor(a.preflight.session_timeout_sec))
+        );
       }
     }
     const validApprovalModes = ['plan', 'reject', 'default', 'auto-edit', 'yolo'];

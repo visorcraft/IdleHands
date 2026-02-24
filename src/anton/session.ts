@@ -32,6 +32,46 @@ export function buildSessionConfig(base: IdlehandsConfig, config: AntonRunConfig
 }
 
 /**
+ * Build session config for preflight discovery/review sessions.
+ * Uses stricter limits and no tools to avoid long exploratory churn.
+ */
+export function buildPreflightConfig(
+  base: IdlehandsConfig,
+  config: AntonRunConfig,
+  stageTimeoutSec: number
+): IdlehandsConfig {
+  const preflightMaxIterations =
+    Number.isFinite(config.preflightSessionMaxIterations) &&
+    Number(config.preflightSessionMaxIterations) > 0
+      ? Math.floor(Number(config.preflightSessionMaxIterations))
+      : 3;
+
+  const preflightTimeoutCapSec =
+    Number.isFinite(config.preflightSessionTimeoutSec) &&
+    Number(config.preflightSessionTimeoutSec) > 0
+      ? Math.floor(Number(config.preflightSessionTimeoutSec))
+      : 120;
+
+  return {
+    ...base,
+    dir: config.projectDir,
+    approval_mode: config.approvalMode,
+    no_confirm: config.approvalMode === 'yolo',
+    verbose: false,
+    quiet: true,
+    max_iterations: preflightMaxIterations,
+    timeout: Math.max(10, Math.min(Math.floor(stageTimeoutSec), preflightTimeoutCapSec)),
+    compact_at: 0.65,
+    compact_min_tail: 4,
+    no_tools: true,
+    trifecta: { enabled: false },
+    mcp: { servers: [] },
+    lsp: { enabled: false },
+    sub_agents: { enabled: false },
+  };
+}
+
+/**
  * Build session config for decompose-only sessions.
  * No tools — forces the model to emit a text-only decompose response.
  */

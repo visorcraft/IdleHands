@@ -586,6 +586,13 @@ describe('anton config', () => {
     assert.equal(config.anton.auto_commit, true);
     assert.equal(config.anton.progress_events, true);
     assert.equal(config.anton.progress_heartbeat_sec, 30);
+    assert.equal(config.anton.preflight?.enabled, false);
+    assert.equal(config.anton.preflight?.requirements_review, true);
+    assert.equal(config.anton.preflight?.discovery_timeout_sec, 600);
+    assert.equal(config.anton.preflight?.review_timeout_sec, 600);
+    assert.equal(config.anton.preflight?.max_retries, 1);
+    assert.equal(config.anton.preflight?.session_max_iterations, 3);
+    assert.equal(config.anton.preflight?.session_timeout_sec, 120);
   });
 
   it('env overrides apply', async () => {
@@ -623,6 +630,10 @@ describe('anton config', () => {
           max_decompose_depth: 10,
           progress_heartbeat_sec: 1,
           approval_mode: 'invalid',
+          preflight: {
+            session_max_iterations: 99,
+            session_timeout_sec: 2,
+          },
         },
       },
     });
@@ -633,6 +644,9 @@ describe('anton config', () => {
     assert.equal(config.anton?.max_decompose_depth, 5);
     // progress heartbeat clamped to sane min
     assert.equal(config.anton?.progress_heartbeat_sec, 5);
+    // preflight caps clamped to sane bounds
+    assert.equal(config.anton?.preflight?.session_max_iterations, 10);
+    assert.equal(config.anton?.preflight?.session_timeout_sec, 10);
     // invalid approval_mode defaults to 'yolo' with warning
     assert.equal(config.anton?.approval_mode, 'yolo');
   });

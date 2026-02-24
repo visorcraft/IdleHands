@@ -916,6 +916,111 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.ok(stageMessages.some((m) => m.includes('Implementation')));
   });
 
+  test('17g. Preflight review retry stays on review stage and reuses same plan file', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+    const planFile = join(tmpDir, '.agents', 'tasks', 'plan.md');
+    await mkdir(join(tmpDir, '.agents', 'tasks'), { recursive: true });
+    await writeFile(planFile, '# plan');
+
+    const config = createTestConfig({
+      taskFile,
+      projectDir: tmpDir,
+      preflightEnabled: true,
+      preflightRequirementsReview: true,
+      preflightMaxRetries: 1,
+    } as any);
+
+    const stageMessages: string[] = [];
+    const progress = {
+      ...createMockProgressCallback(),
+      onStage: (m: string) => stageMessages.push(m),
+    } as any;
+
+    let discoveryCalls = 0;
+    let reviewCalls = 0;
+    let implementationCalls = 0;
+
+    const createSession = async () => ({
+      ...createMockSession(['<anton-result>status: done</anton-result>']),
+      async ask(prompt: string) {
+        if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+          discoveryCalls++;
+          return { text: `{"status":"incomplete","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
+        }
+        if (prompt.includes('Please review this plan file')) {
+          reviewCalls++;
+          if (reviewCalls === 1) throw new Error('preflight-review-timeout');
+          return { text: `{"status":"ready","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
+        }
+
+        implementationCalls++;
+        return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 } as any;
+      },
+    } as any);
+
+    const result = await runAnton({
+      config,
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress,
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.equal(result.completedAll, true);
+    assert.equal(discoveryCalls, 1);
+    assert.equal(reviewCalls, 2);
+    assert.equal(implementationCalls, 1);
+    assert.ok(stageMessages.some((m) => m.includes('Retrying review with existing plan file')));
+  });
+
+  test('17h. Preflight sessions enforce capped no-tools config', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+    const planFile = join(tmpDir, '.agents', 'tasks', 'plan.md');
+    await mkdir(join(tmpDir, '.agents', 'tasks'), { recursive: true });
+    await writeFile(planFile, '# plan');
+
+    const config = createTestConfig({
+      taskFile,
+      projectDir: tmpDir,
+      preflightEnabled: true,
+      preflightRequirementsReview: false,
+      preflightDiscoveryTimeoutSec: 300,
+      preflightSessionMaxIterations: 2,
+      preflightSessionTimeoutSec: 45,
+    } as any);
+
+    const sessionConfigs: IdlehandsConfig[] = [];
+    const createSession = async (sessionConfig: IdlehandsConfig) => {
+      sessionConfigs.push(sessionConfig);
+      return {
+        ...createMockSession(['<anton-result>status: done</anton-result>']),
+        async ask(prompt: string) {
+          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+            return { text: `{"status":"incomplete","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
+          }
+          return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 } as any;
+        },
+      } as any;
+    };
+
+    const result = await runAnton({
+      config,
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress: createMockProgressCallback(),
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.equal(result.completedAll, true);
+    assert.ok(sessionConfigs.length >= 2);
+    const preflightSession = sessionConfigs[0];
+    assert.equal(preflightSession.no_tools, true);
+    assert.equal(preflightSession.max_iterations, 2);
+    assert.equal(preflightSession.timeout, 45);
+  });
+
   test("17. maxTotalTasks exceeded → stopReason='max_tasks_exceeded'", async () => {
     const tmpDir = await createTempGitRepo();
     const taskFile = await createTaskFile(

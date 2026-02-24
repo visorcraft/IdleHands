@@ -755,6 +755,8 @@ export function buildAntonRunConfig(defaults: any, cwd: string, filePath: string
     preflightDiscoveryTimeoutSec: defaults.preflight?.discovery_timeout_sec ?? defaults.task_timeout_sec ?? 600,
     preflightReviewTimeoutSec: defaults.preflight?.review_timeout_sec ?? defaults.task_timeout_sec ?? 600,
     preflightMaxRetries: defaults.preflight?.max_retries ?? 1,
+    preflightSessionMaxIterations: defaults.preflight?.session_max_iterations ?? 3,
+    preflightSessionTimeoutSec: defaults.preflight?.session_timeout_sec ?? 120,
     projectDir: defaults.project_dir || cwd,
     maxRetriesPerTask: defaults.max_retries ?? 3,
     maxIterations: defaults.max_iterations ?? 200,
