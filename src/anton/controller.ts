@@ -460,7 +460,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
       // Optional preflight pipeline: discovery -> requirements review.
       // Runs on first attempt for each task. Retries are stage-local to avoid churn.
       if (config.preflightEnabled && retries === 0) {
-        const preflightMaxRetries = Math.max(0, config.preflightMaxRetries ?? 1);
+        const preflightMaxRetries = Math.max(0, config.preflightMaxRetries ?? 2);
         const preflightTotalTries = preflightMaxRetries + 1;
         let preflightMarkedComplete = false;
         let discoveryOk = false;
@@ -468,6 +468,10 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         await ensureAgentsTasksDir(config.projectDir);
         const plannedFilePath =
           taskPlanByTaskKey.get(currentTask.key) ?? makeUniqueTaskPlanFilename(config.projectDir);
+        let discoveryIterationCap = Math.max(
+          1,
+          Math.floor(config.preflightSessionMaxIterations ?? 500)
+        );
 
         // Stage 1: discovery (retry discovery only).
         for (let discoveryTry = 0; discoveryTry <= preflightMaxRetries; discoveryTry++) {
@@ -479,7 +483,12 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           try {
             progress.onStage?.('🔎 Discovery: checking if already done...');
             discoverySession = await createSessionFn(
-              buildPreflightConfig(idlehandsConfig, config, discoveryTimeoutSec),
+              buildPreflightConfig(
+                idlehandsConfig,
+                config,
+                discoveryTimeoutSec,
+                discoveryIterationCap
+              ),
               apiKey
             );
 
@@ -557,6 +566,21 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
 
             if (discoveryTry < preflightMaxRetries) {
               const short = errMsg.length > 180 ? `${errMsg.slice(0, 177)}...` : errMsg;
+
+              if (/max iterations exceeded/i.test(errMsg)) {
+                const nextCap = Math.min(
+                  Math.max(discoveryIterationCap * 2, discoveryIterationCap + 2),
+                  1000
+                );
+                if (nextCap > discoveryIterationCap) {
+                  progress.onStage?.(
+                    `⚠️ Discovery hit max iterations (${discoveryIterationCap}). Increasing preflight cap to ${nextCap} and retrying...`
+                  );
+                  discoveryIterationCap = nextCap;
+                  continue;
+                }
+              }
+
               progress.onStage?.(
                 `⚠️ Discovery failed (${discoveryTry + 1}/${preflightTotalTries}): ${short}. Retrying discovery...`
               );
@@ -599,6 +623,10 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         if (config.preflightRequirementsReview) {
           const reviewPlanFile = taskPlanByTaskKey.get(currentTask.key) ?? plannedFilePath;
           let reviewOk = false;
+          let reviewIterationCap = Math.max(
+            1,
+            Math.floor(config.preflightSessionMaxIterations ?? 500)
+          );
 
           for (let reviewTry = 0; reviewTry <= preflightMaxRetries; reviewTry++) {
             const stageStart = Date.now();
@@ -609,7 +637,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             try {
               progress.onStage?.('🧪 Requirements review: refining plan...');
               reviewSession = await createSessionFn(
-                buildPreflightConfig(idlehandsConfig, config, reviewTimeoutSec),
+                buildPreflightConfig(idlehandsConfig, config, reviewTimeoutSec, reviewIterationCap),
                 apiKey
               );
 
@@ -671,6 +699,21 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
 
               if (reviewTry < preflightMaxRetries) {
                 const short = errMsg.length > 180 ? `${errMsg.slice(0, 177)}...` : errMsg;
+
+                if (/max iterations exceeded/i.test(errMsg)) {
+                  const nextCap = Math.min(
+                    Math.max(reviewIterationCap * 2, reviewIterationCap + 2),
+                    1000
+                  );
+                  if (nextCap > reviewIterationCap) {
+                    progress.onStage?.(
+                      `⚠️ Requirements review hit max iterations (${reviewIterationCap}). Increasing preflight cap to ${nextCap} and retrying...`
+                    );
+                    reviewIterationCap = nextCap;
+                    continue;
+                  }
+                }
+
                 progress.onStage?.(
                   `⚠️ Requirements review failed (${reviewTry + 1}/${preflightTotalTries}): ${short}. Retrying review with existing plan file...`
                 );

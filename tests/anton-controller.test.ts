@@ -1063,6 +1063,58 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.ok(stageMessages.some((m) => m.includes('Created fallback plan file')));
   });
 
+  test('17j. Discovery max-iterations error auto-increases preflight cap on retry', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+    const planFile = join(tmpDir, '.agents', 'tasks', 'plan.md');
+    await mkdir(join(tmpDir, '.agents', 'tasks'), { recursive: true });
+    await writeFile(planFile, '# plan');
+
+    const stageMessages: string[] = [];
+    const progress = {
+      ...createMockProgressCallback(),
+      onStage: (m: string) => stageMessages.push(m),
+    } as any;
+
+    const discoveryCaps: number[] = [];
+    let discoveryCalls = 0;
+
+    const config = createTestConfig({
+      taskFile,
+      projectDir: tmpDir,
+      preflightEnabled: true,
+      preflightRequirementsReview: false,
+      preflightMaxRetries: 1,
+      preflightSessionMaxIterations: 3,
+    } as any);
+
+    const createSession = async (sessionConfig: IdlehandsConfig) => ({
+      ...createMockSession(['<anton-result>status: done</anton-result>']),
+      async ask(prompt: string) {
+        if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+          discoveryCalls++;
+          discoveryCaps.push(sessionConfig.max_iterations ?? 0);
+          if (discoveryCalls === 1) throw new Error('max iterations exceeded (3)');
+          return { text: `{"status":"incomplete","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
+        }
+        return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 } as any;
+      },
+    } as any);
+
+    const result = await runAnton({
+      config,
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress,
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.equal(result.completedAll, true);
+    assert.equal(discoveryCalls, 2);
+    assert.deepEqual(discoveryCaps.slice(0, 2), [3, 6]);
+    assert.ok(stageMessages.some((m) => m.includes('Increasing preflight cap to 6')));
+  });
+
   test("17. maxTotalTasks exceeded → stopReason='max_tasks_exceeded'", async () => {
     const tmpDir = await createTempGitRepo();
     const taskFile = await createTaskFile(

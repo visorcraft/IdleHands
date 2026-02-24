@@ -69,4 +69,29 @@ describe('anton session config', () => {
     assert.equal(out.trifecta?.enabled, false);
     assert.deepEqual(out.mcp?.servers, []);
   });
+
+  it('uses safer default preflight cap and supports per-call override', () => {
+    const base = {
+      endpoint: 'x',
+      model: 'm',
+      max_tokens: 1000,
+      timeout: 999,
+      max_iterations: 999,
+      no_tools: true,
+    } as any;
+
+    const runConfig = {
+      projectDir: '/tmp',
+      approvalMode: 'yolo',
+      taskTimeoutSec: 600,
+      preflightSessionMaxIterations: undefined,
+      preflightSessionTimeoutSec: 120,
+    } as any;
+
+    const outDefault = buildPreflightConfig(base, runConfig, 600);
+    assert.equal(outDefault.max_iterations, 500);
+
+    const outOverride = buildPreflightConfig(base, runConfig, 600, 14);
+    assert.equal(outOverride.max_iterations, 14);
+  });
 });

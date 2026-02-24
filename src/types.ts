@@ -312,7 +312,7 @@ export type IdlehandsConfig = {
       discovery_timeout_sec?: number;
       review_timeout_sec?: number;
       max_retries?: number;
-      /** Max inner turns for discovery/review sessions. Default: 3. */
+      /** Max inner turns for discovery/review sessions. Default: 500. */
       session_max_iterations?: number;
       /** Hard timeout cap (seconds) for each discovery/review session. Default: 120. */
       session_timeout_sec?: number;
