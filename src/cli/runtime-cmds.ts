@@ -1,5 +1,4 @@
 import { spawnSync } from 'node:child_process';
-import path from 'node:path';
 import { stdin as input, stdout as output } from 'node:process';
 import readline from 'node:readline/promises';
 
@@ -14,44 +13,17 @@ import {
   interpolateTemplate,
 } from '../runtime/store.js';
 import type { RuntimeBackend, RuntimeHost, RuntimeModel } from '../runtime/types.js';
-import { configDir, shellEscape } from '../utils.js';
+import { shellEscape } from '../utils.js';
 
 import { firstToken } from './command-utils.js';
-
-function runtimesFilePath(): string {
-  return path.join(configDir(), 'runtimes.json');
-}
-
-function isTTY(): boolean {
-  return !!(process.stdin.isTTY && process.stdout.isTTY);
-}
-
-function printList<T>(items: T[]): void {
-  if (process.stdout.isTTY) {
-    console.table(items as any[]);
-  } else {
-    process.stdout.write(JSON.stringify(items, null, 2) + '\n');
-  }
-}
-
-async function ask(rl: readline.Interface, prompt: string, fallback = ''): Promise<string> {
-  const q = fallback ? `${prompt} [${fallback}]: ` : `${prompt}: `;
-  const ans = (await rl.question(q)).trim();
-  return ans || fallback;
-}
-
-function runLocalCommand(
-  command: string,
-  timeoutSec = 5
-): { ok: boolean; code: number | null; stdout: string; stderr: string } {
-  const p = spawnSync('bash', ['-c', command], { encoding: 'utf8', timeout: timeoutSec * 1000 });
-  return {
-    ok: p.status === 0,
-    code: p.status,
-    stdout: p.stdout ?? '',
-    stderr: p.stderr ?? '',
-  };
-}
+import {
+  ask,
+  isTTY,
+  printList,
+  runLocalCommand,
+  runtimesFilePath,
+  usage,
+} from './runtime-common.js';
 
 const hostCommandRunner = new HostCommandRunner();
 
@@ -61,12 +33,6 @@ async function runHostCommand(
   timeoutSec = 5
 ): Promise<{ ok: boolean; code: number | null; stdout: string; stderr: string }> {
   return await hostCommandRunner.runOnHost(host, command, timeoutSec);
-}
-
-function usage(kind: 'hosts' | 'backends' | 'models'): void {
-  console.log(
-    `Usage:\n  idlehands ${kind}\n  idlehands ${kind} show <id>\n  idlehands ${kind} add\n  idlehands ${kind} edit <id>\n  idlehands ${kind} remove <id>\n  idlehands ${kind} validate\n  idlehands ${kind} test <id>\n  idlehands ${kind} doctor`
-  );
 }
 
 export async function runHostsSubcommand(args: any, _config: any): Promise<void> {
