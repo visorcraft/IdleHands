@@ -339,6 +339,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           1,
           Math.floor(config.preflightSessionMaxIterations ?? 500)
         );
+        let discoveryRetryHint: string | undefined;
 
         // Stage 1: discovery (retry discovery only).
         for (let discoveryTry = 0; discoveryTry <= preflightMaxRetries; discoveryTry++) {
@@ -364,6 +365,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               taskFilePath: config.taskFile,
               projectDir: config.projectDir,
               planFilePath: plannedFilePath,
+              retryHint: discoveryRetryHint,
             });
 
             const discoveryRes = await Promise.race([
@@ -432,9 +434,10 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               error: errMsg,
             });
 
-            if (discoveryTry < preflightMaxRetries) {
-              const short = errMsg.length > 180 ? `${errMsg.slice(0, 177)}...` : errMsg;
+            const short = errMsg.length > 180 ? `${errMsg.slice(0, 177)}...` : errMsg;
+            discoveryRetryHint = `Previous discovery attempt failed: ${short}. Do not edit source files. Only update ${plannedFilePath} and return strict JSON.`;
 
+            if (discoveryTry < preflightMaxRetries) {
               if (/max iterations exceeded/i.test(errMsg)) {
                 const nextCap = Math.min(
                   Math.max(discoveryIterationCap * 2, discoveryIterationCap + 2),
@@ -455,20 +458,25 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               continue;
             }
 
-            const preflightAttempt: AntonAttempt = {
-              taskKey: currentTask.key,
-              taskText: currentTask.text,
-              attempt: attemptNumber,
-              durationMs: Date.now() - stageStart,
-              tokensUsed: 0,
-              status: timeout ? 'timeout' : 'error',
-              verification: undefined,
-              error: `preflight-error(discovery): ${errMsg}`,
-              commitHash: undefined,
-            };
-            attempts.push(preflightAttempt);
-            taskRetryCount.set(currentTask.key, retries + 1);
-            if (!config.skipOnFail) break mainLoop;
+            // Final discovery failure: degrade gracefully by bootstrapping a fallback plan file
+            // so Anton can still proceed to implementation/review instead of hard-failing task 1.
+            const fallbackState = await ensurePlanFileExistsOrBootstrap({
+              absPath: plannedFilePath,
+              task: currentTask,
+              source: 'discovery',
+            });
+            if (fallbackState === 'bootstrapped') {
+              progress.onStage?.(
+                `⚠️ Discovery failed after ${preflightTotalTries} tries (${short}). Bootstrapped fallback plan and continuing: ${plannedFilePath}`
+              );
+            } else {
+              progress.onStage?.(
+                `⚠️ Discovery failed after ${preflightTotalTries} tries (${short}). Reusing existing plan and continuing: ${plannedFilePath}`
+              );
+            }
+            taskPlanByTaskKey.set(currentTask.key, plannedFilePath);
+            discoveryOk = true;
+            break;
           } finally {
             try {
               await discoverySession?.close();

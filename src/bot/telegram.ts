@@ -55,11 +55,11 @@ import {
   markdownToTelegramHtml,
   splitMessage,
   escapeHtml,
-  formatToolCallSummary,
 } from './format.js';
-import { waitForModelEndpoint } from './model-endpoint.js';
+import { formatToolCallSummary } from '../progress/tool-summary.js';
 import { SessionManager, type ManagedSession } from './session-manager.js';
 import { registerRuntimeCommands, handleModelSelectCallback } from './telegram-commands.js';
+import { waitForModelEndpoint } from './model-endpoint.js';
 
 // Escalation helpers shared with Discord bot
 
