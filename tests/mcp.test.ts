@@ -311,7 +311,7 @@ describe('MCPManager', () => {
     const malformedScript = await makeMockMcpServerScript({ malformedOnCallName: 'mcp_echo' });
     const timeoutScript = await makeMockMcpServerScript({
       delayOnCallName: 'mcp_echo',
-      delayMs: 5000,
+      delayMs: 2000,
     });
     const errorScript = await makeMockMcpServerScript({
       jsonRpcErrorOnCallName: 'mcp_echo',
@@ -343,7 +343,7 @@ describe('MCPManager', () => {
         servers: [
           { name: 'timeout', transport: 'stdio', command: process.execPath, args: [timeoutScript] },
         ],
-        callTimeoutMs: 1500,
+        callTimeoutMs: 300,
         toolBudgetTokens: 1000,
       }),
       new MCPManager({
