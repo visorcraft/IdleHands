@@ -62,10 +62,13 @@ import { loadGitContext, isGitDirty, stashWorkingTree } from './git.js';
 import { selectHarness } from './harnesses.js';
 import {
   enforceContextBudget,
+  enforceContextBudgetEnhanced,
   stripThinking,
   estimateTokensFromMessages,
   estimateToolSchemaTokens,
+  extractKeyFacts,
 } from './history.js';
+import { truncateToolResultContent } from './agent/context-budget.js';
 import { HookManager, loadHookPlugins } from './hooks/index.js';
 import type { HookSystemConfig } from './hooks/index.js';
 import { projectIndexKeys, parseIndexMeta, isFreshIndex, indexSummaryLine } from './indexer.js';
@@ -3170,20 +3173,51 @@ export async function createSession(opts: {
               continue;
             }
 
-            // Default behavior for mutating/other tools: break on repeated identical signature.
+            // Improved handling of mutating tool loops - gradual recovery instead of immediate error
+            const sigCount = sigCounts.get(sig) ?? 0;
             const loopThreshold = harness.quirks.loopsOnToolError ? 2 : 3;
-            if ((sigCounts.get(sig) ?? 0) >= loopThreshold) {
+            
+            if (sigCount >= loopThreshold) {
               const argsObj = sigMetaBySig.get(sig)?.args ?? {};
               const argsRaw = JSON.stringify(argsObj);
               const argsPreview = argsRaw.length > 220 ? argsRaw.slice(0, 220) + '…' : argsRaw;
-              throw new Error(
-                `tool ${toolName}: identical call repeated ${loopThreshold}x across turns; breaking loop. ` +
-                  `args=${argsPreview}\n` +
-                  `Hint: you repeated the same tool call ${loopThreshold} times with identical arguments. ` +
-                  `If the call succeeded, move on to the next step. ` +
-                  `If it failed, check that all required parameters are present and correct. ` +
-                  `For write_file/edit_file/apply_patch/edit_range, ensure required args are present (content/old_text/new_text/patch/files/start_line/end_line/replacement).`
+              
+              // At threshold: trigger toolless recovery instead of throwing error
+              // This gives the model a chance to think and try a different approach
+              console.error(
+                `[tool-loop] critical: ${toolName} repeated ${sigCount}x with same args. Triggering recovery turn.`
               );
+              shouldForceToollessRecovery = true;
+              
+              // Poison this specific tool signature to prevent re-execution
+              poisonedToolSigs.add(sig);
+              
+              // Add helpful guidance
+              messages.push({
+                role: 'user' as const,
+                content:
+                  `[system] Tool loop detected: ${toolName} called ${sigCount}x with identical arguments.\n` +
+                  `args=${argsPreview}\n\n` +
+                  `The same edit is being attempted repeatedly. This usually means:\n` +
+                  `1. The edit already succeeded - verify by reading the file\n` +
+                  `2. The old_text doesn't match - read the file to see actual content\n` +
+                  `3. A different approach is needed\n\n` +
+                  `Do NOT repeat the same edit. Read the file first, then decide on next steps.`,
+              } as ChatMessage);
+              continue;
+            }
+            
+            // At sigCount === loopThreshold - 1: inject early warning
+            if (sigCount === loopThreshold - 1) {
+              console.error(
+                `[tool-loop] warning: ${toolName} repeated ${sigCount}x. Next repeat will trigger recovery.`
+              );
+              messages.push({
+                role: 'user' as const,
+                content:
+                  `[system] Warning: ${toolName} has been called ${sigCount} times with identical arguments. ` +
+                  `If this edit keeps failing, read the target file to verify its current state before trying again.`,
+              } as ChatMessage);
             }
           }
 
@@ -3235,17 +3269,36 @@ export async function createSession(opts: {
             } catch {
               // Respect harness retry limit for malformed JSON (§4i)
               malformedCount++;
+              
+              // Detect if the model is outputting diff/patch format instead of JSON
+              const looksLikeDiff = /^[\s"]*---\s+a\/|^\+\+\+\s+b\/|^@@\s+-\d+/m.test(rawArgs);
+              const looksLikePatch = /^diff\s+--git|^Index:|^\*\*\*\s+/m.test(rawArgs);
+              
               if (malformedCount > harness.toolCalls.retryOnMalformed) {
                 // Break the outer loop — this model won't self-correct
+                const hint = looksLikeDiff || looksLikePatch
+                  ? ' The model is outputting diff/patch format instead of JSON. This may be a model compatibility issue.'
+                  : '';
                 throw new AgentLoopBreak(
-                  `tool ${name}: malformed JSON exceeded retry limit (${harness.toolCalls.retryOnMalformed}): ${rawArgs.slice(0, 200)}`
+                  `tool ${name}: malformed JSON exceeded retry limit (${harness.toolCalls.retryOnMalformed}): ${rawArgs.slice(0, 200)}${hint}`
                 );
               }
+              
+              // Give specific guidance based on the error pattern
+              let hint = 'Return a valid JSON object for function.arguments.';
+              if (looksLikeDiff || looksLikePatch) {
+                hint = 
+                  'ERROR: You output a diff/patch format instead of JSON. ' +
+                  'Tool arguments must be a JSON object like {"path": "file.txt", "old_text": "...", "new_text": "..."}. ' +
+                  'Do NOT use unified diff format (--- a/ +++ b/ @@). ' +
+                  'Use the exact JSON schema required by the tool.';
+              }
+              
               throw new ToolError(
                 'invalid_args',
                 `tool ${name}: arguments not valid JSON`,
                 false,
-                'Return a valid JSON object for function.arguments.',
+                hint,
                 { raw: rawArgs.slice(0, 200) }
               );
             }
@@ -3738,7 +3791,16 @@ export async function createSession(opts: {
               }
             }
 
-            return { id: callId, content };
+            // Context-aware truncation: cap oversized tool results before returning
+            // to prevent blowing out the context window on subsequent LLM calls.
+            const truncated = truncateToolResultContent(content, contextWindow);
+            if (truncated.truncated && cfg.verbose) {
+              console.warn(
+                `[context-budget] truncated ${name} result: ${content.length} → ${truncated.content.length} chars`
+              );
+            }
+
+            return { id: callId, content: truncated.content };
           };
 
           const results: Array<{ id: string; content: string }> = [];

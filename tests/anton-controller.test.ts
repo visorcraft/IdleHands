@@ -341,10 +341,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
               reject(new Error('missing abort signal'));
               return;
             }
-            const onAbort = () => reject(new Error('aborted'));
-            sig.addEventListener('abort', onAbort, { once: true });
-            // Simulate a very long task that should be interrupted by /anton stop.
-            setTimeout(() => {
+            const timer = setTimeout(() => {
               sig.removeEventListener('abort', onAbort);
               resolve({
                 text: '<anton-result>status: done</anton-result>',
@@ -352,6 +349,11 @@ describe('Anton Controller', { concurrency: 1 }, () => {
                 toolCalls: 0,
               });
             }, 60_000);
+            const onAbort = () => {
+              clearTimeout(timer);
+              reject(new Error('aborted'));
+            };
+            sig.addEventListener('abort', onAbort, { once: true });
           });
         },
       };

@@ -103,10 +103,22 @@ export function makeAntonProgress(
       const now = Date.now();
       managed.lastActivity = now;
 
-      if (defaults.progress_events === false) return;
-      if (!managed.antonProgress?.currentTask) return;
-      if (now - lastProgressAt < rateLimitMs) return;
-      if (now - lastHeartbeatNoticeAt < heartbeatIntervalMs) return;
+      if (defaults.progress_events === false) {
+        // Debug: console.error('[anton-heartbeat] skipped: progress_events=false');
+        return;
+      }
+      if (!managed.antonProgress?.currentTask) {
+        // Debug: console.error('[anton-heartbeat] skipped: no currentTask');
+        return;
+      }
+      if (now - lastProgressAt < rateLimitMs) {
+        // Debug: console.error(`[anton-heartbeat] skipped: rate limit (${now - lastProgressAt}ms < ${rateLimitMs}ms)`);
+        return;
+      }
+      if (now - lastHeartbeatNoticeAt < heartbeatIntervalMs) {
+        // Debug: console.error(`[anton-heartbeat] skipped: heartbeat interval (${now - lastHeartbeatNoticeAt}ms < ${heartbeatIntervalMs}ms)`);
+        return;
+      }
 
       if (!runStartMs) runStartMs = now;
       managed.antonProgress = {
@@ -115,8 +127,12 @@ export function makeAntonProgress(
       };
 
       const hb = formatTaskHeartbeat(managed.antonProgress);
-      if (hb === lastHeartbeatText) return;
+      if (hb === lastHeartbeatText) {
+        // Debug: console.error('[anton-heartbeat] skipped: same text');
+        return;
+      }
 
+      console.error(`[anton-heartbeat] sending update: ${hb.slice(0, 50)}...`);
       lastHeartbeatNoticeAt = now;
       lastHeartbeatText = hb;
       send(hb);

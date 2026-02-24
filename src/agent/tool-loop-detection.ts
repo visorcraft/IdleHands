@@ -342,6 +342,96 @@ function consecutiveOutcomeStreak(
   return count;
 }
 
+/**
+ * Detect alternating A→B→A→B... ping-pong patterns in tool call history.
+ * Returns detection result with count, tool names, and whether results show no progress.
+ */
+function detectPingPongPattern(history: ToolCallRecord[]): {
+  detected: boolean;
+  count: number;
+  toolA?: string;
+  toolB?: string;
+  noProgressEvidence: boolean;
+} {
+  if (history.length < 4) {
+    return { detected: false, count: 0, noProgressEvidence: false };
+  }
+
+  // Get the last two distinct signatures
+  const last = history[history.length - 1];
+  let otherSignature: string | undefined;
+  let otherToolName: string | undefined;
+  
+  for (let i = history.length - 2; i >= 0; i--) {
+    const rec = history[i];
+    if (rec.signature !== last.signature) {
+      otherSignature = rec.signature;
+      otherToolName = rec.toolName;
+      break;
+    }
+  }
+
+  if (!otherSignature || !otherToolName) {
+    return { detected: false, count: 0, noProgressEvidence: false };
+  }
+
+  // Count alternating pattern from the end
+  let alternatingCount = 0;
+  let expectedSignature = last.signature;
+  const resultsBySignature = new Map<string, Set<string>>();
+  
+  for (let i = history.length - 1; i >= 0; i--) {
+    const rec = history[i];
+    
+    // Check if this matches the expected alternating signature
+    if (rec.signature === expectedSignature) {
+      alternatingCount++;
+      
+      // Track result hashes for no-progress detection
+      if (rec.resultHash) {
+        const existing = resultsBySignature.get(rec.signature) ?? new Set();
+        existing.add(rec.resultHash);
+        resultsBySignature.set(rec.signature, existing);
+      }
+      
+      // Flip expected signature
+      expectedSignature = expectedSignature === last.signature ? otherSignature : last.signature;
+    } else if (rec.signature === otherSignature && expectedSignature === last.signature) {
+      // Allow the pattern to start with either signature
+      alternatingCount++;
+      if (rec.resultHash) {
+        const existing = resultsBySignature.get(rec.signature) ?? new Set();
+        existing.add(rec.resultHash);
+        resultsBySignature.set(rec.signature, existing);
+      }
+      expectedSignature = last.signature;
+    } else {
+      // Pattern broken
+      break;
+    }
+  }
+
+  if (alternatingCount < 4) {
+    return { detected: false, count: 0, noProgressEvidence: false };
+  }
+
+  // Check for "no progress" - each signature should have only 1 unique result hash
+  const sigAResults = resultsBySignature.get(last.signature);
+  const sigBResults = resultsBySignature.get(otherSignature);
+  const noProgressEvidence = 
+    (sigAResults?.size === 1 || !sigAResults) && 
+    (sigBResults?.size === 1 || !sigBResults) &&
+    (sigAResults?.size ?? 0) + (sigBResults?.size ?? 0) >= 2;
+
+  return {
+    detected: true,
+    count: alternatingCount,
+    toolA: last.toolName,
+    toolB: otherToolName,
+    noProgressEvidence,
+  };
+}
+
 export function detectToolCallLoop(
   state: ToolLoopState,
   toolName: string,
@@ -401,35 +491,31 @@ export function detectToolCallLoop(
     };
   }
 
+  // Enhanced ping-pong detection: check for alternating patterns A→B→A→B...
+  // No longer requires read-only tools; checks longer history; escalates to critical
   if (policy.detectors.pingPong && state.history.length >= 4) {
-    const tail = state.history.slice(-4);
-    const [a, b, c, d] = tail;
-    // Ping-pong: A→B→A→B with same outcomes each time
-    // But only flag if at least one is a read-only tool (avoid false positives on legitimate edit patterns)
-    const readOnlyTools = new Set(['read_file', 'read_files', 'list_dir', 'search_files', 'exec']);
-    const isAReadOnly = readOnlyTools.has(a.toolName);
-    const isBReadOnly = readOnlyTools.has(b.toolName);
-    const hasReadOnly = isAReadOnly || isBReadOnly;
-
-    if (
-      hasReadOnly &&
-      a.signature === c.signature &&
-      b.signature === d.signature &&
-      a.signature !== b.signature &&
-      a.resultHash &&
-      b.resultHash &&
-      c.resultHash &&
-      d.resultHash &&
-      a.resultHash === c.resultHash &&
-      b.resultHash === d.resultHash
-    ) {
+    const pingPong = detectPingPongPattern(state.history);
+    
+    if (pingPong.detected && pingPong.noProgressEvidence) {
+      // Escalate to critical after 6+ alternations with no progress
+      if (pingPong.count >= 6) {
+        return {
+          level: 'critical',
+          detector: 'ping_pong',
+          message: `Critical ping-pong loop: alternating between ${pingPong.toolA} and ${pingPong.toolB} (${pingPong.count}x) with no progress`,
+          signature,
+          argsHash,
+          count: pingPong.count,
+        };
+      }
+      // Warning for 4+ alternations
       return {
         level: 'warning',
         detector: 'ping_pong',
-        message: `Detected ping-pong tool loop between ${a.toolName} and ${b.toolName}`,
+        message: `Detected ping-pong tool loop between ${pingPong.toolA} and ${pingPong.toolB} (${pingPong.count}x)`,
         signature,
         argsHash,
-        count: 4,
+        count: pingPong.count,
       };
     }
   }
