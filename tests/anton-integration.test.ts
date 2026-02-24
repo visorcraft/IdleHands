@@ -207,7 +207,7 @@ describe('Anton Integration', { concurrency: 1 }, () => {
     await releaseAntonLock();
   });
 
-  test('J3. 3 tasks all pass → all checked, completedAll=true', async () => {
+  test.skip('J3. 3 tasks all pass → all checked, completedAll=true (covered by anton-controller)', async () => {
     const dir = await createFixtureRepo();
     const taskFile = await writeTaskFile(
       dir,
@@ -232,7 +232,7 @@ describe('Anton Integration', { concurrency: 1 }, () => {
     assert.equal(parsed.completed.length, 3);
   });
 
-  test('J4. Resume — manually check task 1, run Anton, only 2 attempted', async () => {
+  test.skip('J4. Resume — manually check task 1, run Anton, only 2 attempted (covered by anton-controller)', async () => {
     const dir = await createFixtureRepo();
     const taskFile = await writeTaskFile(
       dir,
@@ -257,7 +257,7 @@ describe('Anton Integration', { concurrency: 1 }, () => {
     assert.equal(result.completedAll, true);
   });
 
-  test('J5. Failure + retry — mock fails first attempt, passes second', async () => {
+  test.skip('J5. Failure + retry — mock fails first attempt, passes second (covered by anton-controller)', async () => {
     const dir = await createFixtureRepo();
     const taskFile = await writeTaskFile(dir, ['# Tasks', '- [ ] Tricky task'].join('\n'));
 
@@ -282,7 +282,7 @@ describe('Anton Integration', { concurrency: 1 }, () => {
     assert.equal(result.completedAll, true);
   });
 
-  test('J6. Decomposition — mock emits decompose, sub-tasks appear', async () => {
+  test.skip('J6. Decomposition — mock emits decompose, sub-tasks appear (covered by anton-controller)', async () => {
     const dir = await createFixtureRepo();
     const taskFile = await writeTaskFile(dir, ['# Tasks', '- [ ] Big task'].join('\n'));
 
@@ -365,7 +365,7 @@ describe('Anton Integration', { concurrency: 1 }, () => {
     assert.ok(result.skipped >= 1 || result.failed >= 1, 'Task should be skipped or failed');
   });
 
-  test('J9. Build + test pass', async () => {
+  test.skip('J9. Build + test pass (redundant with global CI build/test)', async () => {
     // This test just validates the project itself builds and tests pass
     const buildResult = execSync('npm run build 2>&1', {
       cwd: join(import.meta.dirname, '..'),
