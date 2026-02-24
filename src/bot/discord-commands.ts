@@ -40,6 +40,7 @@ import {
   type ManagedLike,
 } from './command-logic.js';
 import { detectRepoCandidates, expandHome, isPathAllowed } from './dir-guard.js';
+import { sendDiscordResult } from './discord-result.js';
 import { splitDiscord } from './discord-routing.js';
 import type { ManagedSession } from './discord.js';
 
@@ -53,17 +54,6 @@ export interface DiscordCommandContext {
   botConfig: BotDiscordConfig;
   approvalMode: string;
   maxQueue: number;
-}
-
-/** Send a CmdResult formatted as Discord Markdown. */
-async function sendResult(
-  msg: Message,
-  sendUserVisible: DiscordCommandContext['sendUserVisible'],
-  result: Parameters<typeof formatMarkdown>[0]
-): Promise<void> {
-  const text = formatMarkdown(result);
-  if (!text) return;
-  await sendUserVisible(msg, text).catch(() => {});
 }
 
 /**
@@ -89,7 +79,8 @@ export async function handleTextCommand(
     maxQueue,
   } = ctx;
   const m = managed as unknown as ManagedLike;
-  const send = (r: Parameters<typeof formatMarkdown>[0]) => sendResult(msg, sendUserVisible, r);
+  const send = (r: Parameters<typeof formatMarkdown>[0]) =>
+    sendDiscordResult(msg, sendUserVisible, r);
 
   if (content === '/cancel') {
     const res = cancelActive(managed);
