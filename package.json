@@ -45,6 +45,7 @@
     "bench:run": "node dist/bench/runner.js",
     "bench:report": "node dist/bench/report.js",
     "bench:compare": "node dist/bench/compare.js",
+    "perf:agent": "bash scripts/perf-agent.sh",
     "bundle:mjs": "node scripts/bundle-mjs.mjs"
   },
   "engines": {
