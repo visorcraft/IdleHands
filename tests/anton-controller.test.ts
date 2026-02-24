@@ -15,14 +15,7 @@ import { test, describe, beforeEach, afterEach } from 'node:test';
 import type { AgentSession, AgentResult } from '../dist/agent.js';
 import { runAnton } from '../dist/anton/controller.js';
 import { releaseAntonLock } from '../dist/anton/lock.js';
-import type {
-  AntonRunConfig,
-  AntonProgressCallback,
-  AntonProgress,
-  AntonTask,
-  AntonAttempt,
-  AntonRunResult,
-} from '../dist/anton/types.js';
+import type { AntonRunConfig, AntonProgressCallback } from '../dist/anton/types.js';
 import type { IdlehandsConfig } from '../dist/types.js';
 
 // Mock session factory — returns correct AgentResult shape
@@ -38,7 +31,7 @@ function createMockSession(responses: string[]): AgentSession {
     messages: [],
     usage: { prompt: 100, completion: 50 },
 
-    async ask(prompt): Promise<AgentResult> {
+    async ask(_prompt): Promise<AgentResult> {
       const response = responses[responseIndex] || '<anton-result>status: done</anton-result>';
       responseIndex++;
 
@@ -49,19 +42,19 @@ function createMockSession(responses: string[]): AgentSession {
       };
     },
 
-    cancel: () => { },
-    close: async () => { },
-    setModel: () => { },
-    setEndpoint: async () => { },
+    cancel: () => {},
+    close: async () => {},
+    setModel: () => {},
+    setEndpoint: async () => {},
     listModels: async () => [],
     refreshServerHealth: async () => null,
     getPerfSummary: () => ({ requests: 1, avgLatency: 100, totalTokens: 150 }),
     captureOn: async () => 'test.txt',
-    captureOff: () => { },
+    captureOff: () => {},
     captureLast: async () => 'test.txt',
     getSystemPrompt: () => 'test',
-    setSystemPrompt: () => { },
-    resetSystemPrompt: () => { },
+    setSystemPrompt: () => {},
+    resetSystemPrompt: () => {},
     listMcpServers: () => [],
     listMcpTools: () => [],
     restartMcpServer: async () => ({ ok: true, message: 'test' }),
@@ -69,12 +62,12 @@ function createMockSession(responses: string[]): AgentSession {
     disableMcpTool: () => true,
     mcpWarnings: () => [],
     listLspServers: () => [],
-    setVerbose: () => { },
-    reset: () => { },
-    restore: () => { },
+    setVerbose: () => {},
+    reset: () => {},
+    restore: () => {},
     planSteps: [],
     executePlanStep: async () => [],
-    clearPlan: () => { },
+    clearPlan: () => {},
     compactHistory: async () => ({
       beforeMessages: 0,
       afterMessages: 0,
@@ -234,7 +227,9 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       sessionCount++;
       // First attempt: failed (triggers retry). Second attempt: done.
       if (sessionCount === 1) {
-        return createMockSession(['<anton-result>status: failed\nreason: lint errors</anton-result>']);
+        return createMockSession([
+          '<anton-result>status: failed\nreason: lint errors</anton-result>',
+        ]);
       }
       return createMockSession(['<anton-result>status: done</anton-result>']);
     };
@@ -249,7 +244,11 @@ describe('Anton Controller', { concurrency: 1 }, () => {
 
     const taskAttempts = result.attempts.filter((a) => a.taskKey === result.attempts[0]?.taskKey);
     assert.equal(taskAttempts.length, 2);
-    assert.equal(result.failed, 0, 'intermediate failed attempts should not count as final failed tasks');
+    assert.equal(
+      result.failed,
+      0,
+      'intermediate failed attempts should not count as final failed tasks'
+    );
     assert.equal(sessionCount, 2);
   });
 
@@ -266,7 +265,9 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     const progress = createMockProgressCallback();
 
     const createSession = async () => {
-      return createMockSession(['<anton-result>status: failed\nreason: lint errors</anton-result>']);
+      return createMockSession([
+        '<anton-result>status: failed\nreason: lint errors</anton-result>',
+      ]);
     };
 
     const result = await runAnton({
@@ -769,16 +770,31 @@ describe('Anton Controller', { concurrency: 1 }, () => {
 
     const prompts: string[] = [];
     let calls = 0;
-    const createSession = async () => ({
-      ...createMockSession(['<anton-result>status: done</anton-result>']),
-      async ask(prompt: string) {
-        prompts.push(prompt);
-        calls++;
-        if (calls === 1) return { text: `{"status":"incomplete","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
-        if (calls === 2) return { text: `{"status":"ready","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
-        return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 } as any;
-      },
-    } as any);
+    const createSession = async () =>
+      ({
+        ...createMockSession(['<anton-result>status: done</anton-result>']),
+        async ask(prompt: string) {
+          prompts.push(prompt);
+          calls++;
+          if (calls === 1)
+            return {
+              text: `{"status":"incomplete","filename":"${planFile}"}`,
+              turns: 1,
+              toolCalls: 0,
+            } as any;
+          if (calls === 2)
+            return {
+              text: `{"status":"ready","filename":"${planFile}"}`,
+              turns: 1,
+              toolCalls: 0,
+            } as any;
+          return {
+            text: '<anton-result>status: done</anton-result>',
+            turns: 1,
+            toolCalls: 0,
+          } as any;
+        },
+      }) as any;
 
     const result = await runAnton({
       config,
@@ -803,7 +819,8 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       maxRetriesPerTask: 1,
     } as any);
 
-    const createSession = async () => createMockSession(['{"status":"incomplete","filename":"/tmp/evil.md"}']);
+    const createSession = async () =>
+      createMockSession(['{"status":"incomplete","filename":"/tmp/evil.md"}']);
 
     const result = await runAnton({
       config,
@@ -853,13 +870,14 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       maxRetriesPerTask: 1,
     } as any);
 
-    const createSession = async () => ({
-      ...createMockSession([]),
-      async ask() {
-        await new Promise((r) => setTimeout(r, 120));
-        return { text: '{"status":"complete","filename":""}', turns: 1, toolCalls: 0 } as any;
-      },
-    } as any);
+    const createSession = async () =>
+      ({
+        ...createMockSession([]),
+        async ask() {
+          await new Promise((r) => setTimeout(r, 120));
+          return { text: '{"status":"complete","filename":""}', turns: 1, toolCalls: 0 } as any;
+        },
+      }) as any;
 
     const result = await runAnton({
       config,
@@ -869,7 +887,9 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       createSession,
     });
 
-    assert.ok(result.attempts.some((a) => a.status === 'timeout' || (a.error || '').includes('timeout')));
+    assert.ok(
+      result.attempts.some((a) => a.status === 'timeout' || (a.error || '').includes('timeout'))
+    );
   });
 
   test('17f. Reporter stage messages are emitted via onStage', async () => {
@@ -893,15 +913,30 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     } as any;
 
     let calls = 0;
-    const createSession = async () => ({
-      ...createMockSession(['<anton-result>status: done</anton-result>']),
-      async ask() {
-        calls++;
-        if (calls === 1) return { text: `{"status":"incomplete","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
-        if (calls === 2) return { text: `{"status":"ready","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
-        return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 } as any;
-      },
-    } as any);
+    const createSession = async () =>
+      ({
+        ...createMockSession(['<anton-result>status: done</anton-result>']),
+        async ask() {
+          calls++;
+          if (calls === 1)
+            return {
+              text: `{"status":"incomplete","filename":"${planFile}"}`,
+              turns: 1,
+              toolCalls: 0,
+            } as any;
+          if (calls === 2)
+            return {
+              text: `{"status":"ready","filename":"${planFile}"}`,
+              turns: 1,
+              toolCalls: 0,
+            } as any;
+          return {
+            text: '<anton-result>status: done</anton-result>',
+            turns: 1,
+            toolCalls: 0,
+          } as any;
+        },
+      }) as any;
 
     await runAnton({
       config,
@@ -941,23 +976,36 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     let reviewCalls = 0;
     let implementationCalls = 0;
 
-    const createSession = async () => ({
-      ...createMockSession(['<anton-result>status: done</anton-result>']),
-      async ask(prompt: string) {
-        if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
-          discoveryCalls++;
-          return { text: `{"status":"incomplete","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
-        }
-        if (prompt.includes('Please review this plan file')) {
-          reviewCalls++;
-          if (reviewCalls === 1) throw new Error('preflight-review-timeout');
-          return { text: `{"status":"ready","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
-        }
+    const createSession = async () =>
+      ({
+        ...createMockSession(['<anton-result>status: done</anton-result>']),
+        async ask(prompt: string) {
+          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+            discoveryCalls++;
+            return {
+              text: `{"status":"incomplete","filename":"${planFile}"}`,
+              turns: 1,
+              toolCalls: 0,
+            } as any;
+          }
+          if (prompt.includes('Please review this plan file')) {
+            reviewCalls++;
+            if (reviewCalls === 1) throw new Error('preflight-review-timeout');
+            return {
+              text: `{"status":"ready","filename":"${planFile}"}`,
+              turns: 1,
+              toolCalls: 0,
+            } as any;
+          }
 
-        implementationCalls++;
-        return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 } as any;
-      },
-    } as any);
+          implementationCalls++;
+          return {
+            text: '<anton-result>status: done</anton-result>',
+            turns: 1,
+            toolCalls: 0,
+          } as any;
+        },
+      }) as any;
 
     const result = await runAnton({
       config,
@@ -998,9 +1046,17 @@ describe('Anton Controller', { concurrency: 1 }, () => {
         ...createMockSession(['<anton-result>status: done</anton-result>']),
         async ask(prompt: string) {
           if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
-            return { text: `{"status":"incomplete","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
+            return {
+              text: `{"status":"incomplete","filename":"${planFile}"}`,
+              turns: 1,
+              toolCalls: 0,
+            } as any;
           }
-          return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 } as any;
+          return {
+            text: '<anton-result>status: done</anton-result>',
+            turns: 1,
+            toolCalls: 0,
+          } as any;
         },
       } as any;
     };
@@ -1039,15 +1095,24 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       preflightRequirementsReview: false,
     } as any);
 
-    const createSession = async () => ({
-      ...createMockSession(['<anton-result>status: done</anton-result>']),
-      async ask(prompt: string) {
-        if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
-          return { text: `{"status":"incomplete","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
-        }
-        return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 } as any;
-      },
-    } as any);
+    const createSession = async () =>
+      ({
+        ...createMockSession(['<anton-result>status: done</anton-result>']),
+        async ask(prompt: string) {
+          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+            return {
+              text: `{"status":"incomplete","filename":"${planFile}"}`,
+              turns: 1,
+              toolCalls: 0,
+            } as any;
+          }
+          return {
+            text: '<anton-result>status: done</anton-result>',
+            turns: 1,
+            toolCalls: 0,
+          } as any;
+        },
+      }) as any;
 
     const result = await runAnton({
       config,
@@ -1088,18 +1153,27 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       preflightSessionMaxIterations: 3,
     } as any);
 
-    const createSession = async (sessionConfig: IdlehandsConfig) => ({
-      ...createMockSession(['<anton-result>status: done</anton-result>']),
-      async ask(prompt: string) {
-        if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
-          discoveryCalls++;
-          discoveryCaps.push(sessionConfig.max_iterations ?? 0);
-          if (discoveryCalls === 1) throw new Error('max iterations exceeded (3)');
-          return { text: `{"status":"incomplete","filename":"${planFile}"}`, turns: 1, toolCalls: 0 } as any;
-        }
-        return { text: '<anton-result>status: done</anton-result>', turns: 1, toolCalls: 0 } as any;
-      },
-    } as any);
+    const createSession = async (sessionConfig: IdlehandsConfig) =>
+      ({
+        ...createMockSession(['<anton-result>status: done</anton-result>']),
+        async ask(prompt: string) {
+          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+            discoveryCalls++;
+            discoveryCaps.push(sessionConfig.max_iterations ?? 0);
+            if (discoveryCalls === 1) throw new Error('max iterations exceeded (3)');
+            return {
+              text: `{"status":"incomplete","filename":"${planFile}"}`,
+              turns: 1,
+              toolCalls: 0,
+            } as any;
+          }
+          return {
+            text: '<anton-result>status: done</anton-result>',
+            turns: 1,
+            toolCalls: 0,
+          } as any;
+        },
+      }) as any;
 
     const result = await runAnton({
       config,

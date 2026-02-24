@@ -89,11 +89,7 @@ export function detectEscalation(text: string): EscalationResult {
 /** Check if text matches a set of keywords.
  * Returns matched keywords or empty array if none match.
  */
-export function matchKeywords(
-  text: string,
-  keywords: string[],
-  presets?: string[]
-): string[] {
+export function matchKeywords(text: string, keywords: string[], presets?: string[]): string[] {
   const allKeywords: string[] = [...keywords];
   if (presets) {
     for (const preset of presets) {

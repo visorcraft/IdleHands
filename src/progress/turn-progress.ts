@@ -1,7 +1,7 @@
 import type { AgentHooks } from '../agent.js';
+import { truncate } from '../shared/strings.js';
 import type { ToolCallEvent, ToolResultEvent, TurnEndEvent } from '../types.js';
 
-import { truncate } from '../shared/strings.js';
 import { formatToolCallSummary } from './tool-summary.js';
 
 export type TurnProgressPhase = 'thinking' | 'responding' | 'tool' | 'done';

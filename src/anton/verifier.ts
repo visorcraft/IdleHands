@@ -210,7 +210,9 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
         const currentErrors = countLintErrors(lintResult.stdout + '\n' + lintResult.stderr);
         if (currentErrors <= opts.baselineLintErrorCount) {
           result.l1_lint = true;
-          console.error(`[anton:verify] lint exit≠0 but errors (${currentErrors}) <= baseline (${opts.baselineLintErrorCount}), passing`);
+          console.error(
+            `[anton:verify] lint exit≠0 but errors (${currentErrors}) <= baseline (${opts.baselineLintErrorCount}), passing`
+          );
         } else {
           result.l1_lint = false;
           l1_all = false;
@@ -220,7 +222,9 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
           const errorOnly = filterLintErrorLines(fullOutput);
           const combined = combineOutput('lint', errorOnly || lintResult.stdout, '');
           const newCount = currentErrors - opts.baselineLintErrorCount;
-          failedCommands.push(`lint (${newCount} new error${newCount !== 1 ? 's' : ''}): ${truncateOutput(combined, 500)}`);
+          failedCommands.push(
+            `lint (${newCount} new error${newCount !== 1 ? 's' : ''}): ${truncateOutput(combined, 500)}`
+          );
           fullOutputParts.push(combined);
         }
       } else {
@@ -304,9 +308,22 @@ or
 
 /** File extensions eligible for autoformat/autofix. */
 const AUTOFIX_EXTENSIONS = new Set([
-  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
-  '.css', '.scss', '.less', '.json', '.md', '.yaml', '.yml',
-  '.vue', '.svelte', '.html',
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.css',
+  '.scss',
+  '.less',
+  '.json',
+  '.md',
+  '.yaml',
+  '.yml',
+  '.vue',
+  '.svelte',
+  '.html',
 ]);
 
 /**
@@ -334,8 +351,9 @@ export async function tryAutofixChangedFiles(projectDir: string): Promise<boolea
   if (jsFiles.length > 0 && isCommandAvailable('npx')) {
     try {
       const eslintRes = spawnSync(
-        'npx', ['eslint', '--fix', '--no-error-on-unmatched-pattern', ...jsFiles],
-        { cwd: projectDir, timeout: 60_000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+        'npx',
+        ['eslint', '--fix', '--no-error-on-unmatched-pattern', ...jsFiles],
+        { cwd: projectDir, timeout: 60_000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
       );
       if (eslintRes.status === 0 || eslintRes.status === 1) {
         // exit 1 means some unfixable errors remain, but fixable ones were fixed
@@ -350,10 +368,12 @@ export async function tryAutofixChangedFiles(projectDir: string): Promise<boolea
   // Try prettier --write (only if prettier is available)
   if (isCommandAvailable('npx')) {
     try {
-      const prettierRes = spawnSync(
-        'npx', ['prettier', '--write', '--ignore-unknown', ...batch],
-        { cwd: projectDir, timeout: 60_000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-      );
+      const prettierRes = spawnSync('npx', ['prettier', '--write', '--ignore-unknown', ...batch], {
+        cwd: projectDir,
+        timeout: 60_000,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
       if (prettierRes.status === 0) {
         ran = true;
         console.error(`[anton:autofix] prettier --write ran on ${batch.length} files`);
@@ -480,34 +500,50 @@ function parseVerifierResponse(raw: string): { pass: boolean; reason: string } {
     if (typeof parsed.pass === 'boolean') {
       return { pass: parsed.pass, reason: parsed.reason || 'No reason provided' };
     }
-  } catch { /* not valid JSON, continue */ }
+  } catch {
+    /* not valid JSON, continue */
+  }
 
   // 2. Try extracting JSON from markdown code fences or inline braces
-  const jsonMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/) || text.match(/(\{[\s\S]*?"pass"[\s\S]*?\})/);
+  const jsonMatch =
+    text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/) || text.match(/(\{[\s\S]*?"pass"[\s\S]*?\})/);
   if (jsonMatch) {
     try {
       const parsed = JSON.parse(jsonMatch[1].trim());
       if (typeof parsed.pass === 'boolean') {
         return { pass: parsed.pass, reason: parsed.reason || 'No reason provided' };
       }
-    } catch { /* still not valid, continue */ }
+    } catch {
+      /* still not valid, continue */
+    }
   }
 
   // 3. Keyword inference from prose
   const lower = text.toLowerCase();
   const passPatterns = [
-    /\bpass\b/, /\bapproved?\b/, /\blooks?\s+good\b/, /\bcorrect(ly)?\b/,
-    /\bwell[- ]implemented\b/, /\bno\s+(issues?|problems?|concerns?)\b/,
-    /\bcode\s+(is\s+)?clean\b/, /\btask\s+(is\s+)?(complete|done)\b/,
+    /\bpass\b/,
+    /\bapproved?\b/,
+    /\blooks?\s+good\b/,
+    /\bcorrect(ly)?\b/,
+    /\bwell[- ]implemented\b/,
+    /\bno\s+(issues?|problems?|concerns?)\b/,
+    /\bcode\s+(is\s+)?clean\b/,
+    /\btask\s+(is\s+)?(complete|done)\b/,
   ];
   const failPatterns = [
-    /\bfail\b/, /\breject(ed)?\b/, /\bnot\s+(correct|approved?)\b/,
-    /\bissues?\s+found\b/, /\bproblems?\s+found\b/, /\bbug(s)?\b/,
-    /\bmissing\b/, /\bincorrect\b/, /\bbroken\b/,
+    /\bfail\b/,
+    /\breject(ed)?\b/,
+    /\bnot\s+(correct|approved?)\b/,
+    /\bissues?\s+found\b/,
+    /\bproblems?\s+found\b/,
+    /\bbug(s)?\b/,
+    /\bmissing\b/,
+    /\bincorrect\b/,
+    /\bbroken\b/,
   ];
 
-  const passScore = passPatterns.filter(p => p.test(lower)).length;
-  const failScore = failPatterns.filter(p => p.test(lower)).length;
+  const passScore = passPatterns.filter((p) => p.test(lower)).length;
+  const failScore = failPatterns.filter((p) => p.test(lower)).length;
 
   if (passScore > 0 && passScore > failScore) {
     const snippet = text.length > 200 ? text.slice(0, 200) + '...' : text;
@@ -541,7 +577,11 @@ export function filterLintErrorLines(output: string): string {
       continue;
     }
     // Error line: "  1:1  error  ..."
-    if (/\d+:\d+\s+error\s/.test(line) || /\berror\s+TS\d+/.test(line) || /\berror\[E\d+\]/.test(line)) {
+    if (
+      /\d+:\d+\s+error\s/.test(line) ||
+      /\berror\s+TS\d+/.test(line) ||
+      /\berror\[E\d+\]/.test(line)
+    ) {
       if (lastFilePath && (result.length === 0 || result[result.length - 1] !== lastFilePath)) {
         result.push(lastFilePath);
       }
@@ -572,11 +612,20 @@ export function countLintErrors(output: string): number {
   let count = 0;
   for (const line of lines) {
     // eslint: "  1:1  error  ..."
-    if (/\d+:\d+\s+error\s/.test(line)) { count++; continue; }
+    if (/\d+:\d+\s+error\s/.test(line)) {
+      count++;
+      continue;
+    }
     // tsc: "error TS..."  or  "file.ts(1,1): error TS..."
-    if (/\berror\s+TS\d+/.test(line)) { count++; continue; }
+    if (/\berror\s+TS\d+/.test(line)) {
+      count++;
+      continue;
+    }
     // clippy/rustc: "error[E"
-    if (/\berror\[E\d+\]/.test(line)) { count++; continue; }
+    if (/\berror\[E\d+\]/.test(line)) {
+      count++;
+      continue;
+    }
   }
   return count;
 }

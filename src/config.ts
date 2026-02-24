@@ -124,6 +124,7 @@ const DEFAULTS: IdlehandsConfig = {
     auto_commit: true,
     progress_events: true,
     progress_heartbeat_sec: 30,
+    auto_pin_current_dir: false,
     preflight: {
       enabled: false,
       requirements_review: true,
@@ -239,7 +240,9 @@ export async function loadConfig(opts: {
       history_size: parseNum(process.env.IDLEHANDS_TOOL_LOOP_HISTORY_SIZE),
       warning_threshold: parseNum(process.env.IDLEHANDS_TOOL_LOOP_WARNING_THRESHOLD),
       critical_threshold: parseNum(process.env.IDLEHANDS_TOOL_LOOP_CRITICAL_THRESHOLD),
-      global_circuit_breaker_threshold: parseNum(process.env.IDLEHANDS_TOOL_LOOP_CIRCUIT_BREAKER_THRESHOLD),
+      global_circuit_breaker_threshold: parseNum(
+        process.env.IDLEHANDS_TOOL_LOOP_CIRCUIT_BREAKER_THRESHOLD
+      ),
       read_cache_ttl_ms: parseNum(process.env.IDLEHANDS_TOOL_LOOP_READ_CACHE_TTL_MS),
       detectors: {
         generic_repeat: parseBool(process.env.IDLEHANDS_TOOL_LOOP_DETECTOR_GENERIC_REPEAT),
@@ -327,6 +330,7 @@ export async function loadConfig(opts: {
       verbose: parseBool(process.env.IDLEHANDS_ANTON_VERBOSE),
       progress_events: parseBool(process.env.IDLEHANDS_ANTON_PROGRESS_EVENTS),
       progress_heartbeat_sec: parseNum(process.env.IDLEHANDS_ANTON_PROGRESS_HEARTBEAT_SEC),
+      auto_pin_current_dir: parseBool(process.env.IDLEHANDS_ANTON_AUTO_PIN_CURRENT_DIR),
       skip_on_fail: parseBool(process.env.IDLEHANDS_ANTON_SKIP_ON_FAIL),
       skip_on_blocked: parseBool(process.env.IDLEHANDS_ANTON_SKIP_ON_BLOCKED),
       rollback_on_fail: parseBool(process.env.IDLEHANDS_ANTON_ROLLBACK_ON_FAIL),
@@ -350,11 +354,11 @@ export async function loadConfig(opts: {
         mode: parseTrifectaMode(process.env.IDLEHANDS_VAULT_MODE),
         stale_policy: parseReviewArtifactStalePolicy(
           process.env.IDLEHANDS_REVIEW_ARTIFACT_STALE_POLICY ??
-          process.env.IDLEHANDS_VAULT_STALE_POLICY
+            process.env.IDLEHANDS_VAULT_STALE_POLICY
         ),
         immutable_review_artifacts_per_project: parseNum(
           process.env.IDLEHANDS_REVIEW_ARTIFACT_IMMUTABLE_CAP ??
-          process.env.IDLEHANDS_VAULT_IMMUTABLE_REVIEW_CAP
+            process.env.IDLEHANDS_VAULT_IMMUTABLE_REVIEW_CAP
         ),
       },
       lens: {
@@ -442,7 +446,10 @@ export async function loadConfig(opts: {
   const fileToolLoop = (fileCfg as any).tool_loop_detection;
   const envToolLoop = (envCfg as any).tool_loop_detection;
   const cliToolLoop = (cliCfg as any).tool_loop_detection;
-  const defaultPerTool = ((DEFAULTS.tool_loop_detection as any)?.per_tool ?? {}) as Record<string, any>;
+  const defaultPerTool = ((DEFAULTS.tool_loop_detection as any)?.per_tool ?? {}) as Record<
+    string,
+    any
+  >;
   const mergedPerTool: Record<string, any> = { ...defaultPerTool };
   for (const src of [fileToolLoop, envToolLoop, cliToolLoop]) {
     const p = (src ?? {}).per_tool;
@@ -501,21 +508,21 @@ export async function loadConfig(opts: {
   merged.lsp = merged.lsp && typeof merged.lsp === 'object' ? merged.lsp : {};
   merged.lsp.servers = Array.isArray(merged.lsp.servers)
     ? merged.lsp.servers
-      .filter(
-        (s: any) =>
-          s &&
-          typeof s === 'object' &&
-          typeof s.language === 'string' &&
-          typeof s.command === 'string'
-      )
-      .map((s: any) => ({
-        language: String(s.language).trim().toLowerCase(),
-        command: String(s.command).trim(),
-        args: Array.isArray(s.args) ? s.args.map((a: any) => String(a)) : undefined,
-        env: s.env && typeof s.env === 'object' ? s.env : undefined,
-        enabled: s.enabled !== false,
-      }))
-      .filter((s: any) => s.language.length > 0 && s.command.length > 0)
+        .filter(
+          (s: any) =>
+            s &&
+            typeof s === 'object' &&
+            typeof s.language === 'string' &&
+            typeof s.command === 'string'
+        )
+        .map((s: any) => ({
+          language: String(s.language).trim().toLowerCase(),
+          command: String(s.command).trim(),
+          args: Array.isArray(s.args) ? s.args.map((a: any) => String(a)) : undefined,
+          env: s.env && typeof s.env === 'object' ? s.env : undefined,
+          enabled: s.enabled !== false,
+        }))
+        .filter((s: any) => s.language.length > 0 && s.command.length > 0)
     : [];
   if (typeof merged.lsp.diagnostic_severity_threshold === 'number') {
     merged.lsp.diagnostic_severity_threshold = Math.max(
@@ -544,49 +551,73 @@ export async function loadConfig(opts: {
   ]);
   merged.hooks.allow_capabilities = Array.isArray(merged.hooks.allow_capabilities)
     ? merged.hooks.allow_capabilities
-      .map((x: any) => String(x).trim())
-      .filter((x: string) => allowedHookCapabilities.has(x))
+        .map((x: any) => String(x).trim())
+        .filter((x: string) => allowedHookCapabilities.has(x))
     : ['observe'];
   if (merged.hooks.allow_capabilities.length === 0) {
     merged.hooks.allow_capabilities = ['observe'];
   }
 
-  merged.tool_loop_detection = merged.tool_loop_detection && typeof merged.tool_loop_detection === 'object'
-    ? merged.tool_loop_detection
-    : { ...(DEFAULTS.tool_loop_detection ?? {}) };
+  merged.tool_loop_detection =
+    merged.tool_loop_detection && typeof merged.tool_loop_detection === 'object'
+      ? merged.tool_loop_detection
+      : { ...(DEFAULTS.tool_loop_detection ?? {}) };
   const toolLoopEnabled = parseBoolLike(merged.tool_loop_detection.enabled);
   if (toolLoopEnabled !== undefined) merged.tool_loop_detection.enabled = toolLoopEnabled;
 
   if (typeof merged.tool_loop_detection.history_size === 'number') {
-    merged.tool_loop_detection.history_size = Math.max(10, Math.floor(merged.tool_loop_detection.history_size));
+    merged.tool_loop_detection.history_size = Math.max(
+      10,
+      Math.floor(merged.tool_loop_detection.history_size)
+    );
   }
   if (typeof merged.tool_loop_detection.warning_threshold === 'number') {
-    merged.tool_loop_detection.warning_threshold = Math.max(2, Math.floor(merged.tool_loop_detection.warning_threshold));
+    merged.tool_loop_detection.warning_threshold = Math.max(
+      2,
+      Math.floor(merged.tool_loop_detection.warning_threshold)
+    );
   }
   if (typeof merged.tool_loop_detection.critical_threshold === 'number') {
-    merged.tool_loop_detection.critical_threshold = Math.max(3, Math.floor(merged.tool_loop_detection.critical_threshold));
+    merged.tool_loop_detection.critical_threshold = Math.max(
+      3,
+      Math.floor(merged.tool_loop_detection.critical_threshold)
+    );
   }
   if (typeof merged.tool_loop_detection.global_circuit_breaker_threshold === 'number') {
-    merged.tool_loop_detection.global_circuit_breaker_threshold = Math.max(4, Math.floor(merged.tool_loop_detection.global_circuit_breaker_threshold));
+    merged.tool_loop_detection.global_circuit_breaker_threshold = Math.max(
+      4,
+      Math.floor(merged.tool_loop_detection.global_circuit_breaker_threshold)
+    );
   }
   if (typeof merged.tool_loop_detection.read_cache_ttl_ms === 'number') {
-    merged.tool_loop_detection.read_cache_ttl_ms = Math.max(0, Math.floor(merged.tool_loop_detection.read_cache_ttl_ms));
+    merged.tool_loop_detection.read_cache_ttl_ms = Math.max(
+      0,
+      Math.floor(merged.tool_loop_detection.read_cache_ttl_ms)
+    );
   }
   // Ensure threshold ordering: warning < critical < circuit_breaker
-  if (typeof merged.tool_loop_detection.warning_threshold === 'number' &&
+  if (
+    typeof merged.tool_loop_detection.warning_threshold === 'number' &&
     typeof merged.tool_loop_detection.critical_threshold === 'number' &&
-    merged.tool_loop_detection.warning_threshold >= merged.tool_loop_detection.critical_threshold) {
-    merged.tool_loop_detection.critical_threshold = merged.tool_loop_detection.warning_threshold + 2;
+    merged.tool_loop_detection.warning_threshold >= merged.tool_loop_detection.critical_threshold
+  ) {
+    merged.tool_loop_detection.critical_threshold =
+      merged.tool_loop_detection.warning_threshold + 2;
   }
-  if (typeof merged.tool_loop_detection.critical_threshold === 'number' &&
+  if (
+    typeof merged.tool_loop_detection.critical_threshold === 'number' &&
     typeof merged.tool_loop_detection.global_circuit_breaker_threshold === 'number' &&
-    merged.tool_loop_detection.critical_threshold >= merged.tool_loop_detection.global_circuit_breaker_threshold) {
-    merged.tool_loop_detection.global_circuit_breaker_threshold = merged.tool_loop_detection.critical_threshold + 2;
+    merged.tool_loop_detection.critical_threshold >=
+      merged.tool_loop_detection.global_circuit_breaker_threshold
+  ) {
+    merged.tool_loop_detection.global_circuit_breaker_threshold =
+      merged.tool_loop_detection.critical_threshold + 2;
   }
 
-  const d = merged.tool_loop_detection.detectors = merged.tool_loop_detection.detectors && typeof merged.tool_loop_detection.detectors === 'object'
-    ? merged.tool_loop_detection.detectors
-    : {};
+  const d = (merged.tool_loop_detection.detectors =
+    merged.tool_loop_detection.detectors && typeof merged.tool_loop_detection.detectors === 'object'
+      ? merged.tool_loop_detection.detectors
+      : {});
   const genRepeat = parseBoolLike(d.generic_repeat);
   if (genRepeat !== undefined) d.generic_repeat = genRepeat;
   const knownPoll = parseBoolLike(d.known_poll_no_progress);
@@ -608,15 +639,27 @@ export async function loadConfig(opts: {
         policy.critical_threshold = Math.max(3, Math.floor(policy.critical_threshold));
       }
       if (typeof policy.global_circuit_breaker_threshold === 'number') {
-        policy.global_circuit_breaker_threshold = Math.max(4, Math.floor(policy.global_circuit_breaker_threshold));
+        policy.global_circuit_breaker_threshold = Math.max(
+          4,
+          Math.floor(policy.global_circuit_breaker_threshold)
+        );
       }
-      if (typeof policy.warning_threshold === 'number' && typeof policy.critical_threshold === 'number' && policy.warning_threshold >= policy.critical_threshold) {
+      if (
+        typeof policy.warning_threshold === 'number' &&
+        typeof policy.critical_threshold === 'number' &&
+        policy.warning_threshold >= policy.critical_threshold
+      ) {
         policy.critical_threshold = policy.warning_threshold + 2;
       }
-      if (typeof policy.critical_threshold === 'number' && typeof policy.global_circuit_breaker_threshold === 'number' && policy.critical_threshold >= policy.global_circuit_breaker_threshold) {
+      if (
+        typeof policy.critical_threshold === 'number' &&
+        typeof policy.global_circuit_breaker_threshold === 'number' &&
+        policy.critical_threshold >= policy.global_circuit_breaker_threshold
+      ) {
         policy.global_circuit_breaker_threshold = policy.critical_threshold + 2;
       }
-      const pd = policy.detectors = policy.detectors && typeof policy.detectors === 'object' ? policy.detectors : {};
+      const pd = (policy.detectors =
+        policy.detectors && typeof policy.detectors === 'object' ? policy.detectors : {});
       const pdGen = parseBoolLike(pd.generic_repeat);
       if (pdGen !== undefined) pd.generic_repeat = pdGen;
       const pdPoll = parseBoolLike(pd.known_poll_no_progress);
@@ -633,10 +676,15 @@ export async function loadConfig(opts: {
     const acEnabled = parseBoolLike(merged.tool_loop_auto_continue.enabled);
     if (acEnabled !== undefined) merged.tool_loop_auto_continue.enabled = acEnabled;
     if (typeof merged.tool_loop_auto_continue.max_retries === 'number') {
-      merged.tool_loop_auto_continue.max_retries = Math.max(1, Math.min(10, Math.floor(merged.tool_loop_auto_continue.max_retries)));
+      merged.tool_loop_auto_continue.max_retries = Math.max(
+        1,
+        Math.min(10, Math.floor(merged.tool_loop_auto_continue.max_retries))
+      );
     }
   } else {
-    merged.tool_loop_auto_continue = { ...(DEFAULTS.tool_loop_auto_continue ?? { enabled: true, max_retries: 3 }) };
+    merged.tool_loop_auto_continue = {
+      ...(DEFAULTS.tool_loop_auto_continue ?? { enabled: true, max_retries: 3 }),
+    };
   }
 
   const subAgentsEnabled = parseBoolLike(merged.sub_agents.enabled);
@@ -689,22 +737,22 @@ export async function loadConfig(opts: {
   merged.mcp = merged.mcp && typeof merged.mcp === 'object' ? merged.mcp : { servers: [] };
   merged.mcp.servers = Array.isArray(merged.mcp.servers)
     ? merged.mcp.servers
-      .filter(
-        (s: any) =>
-          s &&
-          typeof s === 'object' &&
-          typeof s.name === 'string' &&
-          typeof s.transport === 'string'
-      )
-      .map((s: any) => ({
-        ...s,
-        name: String(s.name).trim(),
-        transport: s.transport === 'http' ? 'http' : 'stdio',
-        args: Array.isArray(s.args) ? s.args.map((a: any) => String(a)) : undefined,
-        command: s.command == null ? undefined : String(s.command),
-        url: s.url == null ? undefined : String(s.url),
-      }))
-      .filter((s: any) => s.name.length > 0)
+        .filter(
+          (s: any) =>
+            s &&
+            typeof s === 'object' &&
+            typeof s.name === 'string' &&
+            typeof s.transport === 'string'
+        )
+        .map((s: any) => ({
+          ...s,
+          name: String(s.name).trim(),
+          transport: s.transport === 'http' ? 'http' : 'stdio',
+          args: Array.isArray(s.args) ? s.args.map((a: any) => String(a)) : undefined,
+          command: s.command == null ? undefined : String(s.command),
+          url: s.url == null ? undefined : String(s.url),
+        }))
+        .filter((s: any) => s.name.length > 0)
     : [];
 
   if (merged.trifecta?.vault) {
@@ -747,13 +795,18 @@ export async function loadConfig(opts: {
       a.max_prompt_tokens_per_attempt = Math.max(1024, Math.floor(a.max_prompt_tokens_per_attempt));
     if (typeof a.progress_heartbeat_sec === 'number')
       a.progress_heartbeat_sec = Math.max(5, Math.min(600, Math.floor(a.progress_heartbeat_sec)));
+    const autoPinCurrentDir = parseBoolLike(a.auto_pin_current_dir);
+    if (autoPinCurrentDir !== undefined) a.auto_pin_current_dir = autoPinCurrentDir;
     if (a.preflight && typeof a.preflight === 'object') {
       const enabled = parseBoolLike(a.preflight.enabled);
       if (enabled !== undefined) a.preflight.enabled = enabled;
       const rr = parseBoolLike(a.preflight.requirements_review);
       if (rr !== undefined) a.preflight.requirements_review = rr;
       if (typeof a.preflight.discovery_timeout_sec === 'number') {
-        a.preflight.discovery_timeout_sec = Math.max(10, Math.floor(a.preflight.discovery_timeout_sec));
+        a.preflight.discovery_timeout_sec = Math.max(
+          10,
+          Math.floor(a.preflight.discovery_timeout_sec)
+        );
       }
       if (typeof a.preflight.review_timeout_sec === 'number') {
         a.preflight.review_timeout_sec = Math.max(10, Math.floor(a.preflight.review_timeout_sec));

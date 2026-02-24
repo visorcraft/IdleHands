@@ -1,4 +1,10 @@
-import type { ToolCallEvent, ToolResultEvent, TurnEndEvent, ToolStreamEvent, ToolLoopEvent } from '../types.js';
+import type {
+  ToolCallEvent,
+  ToolResultEvent,
+  TurnEndEvent,
+  ToolStreamEvent,
+  ToolLoopEvent,
+} from '../types.js';
 
 export const HOOK_CAPABILITIES = [
   'observe',

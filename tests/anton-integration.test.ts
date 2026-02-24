@@ -7,7 +7,7 @@
 
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
-import { mkdtemp, writeFile, readFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, describe, beforeEach, afterEach } from 'node:test';
@@ -16,7 +16,7 @@ import type { AgentSession, AgentResult } from '../dist/agent.js';
 import { runAnton } from '../dist/anton/controller.js';
 import { releaseAntonLock } from '../dist/anton/lock.js';
 import { parseTaskFile } from '../dist/anton/parser.js';
-import type { AntonRunConfig, AntonProgressCallback, AntonRunResult } from '../dist/anton/types.js';
+import type { AntonRunConfig, AntonProgressCallback } from '../dist/anton/types.js';
 import type { IdlehandsConfig } from '../dist/types.js';
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -72,10 +72,10 @@ function mockSession(responses: string[]): AgentSession {
       idx++;
       return { text, turns: 1, toolCalls: 0 };
     },
-    cancel() { },
-    async close() { },
-    setModel() { },
-    async setEndpoint() { },
+    cancel() {},
+    async close() {},
+    setModel() {},
+    async setEndpoint() {},
     async listModels() {
       return [];
     },
@@ -88,15 +88,15 @@ function mockSession(responses: string[]): AgentSession {
     async captureOn() {
       return '';
     },
-    captureOff() { },
+    captureOff() {},
     async captureLast() {
       return '';
     },
     getSystemPrompt() {
       return '';
     },
-    setSystemPrompt() { },
-    resetSystemPrompt() { },
+    setSystemPrompt() {},
+    resetSystemPrompt() {},
     listMcpServers() {
       return [];
     },
@@ -118,14 +118,14 @@ function mockSession(responses: string[]): AgentSession {
     listLspServers() {
       return [];
     },
-    setVerbose() { },
-    reset() { },
-    restore() { },
+    setVerbose() {},
+    reset() {},
+    restore() {},
     planSteps: [],
     async executePlanStep() {
       return [];
     },
-    clearPlan() { },
+    clearPlan() {},
     async compactHistory() {
       return {
         beforeMessages: 0,
@@ -190,10 +190,10 @@ function baseIdlehandsConfig(): IdlehandsConfig {
 
 function silentProgress(): AntonProgressCallback {
   return {
-    onTaskStart() { },
-    onTaskEnd() { },
-    onTaskSkip() { },
-    onRunComplete() { },
+    onTaskStart() {},
+    onTaskEnd() {},
+    onTaskSkip() {},
+    onRunComplete() {},
   };
 }
 
@@ -330,8 +330,8 @@ describe('Anton Integration', { concurrency: 1 }, () => {
     } catch (err: any) {
       assert.ok(
         err.message.includes('dirty') ||
-        err.message.includes('clean') ||
-        err.message.includes('uncommitted'),
+          err.message.includes('clean') ||
+          err.message.includes('uncommitted'),
         `Expected dirty tree error, got: ${err.message}`
       );
     }

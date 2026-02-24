@@ -13,7 +13,7 @@ import {
   classifyTelegramEditError,
 } from '../progress/message-edit-scheduler.js';
 import { ProgressPresenter } from '../progress/progress-presenter.js';
-import type { IdlehandsConfig, BotTelegramConfig, ModelEscalation } from '../types.js';
+import type { IdlehandsConfig, BotTelegramConfig } from '../types.js';
 import { PKG_VERSION } from '../utils.js';
 import { formatWatchdogCancelMessage, resolveWatchdogSettings } from '../watchdog.js';
 

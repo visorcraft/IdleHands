@@ -99,11 +99,11 @@ describe('agent hook integration', () => {
 
     let calls = 0;
     const fakeClient: any = {
-      setResponseTimeout() { },
+      setResponseTimeout() {},
       async models() {
         return { data: [{ id: 'fake-model' }] };
       },
-      async warmup() { },
+      async warmup() {},
       async chatStream() {
         calls += 1;
         if (calls === 1) {

@@ -4,8 +4,8 @@ import path from 'node:path';
 
 import { sleep } from '../shared/async.js';
 import { stateDir, shellEscape, BASH_PATH } from '../utils.js';
-import { SecretsStore, resolveSecretRef } from './secrets.js';
 
+import { SecretsStore, resolveSecretRef } from './secrets.js';
 import type {
   PlanResult,
   PlanStep,
@@ -164,7 +164,10 @@ export async function runCommand(
     // On other platforms, explicitly use BASH_PATH for consistency.
     const child = isWin
       ? spawn(cmd, [], { stdio: ['ignore', 'pipe', 'pipe'], shell: true, ...(cwd ? { cwd } : {}) })
-      : spawn(BASH_PATH, ['-c', cmd], { stdio: ['ignore', 'pipe', 'pipe'], ...(cwd ? { cwd } : {}) });
+      : spawn(BASH_PATH, ['-c', cmd], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          ...(cwd ? { cwd } : {}),
+        });
     let stdout = '';
     let stderr = '';
     let settled = false;

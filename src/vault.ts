@@ -257,21 +257,21 @@ export class VaultStore {
 
     const rows = kind
       ? this.rows<VaultDbRow>(
-        `SELECT id, kind, key, value, tool, tool_call_id, content, snippet, project_dir, created_at, updated_at
+          `SELECT id, kind, key, value, tool, tool_call_id, content, snippet, project_dir, created_at, updated_at
            FROM vault_entries
            WHERE key = ? AND kind = ?
            ORDER BY updated_at DESC, id DESC
            LIMIT 1`,
-        [key, kind]
-      )
+          [key, kind]
+        )
       : this.rows<VaultDbRow>(
-        `SELECT id, kind, key, value, tool, tool_call_id, content, snippet, project_dir, created_at, updated_at
+          `SELECT id, kind, key, value, tool, tool_call_id, content, snippet, project_dir, created_at, updated_at
            FROM vault_entries
            WHERE key = ?
            ORDER BY updated_at DESC, id DESC
            LIMIT 1`,
-        [key]
-      );
+          [key]
+        );
 
     if (!rows.length) return null;
     return this.mapRow(rows[0]);
@@ -428,7 +428,7 @@ export class VaultStore {
         }
 
         return results.slice(0, n).map(({ _projectDir, ...rest }) => rest);
-      } catch (e) {
+      } catch {
         this.ftsEnabled = false;
       }
     }
@@ -534,7 +534,7 @@ export class VaultStore {
 
   private async recoverCorruptDb(e: unknown) {
     const backup = `${this.dbPath}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-    await fs.rename(this.dbPath, backup).catch(() => { });
+    await fs.rename(this.dbPath, backup).catch(() => {});
     this.db = new DatabaseSync(this.dbPath);
     this.migrate();
     await this.rebuildFts();

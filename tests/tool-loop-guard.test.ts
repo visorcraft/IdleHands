@@ -1,8 +1,8 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { describe, it } from 'node:test';
 
 import { ToolLoopGuard } from '../dist/agent/tool-loop-guard.js';
 import type { ToolCall } from '../dist/types.js';
@@ -81,8 +81,16 @@ describe('tool-loop-guard', () => {
   it('exposes telemetry counters in stats', async () => {
     const guard = new ToolLoopGuard();
     const calls: ToolCall[] = [
-      { id: 'a', type: 'function', function: { name: 'read_file', arguments: JSON.stringify({ path: 'x.ts' }) } },
-      { id: 'b', type: 'function', function: { name: 'read_file', arguments: JSON.stringify({ path: 'x.ts' }) } },
+      {
+        id: 'a',
+        type: 'function',
+        function: { name: 'read_file', arguments: JSON.stringify({ path: 'x.ts' }) },
+      },
+      {
+        id: 'b',
+        type: 'function',
+        function: { name: 'read_file', arguments: JSON.stringify({ path: 'x.ts' }) },
+      },
     ];
     guard.prepareTurn(calls);
     guard.registerCall('read_file', { path: 'x.ts' }, 'a');

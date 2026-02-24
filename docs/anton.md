@@ -207,6 +207,7 @@ anton:
   auto_commit: true
   progress_events: true
   progress_heartbeat_sec: 30
+  auto_pin_current_dir: false
   preflight:
     enabled: false
     requirements_review: true
@@ -244,6 +245,7 @@ These artifacts are local planning files and are ignored by git by default in th
 | `IDLEHANDS_ANTON_VERIFY_AI` | Enable AI verification |
 | `IDLEHANDS_ANTON_PROGRESS_EVENTS` | Enable mid-task progress updates (Telegram/Discord/TUI) |
 | `IDLEHANDS_ANTON_PROGRESS_HEARTBEAT_SEC` | Seconds between "still working" heartbeat messages |
+| `IDLEHANDS_ANTON_AUTO_PIN_CURRENT_DIR` | Auto-pin current dir before `/anton <file>` run start when not already pinned |
 
 ## Troubleshooting
 

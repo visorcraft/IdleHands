@@ -12,7 +12,6 @@ import {
   listThemes,
   BUILTIN_THEME_NAMES,
   loadCustomTheme,
-  customThemesDir,
 } from '../dist/themes.js';
 
 describe('themes', () => {
@@ -122,7 +121,6 @@ describe('custom themes', () => {
   });
 
   it('loadCustomTheme loads a valid theme JSON', async () => {
-    const themesDir = customThemesDir();
     // We don't want to write to the real config dir in tests,
     // so test the resolvePalette path directly
     const palette = { cyan: 'magenta', blue: 'yellow' };

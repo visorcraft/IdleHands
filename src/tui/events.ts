@@ -1,4 +1,11 @@
-import type { ActiveRuntimeView, PanelId } from './types.js';
+import type {
+  ActiveRuntimeView,
+  BranchPickerItem,
+  ModelPickerItem,
+  PanelId,
+  SettingsMenuItem,
+  StepNavigatorItem,
+} from './types.js';
 
 export type TuiEvent =
   | { type: 'USER_INPUT_CHANGE'; text: string }
@@ -58,19 +65,19 @@ export type TuiEvent =
   | { type: 'SCROLL_SET'; panel: PanelId; value: number }
   | {
       type: 'BRANCH_PICKER_OPEN';
-      branches: import('./types.js').BranchPickerItem[];
+      branches: BranchPickerItem[];
       action: 'checkout' | 'merge' | 'browse';
     }
   | { type: 'BRANCH_PICKER_MOVE'; delta: number }
   | { type: 'BRANCH_PICKER_CLOSE' }
-  | { type: 'STEP_NAV_OPEN'; items: import('./types.js').StepNavigatorItem[]; query?: string }
+  | { type: 'STEP_NAV_OPEN'; items: StepNavigatorItem[]; query?: string }
   | { type: 'STEP_NAV_MOVE'; delta: number }
   | { type: 'STEP_NAV_CLOSE' }
-  | { type: 'SETTINGS_OPEN'; items: import('./types.js').SettingsMenuItem[] }
+  | { type: 'SETTINGS_OPEN'; items: SettingsMenuItem[] }
   | { type: 'SETTINGS_MOVE'; delta: number }
   | {
       type: 'SETTINGS_UPDATE';
-      items: import('./types.js').SettingsMenuItem[];
+      items: SettingsMenuItem[];
       selectedIndex?: number;
     }
   | { type: 'SETTINGS_CLOSE' }
@@ -83,12 +90,12 @@ export type TuiEvent =
   | { type: 'HOOKS_INSPECTOR_CLOSE' }
   | {
       type: 'MODEL_PICKER_OPEN';
-      models: import('./types.js').ModelPickerItem[];
+      models: ModelPickerItem[];
       query?: string;
     }
   | {
       type: 'MODEL_PICKER_FILTER';
-      filtered: import('./types.js').ModelPickerItem[];
+      filtered: ModelPickerItem[];
       query: string;
       selectedIndex: number;
       offset: number;

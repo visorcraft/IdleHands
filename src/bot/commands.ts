@@ -12,6 +12,7 @@ import { firstToken } from '../cli/command-utils.js';
 import type { BotTelegramConfig } from '../types.js';
 import type { WatchdogSettings } from '../watchdog.js';
 
+import { shouldAutoPinBeforeAntonStart } from './anton-auto-pin.js';
 import { formatHtml } from './command-format.js';
 import {
   versionCommand,
@@ -22,13 +23,6 @@ import {
   statusCommand,
   watchdogCommand,
   dirShowCommand,
-  dirSetOk,
-  dirSetFail,
-  pinOk,
-  pinFail,
-  unpinOk,
-  unpinNotPinned,
-  unpinFail,
   approvalShowCommand,
   approvalSetCommand,
   modeShowCommand,
@@ -64,27 +58,36 @@ type CommandContext = {
 };
 
 /** Send formatted CmdResult as Telegram HTML. */
-async function reply(ctx: Context, result: ReturnType<typeof formatHtml> extends string ? Parameters<typeof formatHtml>[0] : never): Promise<void> {
+async function reply(
+  ctx: Context,
+  result: ReturnType<typeof formatHtml> extends string ? Parameters<typeof formatHtml>[0] : never
+): Promise<void> {
   const text = formatHtml(result);
   if (!text) return;
   await ctx.reply(text, { parse_mode: 'HTML' });
 }
 
 export async function handleVersion({ ctx, botConfig }: CommandContext): Promise<void> {
-  await reply(ctx, versionCommand({
-    version: botConfig.version,
-    model: botConfig.model,
-    endpoint: botConfig.endpoint,
-  }));
+  await reply(
+    ctx,
+    versionCommand({
+      version: botConfig.version,
+      model: botConfig.model,
+      endpoint: botConfig.endpoint,
+    })
+  );
 }
 
 export async function handleStart({ ctx, botConfig }: CommandContext): Promise<void> {
-  await reply(ctx, startCommand({
-    version: botConfig.version,
-    model: botConfig.model,
-    endpoint: botConfig.endpoint,
-    defaultDir: botConfig.defaultDir,
-  }));
+  await reply(
+    ctx,
+    startCommand({
+      version: botConfig.version,
+      model: botConfig.model,
+      endpoint: botConfig.endpoint,
+      defaultDir: botConfig.defaultDir,
+    })
+  );
 }
 
 export async function handleHelp({ ctx }: CommandContext): Promise<void> {
@@ -133,10 +136,7 @@ export async function handleWatchdog({ ctx, sessions, botConfig }: CommandContex
   const managed = sessions.get(chatId);
   await reply(
     ctx,
-    watchdogCommand(
-      managed as unknown as ManagedLike | undefined,
-      botConfig.watchdog,
-    ),
+    watchdogCommand(managed as unknown as ManagedLike | undefined, botConfig.watchdog)
   );
 }
 
@@ -237,9 +237,12 @@ export async function handleUnpin({ ctx, sessions }: CommandContext): Promise<vo
 
   const ok = await sessions.unpin(chatId);
   if (ok) {
-    await ctx.reply(`✅ Directory unpinned. Working directory remains at <code>${escapeHtml(managed.workingDir)}</code>`, {
-      parse_mode: 'HTML',
-    });
+    await ctx.reply(
+      `✅ Directory unpinned. Working directory remains at <code>${escapeHtml(managed.workingDir)}</code>`,
+      {
+        parse_mode: 'HTML',
+      }
+    );
   } else {
     await ctx.reply('❌ Failed to unpin directory.');
   }
@@ -446,17 +449,20 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
       await ctx.reply('No active session.');
       return;
     }
-    await reply(ctx, await antonCommand(
-      managed as unknown as ManagedLike,
-      args,
-      sendAntonUpdate,
-      ANTON_RATE_LIMIT_MS,
-    ));
+    await reply(
+      ctx,
+      await antonCommand(
+        managed as unknown as ManagedLike,
+        args,
+        sendAntonUpdate,
+        ANTON_RATE_LIMIT_MS
+      )
+    );
     return;
   }
 
   // For start — ensure session exists
-  const session = managed || (await sessions.getOrCreate(chatId, userId));
+  let session = managed || (await sessions.getOrCreate(chatId, userId));
   if (!session) {
     await ctx.reply(
       '⚠️ Too many active sessions. Try again later (or wait for an old session to expire).'
@@ -464,12 +470,37 @@ export async function handleAnton({ ctx, sessions }: CommandContext): Promise<vo
     return;
   }
 
-  await reply(ctx, await antonCommand(
-    session as unknown as ManagedLike,
-    args,
-    sendAntonUpdate,
-    ANTON_RATE_LIMIT_MS,
-  ));
+  // Optional Anton auto-pin: pin current working dir before run start when not already pinned.
+  const autoPinEnabled = session.config?.anton?.auto_pin_current_dir === true;
+  if (shouldAutoPinBeforeAntonStart({ args, autoPinEnabled, dirPinned: session.dirPinned })) {
+    const currentDir = session.workingDir;
+    if (currentDir) {
+      const pinned = await sessions.setDir(chatId, currentDir);
+      if (!pinned) {
+        await ctx.reply(
+          '❌ Anton auto-pin failed for current directory. Use /dir <path> (or /pin) and try /anton again.'
+        );
+        return;
+      }
+      session = sessions.get(chatId) ?? session;
+      await ctx.reply(
+        `📌 Anton auto-pinned working directory: <code>${escapeHtml(currentDir)}</code>`,
+        {
+          parse_mode: 'HTML',
+        }
+      );
+    }
+  }
+
+  await reply(
+    ctx,
+    await antonCommand(
+      session as unknown as ManagedLike,
+      args,
+      sendAntonUpdate,
+      ANTON_RATE_LIMIT_MS
+    )
+  );
 }
 
 // ── Multi-agent commands ───────────────────────────────────────────────
@@ -504,7 +535,7 @@ export async function handleAgents({ ctx, sessions, botConfig }: CommandContext)
     agentsCommand(managed as unknown as ManagedLike, {
       agents: botConfig.telegram?.agents,
       routing: botConfig.telegram?.routing,
-    }),
+    })
   );
 }
 

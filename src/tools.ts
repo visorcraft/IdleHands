@@ -1,14 +1,12 @@
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
-import { ExecResult, type ToolStreamEvent, type ApprovalMode } from './types.js';
-import { ToolError } from './tools/tool-error.js';
 
-import type { ReplayStore } from './replay.js';
-import type { VaultStore } from './vault.js';
 import type { LensStore } from './lens.js';
+import type { ReplayStore } from './replay.js';
 import { checkExecSafety, checkPathSafety, isProtectedDeleteTarget } from './safety.js';
 import { sys_context as sysContextTool } from './sys/context.js';
+import { normalizePatchPath, extractTouchedFilesFromPatch } from './tools/patch.js';
 import {
   isWithinDir,
   resolvePath,
@@ -17,43 +15,23 @@ import {
   enforceMutationWithinCwd,
 } from './tools/path-safety.js';
 import {
-  type PatchTouchInfo,
-  normalizePatchPath,
-  extractTouchedFilesFromPatch,
-} from './tools/patch.js';
+  guessMimeType,
+  stripAnsi,
+  dedupeRepeats,
+  collapseStackTraces,
+  truncateBytes,
+  mutationReadback,
+} from './tools/text-utils.js';
+import { ToolError } from './tools/tool-error.js';
 import { atomicWrite, backupFile } from './tools/undo.js';
+import type { ToolStreamEvent, ApprovalMode, ExecResult } from './types.js';
 import { shellEscape, BASH_PATH } from './utils.js';
+import type { VaultStore } from './vault.js';
 
 // Re-export from extracted modules so existing imports don't break
 export { atomicWrite, undo_path } from './tools/undo.js';
 
 // Backup/undo system imported from tools/undo.ts (atomicWrite, backupFile, undo_path)
-
-/**
- * Build a read-back snippet showing the region around a mutation.
- * Returns numbered lines ±contextLines around the changed area, capped to avoid bloat.
- */
-function mutationReadback(
-  fileContent: string,
-  changedStartLine: number,
-  changedEndLine: number,
-  contextLines = 5,
-  maxLines = 40,
-): string {
-  const lines = fileContent.split(/\r?\n/);
-  const totalLines = lines.length;
-  const from = Math.max(0, changedStartLine - contextLines);
-  const to = Math.min(totalLines, changedEndLine + contextLines);
-  let slice = lines.slice(from, to);
-  let truncated = false;
-  if (slice.length > maxLines) {
-    slice = slice.slice(0, maxLines);
-    truncated = true;
-  }
-  const numbered = slice.map((l, i) => `${from + i + 1}: ${l}`).join('\n');
-  const header = `\n--- current state of lines ${from + 1}-${from + slice.length} (of ${totalLines}) ---\n`;
-  return header + numbered + (truncated ? '\n...(truncated)' : '');
-}
 
 export type ToolContext = {
   cwd: string;
@@ -69,7 +47,10 @@ export type ToolContext = {
   maxExecBytes?: number; // max bytes returned per stream (after processing)
   maxExecCaptureBytes?: number; // max bytes buffered per stream before processing (to prevent OOM)
   maxBackupsPerFile?: number; // FIFO retention (defaults to 5)
-  confirm?: (prompt: string, ctx?: { tool?: string; args?: Record<string, unknown>; diff?: string }) => Promise<boolean>; // interactive confirmation hook
+  confirm?: (
+    prompt: string,
+    ctx?: { tool?: string; args?: Record<string, unknown>; diff?: string }
+  ) => Promise<boolean>; // interactive confirmation hook
   replay?: ReplayStore;
   vault?: VaultStore;
   lens?: LensStore;
@@ -104,135 +85,28 @@ async function loadNodePty(): Promise<any | null> {
   } catch {
     if (!ptyUnavailableWarned) {
       ptyUnavailableWarned = true;
-      console.error('[warn] node-pty not available; interactive sudo is disabled. Install build tools (python3, make, g++) and reinstall to enable it.');
+      console.error(
+        '[warn] node-pty not available; interactive sudo is disabled. Install build tools (python3, make, g++) and reinstall to enable it.'
+      );
     }
     return null;
   }
 }
 
-/** Best-effort MIME type guess from magic bytes + extension (§7/§8). */
-function guessMimeType(filePath: string, buf: Buffer): string {
-  // Magic byte signatures
-  if (buf.length >= 4) {
-    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
-    if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
-    if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
-    if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 && buf.length >= 12 && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp'; // RIFF+WEBP
-    if (buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) return 'application/pdf';
-    if (buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04) return 'application/zip';
-    if (buf[0] === 0x7f && buf[1] === 0x45 && buf[2] === 0x4c && buf[3] === 0x46) return 'application/x-elf';
-    if (buf[0] === 0x1f && buf[1] === 0x8b) return 'application/gzip';
-  }
-  // Fall back to extension
-  const ext = path.extname(filePath).toLowerCase();
-  const extMap: Record<string, string> = {
-    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
-    '.webp': 'image/webp', '.svg': 'image/svg+xml', '.pdf': 'application/pdf',
-    '.zip': 'application/zip', '.gz': 'application/gzip', '.tar': 'application/x-tar',
-    '.wasm': 'application/wasm', '.so': 'application/x-sharedlib',
-    '.exe': 'application/x-executable', '.o': 'application/x-object',
-  };
-  return extMap[ext] ?? 'application/octet-stream';
-}
-
-function stripAnsi(s: string) {
-  // eslint-disable-next-line no-control-regex
-  return s
-    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, '')   // CSI sequences (SGR, cursor, erase, scroll, etc.)
-    .replace(/\u001b\][^\u0007]*\u0007/g, '')   // OSC sequences
-    .replace(/\u001b[()][AB012]/g, '')           // Character set selection
-    .replace(/\u001b[=>Nc7-9]/g, '');            // Other common single-char escapes
-}
-
-function dedupeRepeats(lines: string[], maxLineLen = 400) {
-  const out: string[] = [];
-  let prev: string | null = null;
-  let count = 0;
-  const flush = () => {
-    if (prev == null) return;
-    if (count <= 1) out.push(prev);
-    else out.push(prev, `[repeated ${count - 1} more times]`);
-  };
-
-  for (const raw of lines) {
-    const line = raw.length > maxLineLen ? raw.slice(0, maxLineLen) + '…' : raw;
-    if (prev === line) {
-      count++;
-      continue;
-    }
-    flush();
-    prev = line;
-    count = 1;
-  }
-  flush();
-  return out;
-}
-
-function collapseStackTraces(lines: string[]): string[] {
-  const out: string[] = [];
-  let inStack = false;
-  let stackCount = 0;
-  let firstFrame = '';
-  let lastError = '';
-
-  const isStackFrame = (l: string) => /^\s+at\s/.test(l);
-
-  const flush = () => {
-    if (!inStack) return;
-    if (firstFrame) out.push(firstFrame);
-    if (stackCount > 1) out.push(`    [${stackCount - 1} more frames]`);
-    if (lastError) out.push(lastError);
-    inStack = false;
-    stackCount = 0;
-    firstFrame = '';
-    lastError = '';
-  };
-
-  for (const line of lines) {
-    if (isStackFrame(line)) {
-      if (!inStack) {
-        inStack = true;
-        stackCount = 1;
-        firstFrame = line;
-      } else {
-        stackCount++;
-      }
-    } else {
-      if (inStack) {
-        // Lines between stack frames that look like error messages
-        if (/^\w*(Error|Exception|Caused by)/.test(line.trim())) {
-          lastError = line;
-          continue;
-        }
-        flush();
-      }
-      out.push(line);
-    }
-  }
-  flush();
-  return out;
-}
-
-function truncateBytes(
-  s: string,
-  maxBytes: number,
-  totalBytesHint?: number
-): { text: string; truncated: boolean } {
-  const b = Buffer.from(s, 'utf8');
-  const total = typeof totalBytesHint === 'number' && Number.isFinite(totalBytesHint) ? totalBytesHint : b.length;
-  if (b.length <= maxBytes) return { text: s, truncated: false };
-  // cut to boundary
-  const cut = b.subarray(0, maxBytes);
-  return { text: cut.toString('utf8') + `\n[truncated, ${total} bytes total]`, truncated: true };
-}
-
-async function checkpointReplay(ctx: ToolContext, payload: Parameters<ReplayStore['checkpoint']>[0]): Promise<string> {
+async function checkpointReplay(
+  ctx: ToolContext,
+  payload: Parameters<ReplayStore['checkpoint']>[0]
+): Promise<string> {
   if (!ctx.replay) return '';
 
   let note: string | undefined;
   if (ctx.lens && payload.before && payload.after) {
     try {
-      note = await ctx.lens.summarizeDiffToText(payload.before.toString('utf8'), payload.after.toString('utf8'), payload.filePath);
+      note = await ctx.lens.summarizeDiffToText(
+        payload.before.toString('utf8'),
+        payload.after.toString('utf8'),
+        payload.filePath
+      );
     } catch {
       // ignore and fallback to raw checkpoint
     }
@@ -253,9 +127,10 @@ export async function read_file(ctx: ToolContext, args: any) {
   const offset = args?.offset != null ? Number(args.offset) : undefined;
 
   const rawLimit = args?.limit != null ? Number(args.limit) : undefined;
-  let limit = Number.isFinite(rawLimit as number) && (rawLimit as number) > 0
-    ? Math.max(1, Math.floor(rawLimit as number))
-    : 200;
+  let limit =
+    Number.isFinite(rawLimit as number) && (rawLimit as number) > 0
+      ? Math.max(1, Math.floor(rawLimit as number))
+      : 200;
   if (ctx.maxReadLines != null && ctx.maxReadLines > 0) {
     limit = Math.min(limit, ctx.maxReadLines);
   }
@@ -263,20 +138,23 @@ export async function read_file(ctx: ToolContext, args: any) {
   const search = typeof args?.search === 'string' ? args.search : undefined;
 
   const rawContext = args?.context != null ? Number(args.context) : undefined;
-  const context = Number.isFinite(rawContext as number) && (rawContext as number) >= 0
-    ? Math.max(0, Math.min(200, Math.floor(rawContext as number)))
-    : 10;
+  const context =
+    Number.isFinite(rawContext as number) && (rawContext as number) >= 0
+      ? Math.max(0, Math.min(200, Math.floor(rawContext as number)))
+      : 10;
 
-  const formatRaw = typeof args?.format === 'string' ? args.format.trim().toLowerCase() : 'numbered';
+  const formatRaw =
+    typeof args?.format === 'string' ? args.format.trim().toLowerCase() : 'numbered';
   const format: 'plain' | 'numbered' | 'sparse' =
-    (formatRaw === 'plain' || formatRaw === 'numbered' || formatRaw === 'sparse')
+    formatRaw === 'plain' || formatRaw === 'numbered' || formatRaw === 'sparse'
       ? (formatRaw as 'plain' | 'numbered' | 'sparse')
       : 'numbered';
 
   const rawMaxBytes = args?.max_bytes != null ? Number(args.max_bytes) : undefined;
-  const maxBytes = Number.isFinite(rawMaxBytes as number) && (rawMaxBytes as number) > 0
-    ? Math.min(256 * 1024, Math.max(256, Math.floor(rawMaxBytes as number)))
-    : 20 * 1024;
+  const maxBytes =
+    Number.isFinite(rawMaxBytes as number) && (rawMaxBytes as number) > 0
+      ? Math.min(256 * 1024, Math.max(256, Math.floor(rawMaxBytes as number)))
+      : 20 * 1024;
 
   if (!p) throw new Error('read_file: missing path');
 
@@ -286,7 +164,7 @@ export async function read_file(ctx: ToolContext, args: any) {
     if (stat.isDirectory()) {
       return `read_file: "${redactedPath}" is a directory, not a file. Use list_dir to see its contents, or search_files to find specific code.`;
     }
-  } catch (e: any) {
+  } catch {
     // stat failure (ENOENT etc.) — let readFile handle it for the standard error path
   }
   const buf = await fs.readFile(p).catch((e: any) => {
@@ -346,7 +224,9 @@ export async function read_file(ctx: ToolContext, args: any) {
 
   if (search) {
     const shown = matchLines.slice(0, 20);
-    out.push(`# matches at lines: ${shown.join(', ')}${matchLines.length > shown.length ? ' …' : ''}`);
+    out.push(
+      `# matches at lines: ${shown.join(', ')}${matchLines.length > shown.length ? ' …' : ''}`
+    );
   }
 
   const renderNumbered = (ln: number, body: string) => `${ln}| ${body}`;
@@ -377,7 +257,13 @@ export async function read_file(ctx: ToolContext, args: any) {
 
 export async function read_files(ctx: ToolContext, args: any) {
   const reqs = Array.isArray(args?.requests) ? args.requests : [];
-  if (!reqs.length) throw new ToolError('invalid_args', 'read_files: missing requests[]', false, 'Provide requests as an array of {path, limit,...} objects.');
+  if (!reqs.length)
+    throw new ToolError(
+      'invalid_args',
+      'read_files: missing requests[]',
+      false,
+      'Provide requests as an array of {path, limit,...} objects.'
+    );
 
   const parts: string[] = [];
   let failures = 0;
@@ -410,12 +296,14 @@ export async function write_file(ctx: ToolContext, args: any) {
   // (when llama-server's XML parser auto-parses JSON content values).
   const raw = args?.content;
   const contentWasObject = raw != null && typeof raw === 'object';
-  const content = typeof raw === 'string' ? raw
-    : (contentWasObject ? JSON.stringify(raw, null, 2) : undefined);
+  const content =
+    typeof raw === 'string' ? raw : contentWasObject ? JSON.stringify(raw, null, 2) : undefined;
   // Warn when content arrives as an object (model passed JSON object instead of string)
   // to help diagnose serialization-induced loops where the model retries thinking it failed.
   if (contentWasObject) {
-    console.warn(`[write_file] Warning: content for "${args?.path}" arrived as ${typeof raw} — auto-serialized to JSON string. If this was intentional (e.g. package.json), the write succeeded.`);
+    console.warn(
+      `[write_file] Warning: content for "${args?.path}" arrived as ${typeof raw} — auto-serialized to JSON string. If this was intentional (e.g. package.json), the write succeeded.`
+    );
   }
   if (!p) throw new Error('write_file: missing path');
   if (content == null) throw new Error('write_file: missing content (got ' + typeof raw + ')');
@@ -432,10 +320,10 @@ export async function write_file(ctx: ToolContext, args: any) {
   }
   if (pathVerdict.tier === 'cautious' && !ctx.noConfirm) {
     if (ctx.confirm) {
-      const ok = await ctx.confirm(
-        pathVerdict.prompt || `Write to ${redactedPath}?`,
-        { tool: 'write_file', args: { path: p } }
-      );
+      const ok = await ctx.confirm(pathVerdict.prompt || `Write to ${redactedPath}?`, {
+        tool: 'write_file',
+        args: { path: p },
+      });
       if (!ok) throw new Error(`write_file: cancelled by user (${pathVerdict.reason})`);
     } else {
       throw new Error(`write_file: blocked (${pathVerdict.reason}) without --no-confirm/--yolo`);
@@ -446,18 +334,22 @@ export async function write_file(ctx: ToolContext, args: any) {
   if (existingStat?.isFile() && existingStat.size > 0 && !overwrite) {
     throw new Error(
       `write_file: refusing to overwrite existing non-empty file ${redactedPath} without explicit overwrite=true (or force=true). ` +
-      `Use edit_range/apply_patch for surgical edits, or set overwrite=true for intentional full-file replacement.`
+        `Use edit_range/apply_patch for surgical edits, or set overwrite=true for intentional full-file replacement.`
     );
   }
 
   if (ctx.dryRun) {
-    const mode = existingStat?.isFile() ? (existingStat.size > 0 ? 'overwrite' : 'update-empty') : 'create';
+    const mode = existingStat?.isFile()
+      ? existingStat.size > 0
+        ? 'overwrite'
+        : 'update-empty'
+      : 'create';
     return `dry-run: would write ${p} (${Buffer.byteLength(content, 'utf8')} bytes, mode=${mode}${overwrite ? ', explicit-overwrite' : ''})${cwdWarning}`;
   }
 
   // Phase 9d: snapshot /etc/ files before editing
   if (ctx.mode === 'sys' && ctx.vault) {
-    await snapshotBeforeEdit(ctx.vault, p).catch(() => { });
+    await snapshotBeforeEdit(ctx.vault, p).catch(() => {});
   }
 
   const beforeBuf = await fs.readFile(p).catch(() => Buffer.from(''));
@@ -467,12 +359,20 @@ export async function write_file(ctx: ToolContext, args: any) {
   ctx.onMutation?.(p);
 
   const afterBuf = Buffer.from(content, 'utf8');
-  const replayNote = await checkpointReplay(ctx, { op: 'write_file', filePath: p, before: beforeBuf, after: afterBuf });
+  const replayNote = await checkpointReplay(ctx, {
+    op: 'write_file',
+    filePath: p,
+    before: beforeBuf,
+    after: afterBuf,
+  });
 
   const contentLines = content.split(/\r?\n/);
-  const readback = contentLines.length <= 40
-    ? mutationReadback(content, 0, contentLines.length)
-    : mutationReadback(content, 0, 20) + '\n...\n' + mutationReadback(content, contentLines.length - 10, contentLines.length);
+  const readback =
+    contentLines.length <= 40
+      ? mutationReadback(content, 0, contentLines.length)
+      : mutationReadback(content, 0, 20) +
+        '\n...\n' +
+        mutationReadback(content, contentLines.length - 10, contentLines.length);
   return `wrote ${redactedPath} (${Buffer.byteLength(content, 'utf8')} bytes)${replayNote}${cwdWarning}${readback}`;
 }
 
@@ -482,8 +382,12 @@ export async function insert_file(ctx: ToolContext, args: any) {
   const redactedPath = redactPath(p, absCwd);
   const line = Number(args?.line);
   const rawText = args?.text;
-  const text = typeof rawText === 'string' ? rawText
-    : (rawText != null && typeof rawText === 'object' ? JSON.stringify(rawText, null, 2) : undefined);
+  const text =
+    typeof rawText === 'string'
+      ? rawText
+      : rawText != null && typeof rawText === 'object'
+        ? JSON.stringify(rawText, null, 2)
+        : undefined;
   if (!p) throw new Error('insert_file: missing path');
   if (!Number.isFinite(line)) throw new Error('insert_file: missing/invalid line');
   if (text == null) throw new Error('insert_file: missing text (got ' + typeof rawText + ')');
@@ -497,21 +401,22 @@ export async function insert_file(ctx: ToolContext, args: any) {
   }
   if (pathVerdict.tier === 'cautious' && !ctx.noConfirm) {
     if (ctx.confirm) {
-      const ok = await ctx.confirm(
-        pathVerdict.prompt || `Insert into ${redactedPath}?`,
-        { tool: 'insert_file', args: { path: p } }
-      );
+      const ok = await ctx.confirm(pathVerdict.prompt || `Insert into ${redactedPath}?`, {
+        tool: 'insert_file',
+        args: { path: p },
+      });
       if (!ok) throw new Error(`insert_file: cancelled by user (${pathVerdict.reason})`);
     } else {
       throw new Error(`insert_file: blocked (${pathVerdict.reason}) without --no-confirm/--yolo`);
     }
   }
 
-  if (ctx.dryRun) return `dry-run: would insert into ${redactedPath} at line=${line} (${Buffer.byteLength(text, 'utf8')} bytes)`;
+  if (ctx.dryRun)
+    return `dry-run: would insert into ${redactedPath} at line=${line} (${Buffer.byteLength(text, 'utf8')} bytes)`;
 
   // Phase 9d: snapshot /etc/ files before editing
   if (ctx.mode === 'sys' && ctx.vault) {
-    await snapshotBeforeEdit(ctx.vault, p).catch(() => { });
+    await snapshotBeforeEdit(ctx.vault, p).catch(() => {});
   }
 
   const beforeText = await fs.readFile(p, 'utf8').catch(() => '');
@@ -529,7 +434,7 @@ export async function insert_file(ctx: ToolContext, args: any) {
       op: 'insert_file',
       filePath: p,
       before: Buffer.from(beforeText, 'utf8'),
-      after: Buffer.from(out, 'utf8')
+      after: Buffer.from(out, 'utf8'),
     });
 
     const cwdWarning = checkCwdWarning('insert_file', p, ctx);
@@ -564,7 +469,7 @@ export async function insert_file(ctx: ToolContext, args: any) {
     op: 'insert_file',
     filePath: p,
     before: Buffer.from(beforeText, 'utf8'),
-    after: Buffer.from(out, 'utf8')
+    after: Buffer.from(out, 'utf8'),
   });
 
   const cwdWarning = checkCwdWarning('insert_file', p, ctx);
@@ -578,11 +483,19 @@ export async function edit_file(ctx: ToolContext, args: any) {
   const absCwd = path.resolve(ctx.cwd);
   const redactedPath = redactPath(p, absCwd);
   const rawOld = args?.old_text;
-  const oldText = typeof rawOld === 'string' ? rawOld
-    : (rawOld != null && typeof rawOld === 'object' ? JSON.stringify(rawOld, null, 2) : undefined);
+  const oldText =
+    typeof rawOld === 'string'
+      ? rawOld
+      : rawOld != null && typeof rawOld === 'object'
+        ? JSON.stringify(rawOld, null, 2)
+        : undefined;
   const rawNew = args?.new_text;
-  const newText = typeof rawNew === 'string' ? rawNew
-    : (rawNew != null && typeof rawNew === 'object' ? JSON.stringify(rawNew, null, 2) : undefined);
+  const newText =
+    typeof rawNew === 'string'
+      ? rawNew
+      : rawNew != null && typeof rawNew === 'object'
+        ? JSON.stringify(rawNew, null, 2)
+        : undefined;
   const replaceAll = Boolean(args?.replace_all);
   if (!p) throw new Error('edit_file: missing path');
   if (oldText == null) throw new Error('edit_file: missing old_text');
@@ -597,10 +510,10 @@ export async function edit_file(ctx: ToolContext, args: any) {
   }
   if (pathVerdict.tier === 'cautious' && !ctx.noConfirm) {
     if (ctx.confirm) {
-      const ok = await ctx.confirm(
-        pathVerdict.prompt || `Edit ${redactedPath}?`,
-        { tool: 'edit_file', args: { path: p, old_text: oldText, new_text: newText } }
-      );
+      const ok = await ctx.confirm(pathVerdict.prompt || `Edit ${redactedPath}?`, {
+        tool: 'edit_file',
+        args: { path: p, old_text: oldText, new_text: newText },
+      });
       if (!ok) throw new Error(`edit_file: cancelled by user (${pathVerdict.reason})`);
     } else {
       throw new Error(`edit_file: blocked (${pathVerdict.reason}) without --no-confirm/--yolo`);
@@ -609,7 +522,7 @@ export async function edit_file(ctx: ToolContext, args: any) {
 
   // Phase 9d: snapshot /etc/ files before editing
   if (ctx.mode === 'sys' && ctx.vault) {
-    await snapshotBeforeEdit(ctx.vault, p).catch(() => { });
+    await snapshotBeforeEdit(ctx.vault, p).catch(() => {});
   }
 
   const cur = await fs.readFile(p, 'utf8').catch((e: any) => {
@@ -659,7 +572,9 @@ export async function edit_file(ctx: ToolContext, args: any) {
     );
   }
 
-  const next = replaceAll ? cur.split(oldText).join(newText) : cur.slice(0, idx) + newText + cur.slice(idx + oldText.length);
+  const next = replaceAll
+    ? cur.split(oldText).join(newText)
+    : cur.slice(0, idx) + newText + cur.slice(idx + oldText.length);
 
   if (ctx.dryRun) return `dry-run: would edit ${redactedPath} (replace_all=${replaceAll})`;
 
@@ -671,7 +586,7 @@ export async function edit_file(ctx: ToolContext, args: any) {
     op: 'edit_file',
     filePath: p,
     before: Buffer.from(cur, 'utf8'),
-    after: Buffer.from(next, 'utf8')
+    after: Buffer.from(next, 'utf8'),
   });
 
   const cwdWarning = checkCwdWarning('edit_file', p, ctx);
@@ -740,20 +655,27 @@ export async function edit_range(ctx: ToolContext, args: any) {
   const startLine = Number(args?.start_line);
   const endLine = Number(args?.end_line);
   const rawReplacement = args?.replacement;
-  const replacement = typeof rawReplacement === 'string' ? rawReplacement
-    : (rawReplacement != null && typeof rawReplacement === 'object' ? JSON.stringify(rawReplacement, null, 2) : undefined);
+  const replacement =
+    typeof rawReplacement === 'string'
+      ? rawReplacement
+      : rawReplacement != null && typeof rawReplacement === 'object'
+        ? JSON.stringify(rawReplacement, null, 2)
+        : undefined;
 
   if (!p) throw new Error('edit_range: missing path');
-  if (!Number.isFinite(startLine) || startLine < 1) throw new Error('edit_range: missing/invalid start_line');
-  if (!Number.isFinite(endLine) || endLine < startLine) throw new Error('edit_range: missing/invalid end_line');
-  if (replacement == null) throw new Error('edit_range: missing replacement (got ' + typeof rawReplacement + ')');
+  if (!Number.isFinite(startLine) || startLine < 1)
+    throw new Error('edit_range: missing/invalid start_line');
+  if (!Number.isFinite(endLine) || endLine < startLine)
+    throw new Error('edit_range: missing/invalid end_line');
+  if (replacement == null)
+    throw new Error('edit_range: missing replacement (got ' + typeof rawReplacement + ')');
 
   const hasLiteralEscapedNewlines = replacement.includes('\\n');
   const hasRealNewlines = replacement.includes('\n') || replacement.includes('\r');
   if (hasLiteralEscapedNewlines && !hasRealNewlines) {
     throw new Error(
       'edit_range: replacement appears double-escaped (contains literal "\\n" sequences). ' +
-      'Resend replacement with REAL newline characters (multi-line string), not escaped backslash-n text.'
+        'Resend replacement with REAL newline characters (multi-line string), not escaped backslash-n text.'
     );
   }
 
@@ -766,21 +688,22 @@ export async function edit_range(ctx: ToolContext, args: any) {
   }
   if (pathVerdict.tier === 'cautious' && !ctx.noConfirm) {
     if (ctx.confirm) {
-      const ok = await ctx.confirm(
-        pathVerdict.prompt || `Edit range in ${p}?`,
-        { tool: 'edit_range', args: { path: p, start_line: startLine, end_line: endLine } }
-      );
+      const ok = await ctx.confirm(pathVerdict.prompt || `Edit range in ${p}?`, {
+        tool: 'edit_range',
+        args: { path: p, start_line: startLine, end_line: endLine },
+      });
       if (!ok) throw new Error(`edit_range: cancelled by user (${pathVerdict.reason})`);
     } else {
       throw new Error(`edit_range: blocked (${pathVerdict.reason}) without --no-confirm/--yolo`);
     }
   }
 
-  if (ctx.dryRun) return `dry-run: would edit_range ${p} lines ${startLine}-${endLine} (${Buffer.byteLength(replacement, 'utf8')} bytes)`;
+  if (ctx.dryRun)
+    return `dry-run: would edit_range ${p} lines ${startLine}-${endLine} (${Buffer.byteLength(replacement, 'utf8')} bytes)`;
 
   // Phase 9d: snapshot /etc/ files before editing
   if (ctx.mode === 'sys' && ctx.vault) {
-    await snapshotBeforeEdit(ctx.vault, p).catch(() => { });
+    await snapshotBeforeEdit(ctx.vault, p).catch(() => {});
   }
 
   const beforeText = await fs.readFile(p, 'utf8').catch((e: any) => {
@@ -791,10 +714,14 @@ export async function edit_range(ctx: ToolContext, args: any) {
   const lines = beforeText.split(/\r?\n/);
 
   if (startLine > lines.length) {
-    throw new Error(`edit_range: start_line ${startLine} out of range (file has ${lines.length} lines)`);
+    throw new Error(
+      `edit_range: start_line ${startLine} out of range (file has ${lines.length} lines)`
+    );
   }
   if (endLine > lines.length) {
-    throw new Error(`edit_range: end_line ${endLine} out of range (file has ${lines.length} lines)`);
+    throw new Error(
+      `edit_range: end_line ${endLine} out of range (file has ${lines.length} lines)`
+    );
   }
 
   const startIdx = startLine - 1;
@@ -814,7 +741,7 @@ export async function edit_range(ctx: ToolContext, args: any) {
     op: 'edit_range',
     filePath: p,
     before: Buffer.from(beforeText, 'utf8'),
-    after: Buffer.from(out, 'utf8')
+    after: Buffer.from(out, 'utf8'),
   });
 
   const cwdWarning = checkCwdWarning('edit_range', p, ctx);
@@ -825,13 +752,15 @@ export async function edit_range(ctx: ToolContext, args: any) {
 
 export async function apply_patch(ctx: ToolContext, args: any) {
   const rawPatch = args?.patch;
-  const patchText = typeof rawPatch === 'string' ? rawPatch
-    : (rawPatch != null && typeof rawPatch === 'object' ? JSON.stringify(rawPatch, null, 2) : undefined);
+  const patchText =
+    typeof rawPatch === 'string'
+      ? rawPatch
+      : rawPatch != null && typeof rawPatch === 'object'
+        ? JSON.stringify(rawPatch, null, 2)
+        : undefined;
 
   const rawFiles = Array.isArray(args?.files) ? args.files : [];
-  const files = rawFiles
-    .map((f: any) => (typeof f === 'string' ? f.trim() : ''))
-    .filter(Boolean);
+  const files = rawFiles.map((f: any) => (typeof f === 'string' ? f.trim() : '')).filter(Boolean);
 
   const stripRaw = Number(args?.strip);
   const strip = Number.isFinite(stripRaw) ? Math.max(0, Math.min(5, Math.floor(stripRaw))) : 0;
@@ -865,7 +794,8 @@ export async function apply_patch(ctx: ToolContext, args: any) {
   const cautious = verdicts.filter(({ v }) => v.tier === 'cautious');
   if (cautious.length && !ctx.noConfirm) {
     if (ctx.confirm) {
-      const preview = patchText.length > 4000 ? patchText.slice(0, 4000) + '\n[truncated]' : patchText;
+      const preview =
+        patchText.length > 4000 ? patchText.slice(0, 4000) + '\n[truncated]' : patchText;
       const ok = await ctx.confirm(
         `Apply patch touching ${touched.paths.length} file(s)?\n- ${touched.paths.join('\n- ')}\n\nProceed? (y/N) `,
         { tool: 'apply_patch', args: { files: touched.paths, strip }, diff: preview }
@@ -883,13 +813,29 @@ export async function apply_patch(ctx: ToolContext, args: any) {
   if (ctx.dryRun) {
     const haveGit = !spawnSync('git', ['--version'], { stdio: 'ignore' }).error;
     if (haveGit) {
-      const chk = await runCommandWithStdin('git', ['apply', stripArg, '--check', '--whitespace=nowarn'], patchText, ctx.cwd, maxToolBytes);
-      if (chk.rc !== 0) throw new Error(`apply_patch: git apply --check failed:\n${chk.err || chk.out}`);
+      const chk = await runCommandWithStdin(
+        'git',
+        ['apply', stripArg, '--check', '--whitespace=nowarn'],
+        patchText,
+        ctx.cwd,
+        maxToolBytes
+      );
+      if (chk.rc !== 0)
+        throw new Error(`apply_patch: git apply --check failed:\n${chk.err || chk.out}`);
     } else {
-      const chk = await runCommandWithStdin('patch', [stripArg, '--dry-run', '--batch'], patchText, ctx.cwd, maxToolBytes);
-      if (chk.rc !== 0) throw new Error(`apply_patch: patch --dry-run failed:\n${chk.err || chk.out}`);
+      const chk = await runCommandWithStdin(
+        'patch',
+        [stripArg, '--dry-run', '--batch'],
+        patchText,
+        ctx.cwd,
+        maxToolBytes
+      );
+      if (chk.rc !== 0)
+        throw new Error(`apply_patch: patch --dry-run failed:\n${chk.err || chk.out}`);
     }
-    const redactedPaths = touched.paths.map((rel) => redactPath(resolvePath(ctx, rel), path.resolve(ctx.cwd)));
+    const redactedPaths = touched.paths.map((rel) =>
+      redactPath(resolvePath(ctx, rel), path.resolve(ctx.cwd))
+    );
     return `dry-run: patch would apply cleanly (${touched.paths.length} files): ${redactedPaths.join(', ')}`;
   }
 
@@ -898,7 +844,7 @@ export async function apply_patch(ctx: ToolContext, args: any) {
   for (const abs of absPaths) {
     // Phase 9d: snapshot /etc/ files before editing
     if (ctx.mode === 'sys' && ctx.vault) {
-      await snapshotBeforeEdit(ctx.vault, abs).catch(() => { });
+      await snapshotBeforeEdit(ctx.vault, abs).catch(() => {});
     }
 
     const before = await fs.readFile(abs).catch(() => Buffer.from(''));
@@ -909,16 +855,42 @@ export async function apply_patch(ctx: ToolContext, args: any) {
   // Apply with git apply if available; fallback to patch.
   const haveGit = !spawnSync('git', ['--version'], { stdio: 'ignore' }).error;
   if (haveGit) {
-    const chk = await runCommandWithStdin('git', ['apply', stripArg, '--check', '--whitespace=nowarn'], patchText, ctx.cwd, maxToolBytes);
-    if (chk.rc !== 0) throw new Error(`apply_patch: git apply --check failed:\n${chk.err || chk.out}`);
+    const chk = await runCommandWithStdin(
+      'git',
+      ['apply', stripArg, '--check', '--whitespace=nowarn'],
+      patchText,
+      ctx.cwd,
+      maxToolBytes
+    );
+    if (chk.rc !== 0)
+      throw new Error(`apply_patch: git apply --check failed:\n${chk.err || chk.out}`);
 
-    const app = await runCommandWithStdin('git', ['apply', stripArg, '--whitespace=nowarn'], patchText, ctx.cwd, maxToolBytes);
+    const app = await runCommandWithStdin(
+      'git',
+      ['apply', stripArg, '--whitespace=nowarn'],
+      patchText,
+      ctx.cwd,
+      maxToolBytes
+    );
     if (app.rc !== 0) throw new Error(`apply_patch: git apply failed:\n${app.err || app.out}`);
   } else {
-    const chk = await runCommandWithStdin('patch', [stripArg, '--dry-run', '--batch'], patchText, ctx.cwd, maxToolBytes);
-    if (chk.rc !== 0) throw new Error(`apply_patch: patch --dry-run failed:\n${chk.err || chk.out}`);
+    const chk = await runCommandWithStdin(
+      'patch',
+      [stripArg, '--dry-run', '--batch'],
+      patchText,
+      ctx.cwd,
+      maxToolBytes
+    );
+    if (chk.rc !== 0)
+      throw new Error(`apply_patch: patch --dry-run failed:\n${chk.err || chk.out}`);
 
-    const app = await runCommandWithStdin('patch', [stripArg, '--batch'], patchText, ctx.cwd, maxToolBytes);
+    const app = await runCommandWithStdin(
+      'patch',
+      [stripArg, '--batch'],
+      patchText,
+      ctx.cwd,
+      maxToolBytes
+    );
     if (app.rc !== 0) throw new Error(`apply_patch: patch failed:\n${app.err || app.out}`);
   }
 
@@ -933,14 +905,16 @@ export async function apply_patch(ctx: ToolContext, args: any) {
       op: 'apply_patch',
       filePath: abs,
       before: beforeMap.get(abs) ?? Buffer.from(''),
-      after
+      after,
     });
     replayNotes += replayNote;
 
     cwdWarnings += checkCwdWarning('apply_patch', abs, ctx);
   }
 
-  const redactedPaths = touched.paths.map((rel) => redactPath(resolvePath(ctx, rel), path.resolve(ctx.cwd)));
+  const redactedPaths = touched.paths.map((rel) =>
+    redactPath(resolvePath(ctx, rel), path.resolve(ctx.cwd))
+  );
   // Read-back for each patched file (brief, 3 context lines, max 2 files to avoid bloat)
   let patchReadback = '';
   for (const abs of absPaths.slice(0, 2)) {
@@ -949,8 +923,14 @@ export async function apply_patch(ctx: ToolContext, args: any) {
       const totalLines = content.split(/\r?\n/).length;
       const rp = redactPath(abs, path.resolve(ctx.cwd));
       patchReadback += `\n--- ${rp} (${totalLines} lines) first 20 lines ---\n`;
-      patchReadback += content.split(/\r?\n/).slice(0, 20).map((l, i) => `${i + 1}: ${l}`).join('\n');
-    } catch { /* skip unreadable */ }
+      patchReadback += content
+        .split(/\r?\n/)
+        .slice(0, 20)
+        .map((l, i) => `${i + 1}: ${l}`)
+        .join('\n');
+    } catch {
+      /* skip unreadable */
+    }
   }
   if (absPaths.length > 2) patchReadback += `\n...(${absPaths.length - 2} more files)`;
   return `applied patch (${touched.paths.length} files): ${redactedPaths.join(', ')}${replayNotes}${cwdWarnings}${patchReadback}`;
@@ -1018,7 +998,7 @@ export async function search_files(ctx: ToolContext, args: any) {
           const lines = rgOutput.split(/\r?\n/).filter(Boolean).slice(0, maxResults);
           if (lines.length >= maxResults) lines.push(`[truncated after ${maxResults} results]`);
           // Redact paths in rg output
-          const redactedLines = lines.map(line => {
+          const redactedLines = lines.map((line) => {
             const colonIdx = line.indexOf(':');
             if (colonIdx === -1) return line;
             const filePath = line.substring(0, colonIdx);
@@ -1054,7 +1034,13 @@ export async function search_files(ctx: ToolContext, args: any) {
       if (out.length >= maxResults) return;
       const full = path.join(dir, ent.name);
       if (ent.isDirectory()) {
-        if (ent.name === 'node_modules' || ent.name === '.git' || ent.name === 'dist' || ent.name === 'build') continue;
+        if (
+          ent.name === 'node_modules' ||
+          ent.name === '.git' ||
+          ent.name === 'dist' ||
+          ent.name === 'build'
+        )
+          continue;
         if (depth < 6) await walk(full, depth + 1);
         continue;
       }
@@ -1065,7 +1051,10 @@ export async function search_files(ctx: ToolContext, args: any) {
       if (!rawBuf) continue;
       let isBinary = false;
       for (let bi = 0; bi < Math.min(rawBuf.length, 512); bi++) {
-        if (rawBuf[bi] === 0) { isBinary = true; break; }
+        if (rawBuf[bi] === 0) {
+          isBinary = true;
+          break;
+        }
       }
       if (isBinary) continue;
       const buf: string | null = rawBuf.toString('utf8');
@@ -1104,7 +1093,7 @@ function safeFireAndForget(fn: (() => void | Promise<void>) | undefined): void {
   if (!fn) return;
   try {
     const r = fn();
-    if (r && typeof (r as any).catch === 'function') (r as any).catch(() => { });
+    if (r && typeof (r as any).catch === 'function') (r as any).catch(() => {});
   } catch {
     // best effort only
   }
@@ -1119,7 +1108,10 @@ function makeExecStreamer(ctx: ToolContext) {
 
   const intervalMs = Math.max(50, Math.floor(ctx.toolStreamIntervalMs ?? 750));
   const maxChunkChars = Math.max(80, Math.floor(ctx.toolStreamMaxChunkChars ?? 900));
-  const maxBufferChars = Math.max(maxChunkChars, Math.floor(ctx.toolStreamMaxBufferChars ?? 12_000));
+  const maxBufferChars = Math.max(
+    maxChunkChars,
+    Math.floor(ctx.toolStreamMaxBufferChars ?? 12_000)
+  );
 
   let outBuf = '';
   let errBuf = '';
@@ -1199,7 +1191,9 @@ export async function exec(ctx: ToolContext, args: any) {
     const absExecCwd = path.resolve(cwd);
     if (!isWithinDir(absExecCwd, absCwd)) {
       if (!allowOutsideCwd) {
-        throw new Error(`exec: BLOCKED — cwd "${absExecCwd}" is outside the working directory "${absCwd}". Use relative paths and work within the project directory.`);
+        throw new Error(
+          `exec: BLOCKED — cwd "${absExecCwd}" is outside the working directory "${absCwd}". Use relative paths and work within the project directory.`
+        );
       }
       execCwdWarning = `\n[WARNING] cwd "${absExecCwd}" is outside the working directory "${absCwd}". Proceeding due to ${ctx.approvalMode} mode.`;
     }
@@ -1214,19 +1208,24 @@ export async function exec(ctx: ToolContext, args: any) {
       const cdTarget = path.resolve(cdMatch[2]);
       if (!isWithinDir(cdTarget, absCwd)) {
         if (!allowOutsideCwd) {
-          throw new Error(`exec: BLOCKED — command navigates to "${cdTarget}" which is outside the working directory "${absCwd}". Use relative paths and work within the project directory.`);
+          throw new Error(
+            `exec: BLOCKED — command navigates to "${cdTarget}" which is outside the working directory "${absCwd}". Use relative paths and work within the project directory.`
+          );
         }
         execCwdWarning = `\n[WARNING] Command navigates to "${cdTarget}" which is outside the working directory "${absCwd}". Proceeding due to ${ctx.approvalMode} mode.`;
       }
     }
     // Detect absolute paths in file-creating commands (mkdir, cat >, tee, touch, etc.)
-    const absPathPattern = /(?:mkdir|cat\s*>|tee|touch|cp|mv|rm|rmdir)\s+(?:-\S+\s+)*(['"]?)(\/[^\s'";&|]+|[a-zA-Z]:[\\/][^\s'";&|]*)\1/g;
+    const absPathPattern =
+      /(?:mkdir|cat\s*>|tee|touch|cp|mv|rm|rmdir)\s+(?:-\S+\s+)*(['"]?)(\/[^\s'";&|]+|[a-zA-Z]:[\\/][^\s'";&|]*)\1/g;
     let apMatch: RegExpExecArray | null;
     while ((apMatch = absPathPattern.exec(command)) !== null) {
       const absTarget = path.resolve(apMatch[2]);
       if (!isWithinDir(absTarget, absCwd)) {
         if (!allowOutsideCwd) {
-          throw new Error(`exec: BLOCKED — command targets "${absTarget}" which is outside the working directory "${absCwd}". Use relative paths to work within the project directory.`);
+          throw new Error(
+            `exec: BLOCKED — command targets "${absTarget}" which is outside the working directory "${absCwd}". Use relative paths to work within the project directory.`
+          );
         }
         execCwdWarning = `\n[WARNING] Command targets "${absTarget}" which is outside the working directory "${absCwd}". Proceeding due to ${ctx.approvalMode} mode.`;
       }
@@ -1236,8 +1235,8 @@ export async function exec(ctx: ToolContext, args: any) {
   if (hasBackgroundExecIntent(command)) {
     throw new Error(
       'exec: blocked background command (contains `&`). ' +
-      'Long-running/background jobs can stall one-shot sessions. ' +
-      'Run foreground smoke checks only, or use a dedicated service manager outside this task.'
+        'Long-running/background jobs can stall one-shot sessions. ' +
+        'Run foreground smoke checks only, or use a dedicated service manager outside this task.'
     );
   }
 
@@ -1268,10 +1267,10 @@ export async function exec(ctx: ToolContext, args: any) {
       if (verdict.reason === 'package install/remove') {
         throw new Error(
           `exec: blocked (${verdict.reason}) without --no-confirm/--yolo: ${command}\n` +
-          `STOP: this is a session-level approval restriction. Adding --yolo/--no-confirm inside the shell command does NOT override it. ` +
-          `Re-run the parent session with --no-confirm or --yolo to allow package operations. ` +
-          `Alternatively, the user can install packages manually and re-run this task. ` +
-          `Do NOT use spawn_task to bypass this restriction.`
+            `STOP: this is a session-level approval restriction. Adding --yolo/--no-confirm inside the shell command does NOT override it. ` +
+            `Re-run the parent session with --no-confirm or --yolo to allow package operations. ` +
+            `Alternatively, the user can install packages manually and re-run this task. ` +
+            `Do NOT use spawn_task to bypass this restriction.`
         );
       }
       throw new Error(`exec: blocked (${verdict.reason}) without --no-confirm/--yolo: ${command}`);
@@ -1288,7 +1287,7 @@ export async function exec(ctx: ToolContext, args: any) {
       if (probe.status !== 0) {
         throw new Error(
           'exec: sudo requires a TTY for password input, but stdin is not a TTY. ' +
-          'Options: run idlehands interactively, configure NOPASSWD for this command, or pre-cache sudo credentials.'
+            'Options: run idlehands interactively, configure NOPASSWD for this command, or pre-cache sudo credentials.'
         );
       }
     } catch (e: any) {
@@ -1304,7 +1303,9 @@ export async function exec(ctx: ToolContext, args: any) {
   if (/^\s*sudo\s/.test(command) && process.stdin.isTTY) {
     const pty = await loadNodePty();
     if (!pty) {
-      throw new Error('exec: interactive sudo requires node-pty, but it is not installed. Install optional dependency `node-pty` (build tools: python3, make, g++) or use non-interactive sudo (NOPASSWD/cached credentials).');
+      throw new Error(
+        'exec: interactive sudo requires node-pty, but it is not installed. Install optional dependency `node-pty` (build tools: python3, make, g++) or use non-interactive sudo (NOPASSWD/cached credentials).'
+      );
     }
     return await execWithPty({
       pty,
@@ -1319,7 +1320,9 @@ export async function exec(ctx: ToolContext, args: any) {
   }
 
   // Validate cwd exists — spawn throws a cryptic ENOENT if it doesn't.
-  try { await fs.access(cwd); } catch {
+  try {
+    await fs.access(cwd);
+  } catch {
     throw new Error(`exec: working directory does not exist: ${cwd}`);
   }
 
@@ -1347,17 +1350,25 @@ export async function exec(ctx: ToolContext, args: any) {
       // detached:true places the shell in its own process group.
       process.kill(-pid, 'SIGKILL');
     } catch {
-      try { child.kill('SIGKILL'); } catch { }
+      try {
+        child.kill('SIGKILL');
+      } catch {}
     }
   };
 
-  const killTimer = setTimeout(() => {
-    killed = true;
-    killProcessGroup();
-  }, Math.max(1, timeout) * 1000);
+  const killTimer = setTimeout(
+    () => {
+      killed = true;
+      killProcessGroup();
+    },
+    Math.max(1, timeout) * 1000
+  );
 
   // §11: kill child process if parent abort signal fires (Ctrl+C).
-  const onAbort = () => { killed = true; killProcessGroup(); };
+  const onAbort = () => {
+    killed = true;
+    killProcessGroup();
+  };
   ctx.signal?.addEventListener('abort', onAbort, { once: true });
 
   const pushCapped = (chunks: Buffer[], buf: Buffer, kind: 'out' | 'err') => {
@@ -1390,7 +1401,11 @@ export async function exec(ctx: ToolContext, args: any) {
     child.on('error', (err: NodeJS.ErrnoException) => {
       clearTimeout(killTimer);
       ctx.signal?.removeEventListener('abort', onAbort);
-      reject(new Error(`exec: failed to spawn shell (cwd=${cwd}): ${err.message} (${err.code ?? 'unknown'})`));
+      reject(
+        new Error(
+          `exec: failed to spawn shell (cwd=${cwd}): ${err.message} (${err.code ?? 'unknown'})`
+        )
+      );
     });
     child.on('close', (code) => resolve(code ?? 0));
   });
@@ -1402,8 +1417,12 @@ export async function exec(ctx: ToolContext, args: any) {
   const outRaw = stripAnsi(Buffer.concat(outChunks).toString('utf8'));
   const errRaw = stripAnsi(Buffer.concat(errChunks).toString('utf8'));
 
-  const outLines = collapseStackTraces(dedupeRepeats(outRaw.split(/\r?\n/))).join('\n').trimEnd();
-  const errLines = collapseStackTraces(dedupeRepeats(errRaw.split(/\r?\n/))).join('\n').trimEnd();
+  const outLines = collapseStackTraces(dedupeRepeats(outRaw.split(/\r?\n/)))
+    .join('\n')
+    .trimEnd();
+  const errLines = collapseStackTraces(dedupeRepeats(errRaw.split(/\r?\n/)))
+    .join('\n')
+    .trimEnd();
 
   const outT = truncateBytes(outLines, maxBytes, outSeen);
   const errT = truncateBytes(errLines, maxBytes, errSeen);
@@ -1417,10 +1436,18 @@ export async function exec(ctx: ToolContext, args: any) {
   // If we had to cap capture but the post-processed output ended up short
   // (e.g., massive repeated output collapsed), still surface that truncation.
   if (capOut && !outT.truncated) {
-    outText = truncateBytes(outText + `\n[capture truncated, ${outSeen} bytes total]`, maxBytes, outSeen).text;
+    outText = truncateBytes(
+      outText + `\n[capture truncated, ${outSeen} bytes total]`,
+      maxBytes,
+      outSeen
+    ).text;
   }
   if (capErr && !errT.truncated) {
-    errText = truncateBytes(errText + `\n[capture truncated, ${errSeen} bytes total]`, maxBytes, errSeen).text;
+    errText = truncateBytes(
+      errText + `\n[capture truncated, ${errSeen} bytes total]`,
+      maxBytes,
+      errSeen
+    ).text;
   }
 
   if (killed) {
@@ -1431,9 +1458,11 @@ export async function exec(ctx: ToolContext, args: any) {
   // model understands the result and doesn't retry the same command in a loop.
   if (!outText && !errText && !killed) {
     if (rc === 0) {
-      outText = '[command completed successfully with no output. Do NOT retry — the command worked but produced no output. Move on to the next step.]';
+      outText =
+        '[command completed successfully with no output. Do NOT retry — the command worked but produced no output. Move on to the next step.]';
     } else if (rc === 1) {
-      outText = '[no matches found — the command returned zero results (exit code 1). Do NOT retry this command with the same arguments. The target simply has no matches. Move on or try different search terms/parameters.]';
+      outText =
+        '[no matches found — the command returned zero results (exit code 1). Do NOT retry this command with the same arguments. The target simply has no matches. Move on or try different search terms/parameters.]';
     } else {
       outText = `[command exited with code ${rc} and produced no output. Do NOT retry with identical arguments — diagnose the issue or try a different approach.]`;
     }
@@ -1444,12 +1473,12 @@ export async function exec(ctx: ToolContext, args: any) {
     out: outText,
     err: errText,
     truncated: outT.truncated || errT.truncated || capOut || capErr,
-    ...(execCwdWarning && { warnings: [execCwdWarning.trim()] })
+    ...(execCwdWarning && { warnings: [execCwdWarning.trim()] }),
   };
 
   // Phase 9d: auto-note system changes in sys mode
   if (ctx.mode === 'sys' && ctx.vault && rc === 0) {
-    autoNoteSysChange(ctx.vault, command, outText).catch(() => { });
+    autoNoteSysChange(ctx.vault, command, outText).catch(() => {});
   }
 
   return JSON.stringify(result);
@@ -1527,14 +1556,20 @@ async function execWithPty(args: ExecWithPtyArgs): Promise<string> {
   onDataDisposable?.dispose?.();
 
   const raw = stripAnsi(chunks.join(''));
-  const lines = collapseStackTraces(dedupeRepeats(raw.split(/\r?\n/))).join('\n').trimEnd();
+  const lines = collapseStackTraces(dedupeRepeats(raw.split(/\r?\n/)))
+    .join('\n')
+    .trimEnd();
   const outT = truncateBytes(lines, maxBytes, seen);
 
   let outText = outT.text;
   const cap = seen > captured;
 
   if (cap && !outT.truncated) {
-    outText = truncateBytes(outText + `\n[capture truncated, ${seen} bytes total]`, maxBytes, seen).text;
+    outText = truncateBytes(
+      outText + `\n[capture truncated, ${seen} bytes total]`,
+      maxBytes,
+      seen
+    ).text;
   }
 
   let errText = '';
@@ -1545,9 +1580,11 @@ async function execWithPty(args: ExecWithPtyArgs): Promise<string> {
   // Semantic hints for empty output (same as non-pty exec path).
   if (!outText && !errText && !killed) {
     if (rc === 0) {
-      outText = '[command completed successfully with no output. Do NOT retry — the command worked but produced no output. Move on to the next step.]';
+      outText =
+        '[command completed successfully with no output. Do NOT retry — the command worked but produced no output. Move on to the next step.]';
     } else if (rc === 1) {
-      outText = '[no matches found — the command returned zero results (exit code 1). Do NOT retry this command with the same arguments. The target simply has no matches. Move on or try different search terms/parameters.]';
+      outText =
+        '[no matches found — the command returned zero results (exit code 1). Do NOT retry this command with the same arguments. The target simply has no matches. Move on or try different search terms/parameters.]';
     } else {
       outText = `[command exited with code ${rc} and produced no output. Do NOT retry with identical arguments — diagnose the issue or try a different approach.]`;
     }
@@ -1558,7 +1595,7 @@ async function execWithPty(args: ExecWithPtyArgs): Promise<string> {
     out: outText,
     err: errText,
     truncated: outT.truncated || cap || killed,
-    ...(execCwdWarning && { warnings: [execCwdWarning.trim()] })
+    ...(execCwdWarning && { warnings: [execCwdWarning.trim()] }),
   };
   return JSON.stringify(result);
 }
@@ -1618,7 +1655,9 @@ async function hasRg() {
     try {
       await fs.access('/usr/bin/rg');
       return true;
-    } catch { /* skip */ }
+    } catch {
+      /* skip */
+    }
   }
 
   // try PATH
@@ -1650,7 +1689,7 @@ function bigramSimilarity(a: string, b: string): number {
   for (const [k, v] of aB) {
     overlap += Math.min(v, bB.get(k) ?? 0);
   }
-  const total = (a.length - 1) + (b.length - 1);
+  const total = a.length - 1 + (b.length - 1);
   return total > 0 ? (2 * overlap) / total : 0;
 }
 
@@ -1678,8 +1717,12 @@ const SYS_CHANGE_PATTERNS = [
 ];
 
 /** Auto-note significant system changes to Vault (sys mode only). */
-async function autoNoteSysChange(vault: VaultStore, command: string, output: string): Promise<void> {
-  const isSignificant = SYS_CHANGE_PATTERNS.some(p => p.test(command));
+async function autoNoteSysChange(
+  vault: VaultStore,
+  command: string,
+  output: string
+): Promise<void> {
+  const isSignificant = SYS_CHANGE_PATTERNS.some((p) => p.test(command));
   if (!isSignificant) return;
 
   const summary = output.length > 200 ? output.slice(0, 197) + '...' : output;

@@ -1,5 +1,5 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
 
 import {
   createToolLoopState,
@@ -176,13 +176,28 @@ describe('tool-loop-detection', () => {
     const b = { path: 'b.ts' };
 
     recordToolCall(state, 'read_file', a, 'a1');
-    recordToolCallOutcome(state, { toolName: 'read_file', toolParams: a, toolCallId: 'a1', result: 'A' });
+    recordToolCallOutcome(state, {
+      toolName: 'read_file',
+      toolParams: a,
+      toolCallId: 'a1',
+      result: 'A',
+    });
 
     recordToolCall(state, 'read_file', b, 'b1');
-    recordToolCallOutcome(state, { toolName: 'read_file', toolParams: b, toolCallId: 'b1', result: 'B' });
+    recordToolCallOutcome(state, {
+      toolName: 'read_file',
+      toolParams: b,
+      toolCallId: 'b1',
+      result: 'B',
+    });
 
     recordToolCall(state, 'read_file', a, 'a2');
-    recordToolCallOutcome(state, { toolName: 'read_file', toolParams: a, toolCallId: 'a2', result: 'A' });
+    recordToolCallOutcome(state, {
+      toolName: 'read_file',
+      toolParams: a,
+      toolCallId: 'a2',
+      result: 'A',
+    });
 
     const detected = detectToolCallLoop(state, 'read_file', a, {
       warningThreshold: 3,

@@ -5,6 +5,7 @@
  */
 
 import { formatDurationMs } from '../shared/format.js';
+
 import type {
   AntonRunResult,
   AntonProgress,
@@ -78,9 +79,10 @@ export function formatTaskHeartbeat(progress: AntonProgress): string {
   const task = progress.currentTask ? progress.currentTask : 'unknown task';
   const attempt = progress.currentAttempt ?? 1;
   const elapsed = formatDuration(progress.elapsedMs);
-  const eta = progress.estimatedRemainingMs !== undefined
-    ? ` · ETA ~${formatDuration(progress.estimatedRemainingMs)}`
-    : '';
+  const eta =
+    progress.estimatedRemainingMs !== undefined
+      ? ` · ETA ~${formatDuration(progress.estimatedRemainingMs)}`
+      : '';
 
   return `⏳ Still working: ${task} (attempt ${attempt})\n${bar}\nElapsed: ${elapsed}${eta}`;
 }
@@ -93,7 +95,8 @@ export function formatTaskEnd(
   result: AntonAttempt,
   _progress: AntonProgress
 ): string {
-  const emoji = result.status === 'passed' ? '✅' : result.status === ('decomposed' as string) ? '🔀' : '❌';
+  const emoji =
+    result.status === 'passed' ? '✅' : result.status === ('decomposed' as string) ? '🔀' : '❌';
   const duration = formatDuration(result.durationMs);
   const tokens = formatTokens(result.tokensUsed);
 
@@ -205,10 +208,7 @@ export function formatCompactionEvent(
 /**
  * Format verification detail message for Discord.
  */
-export function formatVerificationDetail(
-  taskText: string,
-  v: AntonVerificationResult
-): string {
+export function formatVerificationDetail(taskText: string, v: AntonVerificationResult): string {
   const task = taskText.length > 60 ? taskText.slice(0, 60) + '...' : taskText;
   const parts: string[] = [];
   if (v.l1_build !== undefined) parts.push(`build:${v.l1_build ? '✅' : '❌'}`);

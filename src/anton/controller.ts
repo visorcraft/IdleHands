@@ -6,6 +6,7 @@
  */
 
 import type { AgentSession } from '../agent.js';
+import { isToolLoopBreak, AUTO_CONTINUE_PROMPT } from '../bot/auto-continue.js';
 import {
   ensureCleanWorkingTree,
   getWorkingDiff,
@@ -33,7 +34,6 @@ import {
   insertSubTasks,
   autoCompleteAncestors,
 } from './parser.js';
-import { buildAntonPrompt, parseAntonResult, classifyTaskComplexity } from './prompt.js';
 import {
   ensureAgentsTasksDir,
   makeUniqueTaskPlanFilename,
@@ -43,6 +43,7 @@ import {
   parseRequirementsReviewResult,
   ensurePlanFileExistsOrBootstrap,
 } from './preflight.js';
+import { buildAntonPrompt, parseAntonResult, classifyTaskComplexity } from './prompt.js';
 import { formatDryRunPlan } from './reporter.js';
 import {
   buildSessionConfig,
@@ -62,7 +63,6 @@ import type {
   AntonPreflightRecord,
 } from './types.js';
 import { captureLintBaseline, detectVerificationCommands, runVerification } from './verifier.js';
-import { isToolLoopBreak, AUTO_CONTINUE_PROMPT } from '../bot/auto-continue.js';
 
 export interface RunAntonOpts {
   config: AntonRunConfig;
@@ -250,7 +250,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
       void touchAntonLock();
       try {
         progress.onHeartbeat?.();
-      } catch { }
+      } catch {}
     }, 5000);
 
     // 2. Parse task file
@@ -354,7 +354,9 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             parts.push(v.commandOutput);
             parts.push('=== End of error output ===');
             parts.push('');
-            parts.push('IMPORTANT: Your previous code changes are STILL IN PLACE — do NOT rewrite from scratch.');
+            parts.push(
+              'IMPORTANT: Your previous code changes are STILL IN PLACE — do NOT rewrite from scratch.'
+            );
             parts.push('1. Read the specific files listed in the errors above.');
             parts.push('2. Fix ONLY the reported errors (e.g. import ordering, missing types).');
             parts.push('3. Run the lint/build/test command yourself to verify before completing.');
@@ -413,7 +415,11 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           break mainLoop;
         }
 
-        progress.onTaskSkip(currentTask, `${maxIdentical} consecutive identical failures`, currentProgress);
+        progress.onTaskSkip(
+          currentTask,
+          `${maxIdentical} consecutive identical failures`,
+          currentProgress
+        );
 
         const skipAttempt: AntonAttempt = {
           taskKey: currentTask.key,
@@ -456,6 +462,10 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
       }
 
       const attemptNumber = retries + 1;
+
+      // Publish active task context early so /anton status + heartbeat keep working
+      // during preflight stages (discovery/review), not only implementation.
+      progress.onTaskStart(currentTask, attemptNumber, currentProgress);
 
       // Optional preflight pipeline: discovery -> requirements review.
       // Runs on first attempt for each task. Retries are stage-local to avoid churn.
@@ -513,7 +523,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               ),
             ]);
 
-            const discoveryTokens = discoverySession.usage.prompt + discoverySession.usage.completion;
+            const discoveryTokens =
+              discoverySession.usage.prompt + discoverySession.usage.completion;
             totalTokens += discoveryTokens;
             const discovery = parseDiscoveryResult(discoveryRes.text, config.projectDir);
 
@@ -750,7 +761,6 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
       }
 
       progress.onStage?.('🛠️ Implementation: executing vetted plan...');
-      progress.onTaskStart(currentTask, attemptNumber, currentProgress);
 
       let session: AgentSession | undefined;
       let attempt: AntonAttempt;
@@ -765,7 +775,9 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         const sessionConfig = isComplexDecompose
           ? buildDecomposeConfig(idlehandsConfig, config)
           : buildSessionConfig(idlehandsConfig, config);
-        console.error(`[anton:debug] task="${currentTask.text}" depth=${currentTask.depth} complexity=${taskComplexity} isComplexDecompose=${isComplexDecompose} no_tools=${!!sessionConfig.no_tools} max_iterations=${sessionConfig.max_iterations}`);
+        console.error(
+          `[anton:debug] task="${currentTask.text}" depth=${currentTask.depth} complexity=${taskComplexity} isComplexDecompose=${isComplexDecompose} no_tools=${!!sessionConfig.no_tools} max_iterations=${sessionConfig.max_iterations}`
+        );
         session = await createSessionFn(sessionConfig, apiKey);
 
         // Set up timeout + stop propagation for the currently running attempt.
@@ -777,7 +789,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           controller.abort();
           try {
             session?.cancel();
-          } catch { }
+          } catch {}
         };
 
         const timeoutHandle = setTimeout(() => {
@@ -828,22 +840,22 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             if (effectiveRetryContext) {
               if (trimPass === 0) {
                 // First trim: cut command output to 1000 chars
-                effectiveRetryContext = effectiveRetryContext
-                  .replace(
-                    /=== Full error output from failed commands ===[\s\S]*?=== End of error output ===/,
-                    (m) => {
-                      const inner = m.slice(m.indexOf('===\n') + 4, m.lastIndexOf('\n==='));
-                      return `=== Error output (trimmed) ===\n${inner.slice(0, 1000)}\n...(truncated)\n=== End of error output ===`;
-                    }
-                  );
-                console.error(`[anton:budget] trimPass=1: trimmed retry command output to 1000 chars`);
+                effectiveRetryContext = effectiveRetryContext.replace(
+                  /=== Full error output from failed commands ===[\s\S]*?=== End of error output ===/,
+                  (m) => {
+                    const inner = m.slice(m.indexOf('===\n') + 4, m.lastIndexOf('\n==='));
+                    return `=== Error output (trimmed) ===\n${inner.slice(0, 1000)}\n...(truncated)\n=== End of error output ===`;
+                  }
+                );
+                console.error(
+                  `[anton:budget] trimPass=1: trimmed retry command output to 1000 chars`
+                );
               } else if (trimPass === 1) {
                 // Second trim: drop command output entirely, keep just summary
-                effectiveRetryContext = effectiveRetryContext
-                  .replace(
-                    /\n*=== (Full e|E)rror output[\s\S]*?=== End of error output ===\n*/,
-                    '\n(Full error output omitted due to prompt budget — run the lint/test command to see errors)\n'
-                  );
+                effectiveRetryContext = effectiveRetryContext.replace(
+                  /\n*=== (Full e|E)rror output[\s\S]*?=== End of error output ===\n*/,
+                  '\n(Full error output omitted due to prompt budget — run the lint/test command to see errors)\n'
+                );
                 console.error(`[anton:budget] trimPass=2: dropped retry command output entirely`);
               } else {
                 // Third trim: drop retry context entirely
@@ -866,21 +878,41 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           let recoveredInfra = false;
           const askHooks = {
             signal: controller.signal,
-            onToolLoop: (event: { level: string; toolName: string; count: number; message: string }) => {
-              try { progress.onToolLoop?.(currentTask.text, event); } catch { /* best effort */ }
+            onToolLoop: (event: {
+              level: string;
+              toolName: string;
+              count: number;
+              message: string;
+            }) => {
+              try {
+                progress.onToolLoop?.(currentTask.text, event);
+              } catch {
+                /* best effort */
+              }
             },
-            onCompaction: (event: { droppedMessages: number; freedTokens: number; summaryUsed: boolean }) => {
-              try { progress.onCompaction?.(currentTask.text, event); } catch { /* best effort */ }
+            onCompaction: (event: {
+              droppedMessages: number;
+              freedTokens: number;
+              summaryUsed: boolean;
+            }) => {
+              try {
+                progress.onCompaction?.(currentTask.text, event);
+              } catch {
+                /* best effort */
+              }
             },
             onTurnEnd: (stats: { turn: number; toolCalls: number }) => {
-              const tokens = session ? (session.usage.prompt + session.usage.completion) : 0;
-              console.error(`[anton:turn] task="${currentTask.text.slice(0, 40)}" turn=${stats.turn} toolCalls=${stats.toolCalls} tokens=${tokens}`);
+              const tokens = session ? session.usage.prompt + session.usage.completion : 0;
+              console.error(
+                `[anton:turn] task="${currentTask.text.slice(0, 40)}" turn=${stats.turn} toolCalls=${stats.toolCalls} tokens=${tokens}`
+              );
             },
           };
           let toolLoopRetries = 0;
-          const toolLoopMaxRetries = idlehandsConfig.tool_loop_auto_continue?.enabled !== false
-            ? (idlehandsConfig.tool_loop_auto_continue?.max_retries ?? 3)
-            : 0;
+          const toolLoopMaxRetries =
+            idlehandsConfig.tool_loop_auto_continue?.enabled !== false
+              ? (idlehandsConfig.tool_loop_auto_continue?.max_retries ?? 3)
+              : 0;
           while (true) {
             try {
               result = await session.ask(prompt, askHooks as any);
@@ -970,11 +1002,20 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
 
           // Parse structured result
           const agentResult = parseAntonResult(result.text);
-          console.error(`[anton:result] task="${currentTask.text.slice(0, 50)}" status=${agentResult.status} reason=${agentResult.reason ?? 'none'} subtasks=${agentResult.subtasks.length} tokens=${tokensUsed} duration=${Math.round(durationMs / 1000)}s`);
+          console.error(
+            `[anton:result] task="${currentTask.text.slice(0, 50)}" status=${agentResult.status} reason=${agentResult.reason ?? 'none'} subtasks=${agentResult.subtasks.length} tokens=${tokensUsed} duration=${Math.round(durationMs / 1000)}s`
+          );
           if (isComplexDecompose) {
-            console.error(`[anton:debug] decompose result: status=${agentResult.status} subtasks=${agentResult.subtasks.length} reason=${agentResult.reason ?? 'none'}`);
-            if (agentResult.status === 'blocked' && agentResult.reason === 'Agent did not emit structured result') {
-              console.error(`[anton:debug] decompose raw output (first 500 chars): ${(result.text ?? '').slice(0, 500)}`);
+            console.error(
+              `[anton:debug] decompose result: status=${agentResult.status} subtasks=${agentResult.subtasks.length} reason=${agentResult.reason ?? 'none'}`
+            );
+            if (
+              agentResult.status === 'blocked' &&
+              agentResult.reason === 'Agent did not emit structured result'
+            ) {
+              console.error(
+                `[anton:debug] decompose raw output (first 500 chars): ${(result.text ?? '').slice(0, 500)}`
+              );
             }
           }
 
@@ -1014,13 +1055,19 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                 await restoreTrackedChanges(config.projectDir);
 
                 if (config.aggressiveCleanOnFail) {
-                  console.error(`[anton] Removing all untracked files (aggressiveCleanOnFail=true)...`);
+                  console.error(
+                    `[anton] Removing all untracked files (aggressiveCleanOnFail=true)...`
+                  );
                   await cleanUntracked(config.projectDir);
                 } else {
                   const currentUntracked = getUntrackedFiles(config.projectDir);
-                  const newlyCreated = currentUntracked.filter((f) => !initialUntrackedFiles.has(f));
+                  const newlyCreated = currentUntracked.filter(
+                    (f) => !initialUntrackedFiles.has(f)
+                  );
                   if (newlyCreated.length > 0) {
-                    console.error(`[anton] Removing ${newlyCreated.length} newly created files: ${newlyCreated.slice(0, 5).join(', ')}${newlyCreated.length > 5 ? '...' : ''}`);
+                    console.error(
+                      `[anton] Removing ${newlyCreated.length} newly created files: ${newlyCreated.slice(0, 5).join(', ')}${newlyCreated.length > 5 ? '...' : ''}`
+                    );
                     removeUntrackedFiles(config.projectDir, newlyCreated);
                   }
                 }
@@ -1039,25 +1086,31 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               baselineLintErrorCount,
               createVerifySession: config.verifyAi
                 ? async () => {
-                  const verifyConfig = buildVerifyConfig(idlehandsConfig, config);
-                  const session = await createSessionFn(verifyConfig, apiKey);
-                  return {
-                    ask: async (prompt: string) => {
-                      const result = await session.ask(prompt);
-                      return result.text;
-                    },
-                    close: () => session.close(),
-                  };
-                }
+                    const verifyConfig = buildVerifyConfig(idlehandsConfig, config);
+                    const session = await createSessionFn(verifyConfig, apiKey);
+                    return {
+                      ask: async (prompt: string) => {
+                        const result = await session.ask(prompt);
+                        return result.text;
+                      },
+                      close: () => session.close(),
+                    };
+                  }
                 : undefined,
             });
 
             // Log verification details
-            console.error(`[anton:verify] task="${currentTask.text.slice(0, 50)}" passed=${verification.passed} l1_build=${verification.l1_build ?? 'n/a'} l1_test=${verification.l1_test ?? 'n/a'} l1_lint=${verification.l1_lint ?? 'n/a'} l2_ai=${verification.l2_ai ?? 'n/a'}`);
+            console.error(
+              `[anton:verify] task="${currentTask.text.slice(0, 50)}" passed=${verification.passed} l1_build=${verification.l1_build ?? 'n/a'} l1_test=${verification.l1_test ?? 'n/a'} l1_lint=${verification.l1_lint ?? 'n/a'} l2_ai=${verification.l2_ai ?? 'n/a'}`
+            );
             if (verification.l2_reason) {
               console.error(`[anton:verify] L2 reason: ${verification.l2_reason.slice(0, 200)}`);
             }
-            try { progress.onVerification?.(currentTask.text, verification); } catch { /* best effort */ }
+            try {
+              progress.onVerification?.(currentTask.text, verification);
+            } catch {
+              /* best effort */
+            }
 
             if (verification.passed) {
               status = 'passed';
@@ -1087,13 +1140,19 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                 await restoreTrackedChanges(config.projectDir);
 
                 if (config.aggressiveCleanOnFail) {
-                  console.error(`[anton] Removing all untracked files (aggressiveCleanOnFail=true)...`);
+                  console.error(
+                    `[anton] Removing all untracked files (aggressiveCleanOnFail=true)...`
+                  );
                   await cleanUntracked(config.projectDir);
                 } else {
                   const currentUntracked = getUntrackedFiles(config.projectDir);
-                  const newlyCreated = currentUntracked.filter((f) => !initialUntrackedFiles.has(f));
+                  const newlyCreated = currentUntracked.filter(
+                    (f) => !initialUntrackedFiles.has(f)
+                  );
                   if (newlyCreated.length > 0) {
-                    console.error(`[anton] Removing ${newlyCreated.length} newly created files: ${newlyCreated.slice(0, 5).join(', ')}${newlyCreated.length > 5 ? '...' : ''}`);
+                    console.error(
+                      `[anton] Removing ${newlyCreated.length} newly created files: ${newlyCreated.slice(0, 5).join(', ')}${newlyCreated.length > 5 ? '...' : ''}`
+                    );
                     removeUntrackedFiles(config.projectDir, newlyCreated);
                   }
                 }
@@ -1118,7 +1177,9 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         } catch (error) {
           const isTimeout = controller.signal.aborted;
           const errMsg = error instanceof Error ? error.message : String(error);
-          console.error(`[anton:debug] task="${currentTask.key}" error: ${errMsg} (timeout=${isTimeout}, tokens=${session.usage.prompt + session.usage.completion})`);
+          console.error(
+            `[anton:debug] task="${currentTask.key}" error: ${errMsg} (timeout=${isTimeout}, tokens=${session.usage.prompt + session.usage.completion})`
+          );
           attempt = {
             taskKey: currentTask.key,
             taskText: currentTask.text,
@@ -1133,9 +1194,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
 
           totalTokens += attempt.tokensUsed;
           // Log error and rollback
-          console.error(
-            `[anton] Task "${currentTask.text.slice(0, 50)}" error: ${attempt.error}`
-          );
+          console.error(`[anton] Task "${currentTask.text.slice(0, 50)}" error: ${attempt.error}`);
 
           if (config.rollbackOnFail) {
             try {
@@ -1143,13 +1202,17 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               await restoreTrackedChanges(config.projectDir);
 
               if (config.aggressiveCleanOnFail) {
-                console.error(`[anton] Removing all untracked files (aggressiveCleanOnFail=true)...`);
+                console.error(
+                  `[anton] Removing all untracked files (aggressiveCleanOnFail=true)...`
+                );
                 await cleanUntracked(config.projectDir);
               } else {
                 const currentUntracked = getUntrackedFiles(config.projectDir);
                 const newlyCreated = currentUntracked.filter((f) => !initialUntrackedFiles.has(f));
                 if (newlyCreated.length > 0) {
-                  console.error(`[anton] Removing ${newlyCreated.length} newly created files: ${newlyCreated.slice(0, 5).join(', ')}${newlyCreated.length > 5 ? '...' : ''}`);
+                  console.error(
+                    `[anton] Removing ${newlyCreated.length} newly created files: ${newlyCreated.slice(0, 5).join(', ')}${newlyCreated.length > 5 ? '...' : ''}`
+                  );
                   removeUntrackedFiles(config.projectDir, newlyCreated);
                 }
               }
@@ -1217,7 +1280,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
       // break when maxRetriesPerTask is reached (if skipOnFail is false).
       // Previously this broke immediately on the first failure, preventing
       // the AI from fixing verification errors (e.g. lint) on retry.
-      const isFail = (attempt.status === 'failed' || attempt.status === 'error');
+      const isFail = attempt.status === 'failed' || attempt.status === 'error';
       if (isFail && !config.skipOnFail) {
         const retries = taskRetryCount.get(currentTask.key) || 0;
         if (retries >= config.maxRetriesPerTask) {

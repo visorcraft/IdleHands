@@ -1,15 +1,10 @@
-import crypto from 'node:crypto';
+import { strict as assert } from 'node:assert';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { describe, it, beforeEach, afterEach } from 'node:test';
-import { strict as assert } from 'node:assert';
+import { describe, it } from 'node:test';
 
 import { SecretsStore, resolveSecretRef } from '../dist/runtime/secrets.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // Helper to create isolated temp directories per-test
 async function withTempDir(fn: (dir: string) => Promise<void>) {

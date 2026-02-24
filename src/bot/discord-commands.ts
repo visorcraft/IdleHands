@@ -9,19 +9,17 @@ import path from 'node:path';
 
 import type { Message } from 'discord.js';
 
-import { firstToken } from '../cli/command-utils.js';
 import type { BotDiscordConfig, IdlehandsConfig } from '../types.js';
 import { PKG_VERSION } from '../utils.js';
 
+import { shouldAutoPinBeforeAntonStart } from './anton-auto-pin.js';
 import { formatMarkdown } from './command-format.js';
 import {
-  versionCommand,
   startCommand,
   helpCommand,
   modelCommand,
   compactCommand,
   statusCommand,
-  watchdogCommand,
   dirShowCommand,
   approvalShowCommand,
   approvalSetCommand,
@@ -41,16 +39,8 @@ import {
   antonCommand,
   type ManagedLike,
 } from './command-logic.js';
-import {
-  detectRepoCandidates,
-  expandHome,
-  isPathAllowed,
-} from './dir-guard.js';
-import {
-  splitDiscord,
-} from './discord-routing.js';
-
-// Type-only import to avoid circular runtime dependency
+import { detectRepoCandidates, expandHome, isPathAllowed } from './dir-guard.js';
+import { splitDiscord } from './discord-routing.js';
 import type { ManagedSession } from './discord.js';
 
 export interface DiscordCommandContext {
@@ -69,7 +59,7 @@ export interface DiscordCommandContext {
 async function sendResult(
   msg: Message,
   sendUserVisible: DiscordCommandContext['sendUserVisible'],
-  result: Parameters<typeof formatMarkdown>[0],
+  result: Parameters<typeof formatMarkdown>[0]
 ): Promise<void> {
   const text = formatMarkdown(result);
   if (!text) return;
@@ -87,7 +77,17 @@ export async function handleTextCommand(
   content: string,
   ctx: DiscordCommandContext
 ): Promise<boolean> {
-  const { sendUserVisible, cancelActive, recreateSession, watchdogStatusText, defaultDir, config, botConfig, approvalMode, maxQueue } = ctx;
+  const {
+    sendUserVisible,
+    cancelActive,
+    recreateSession,
+    watchdogStatusText,
+    defaultDir,
+    config,
+    botConfig,
+    approvalMode,
+    maxQueue,
+  } = ctx;
   const m = managed as unknown as ManagedLike;
   const send = (r: Parameters<typeof formatMarkdown>[0]) => sendResult(msg, sendUserVisible, r);
 
@@ -98,14 +98,16 @@ export async function handleTextCommand(
   }
 
   if (content === '/start') {
-    await send(startCommand({
-      model: managed.session.model,
-      endpoint: managed.config.endpoint || '?',
-      defaultDir: managed.config.dir || defaultDir,
-      agentName: managed.agentPersona
-        ? (managed.agentPersona.display_name || managed.agentId)
-        : undefined,
-    }));
+    await send(
+      startCommand({
+        model: managed.session.model,
+        endpoint: managed.config.endpoint || '?',
+        defaultDir: managed.config.dir || defaultDir,
+        agentName: managed.agentPersona
+          ? managed.agentPersona.display_name || managed.agentId
+          : undefined,
+      })
+    );
     return true;
   }
 
@@ -158,9 +160,7 @@ export async function handleTextCommand(
     await recreateSession(managed, cfg);
     managed.dirPinned = true;
     managed.repoCandidates = repoCandidates;
-    await sendUserVisible(msg, `✅ Working directory pinned to \`${resolvedDir}\``).catch(
-      () => {}
-    );
+    await sendUserVisible(msg, `✅ Working directory pinned to \`${resolvedDir}\``).catch(() => {});
     return true;
   }
 
@@ -219,9 +219,10 @@ export async function handleTextCommand(
     await recreateSession(managed, cfg);
     managed.dirPinned = false;
     managed.repoCandidates = repoCandidates;
-    await sendUserVisible(msg, `✅ Directory unpinned. Working directory remains at \`${resolvedDir}\``).catch(
-      () => {}
-    );
+    await sendUserVisible(
+      msg,
+      `✅ Directory unpinned. Working directory remains at \`${resolvedDir}\``
+    ).catch(() => {});
     return true;
   }
 
@@ -295,10 +296,12 @@ export async function handleTextCommand(
   }
 
   if (content === '/agents') {
-    await send(agentsCommand(m, {
-      agents: botConfig.agents,
-      routing: botConfig.routing,
-    }));
+    await send(
+      agentsCommand(m, {
+        agents: botConfig.agents,
+        routing: botConfig.routing,
+      })
+    );
     return true;
   }
 
@@ -344,14 +347,18 @@ export async function handleTextCommand(
   if (content === '/git_status') {
     const cwd = managed.config.dir || defaultDir;
     if (!cwd) {
-      await sendUserVisible(msg, 'No working directory set. Use `/dir` to set one.').catch(() => {});
+      await sendUserVisible(msg, 'No working directory set. Use `/dir` to set one.').catch(
+        () => {}
+      );
       return true;
     }
 
     try {
       await send(await gitStatusCommand(cwd));
     } catch (e: any) {
-      await sendUserVisible(msg, `❌ git status failed: ${e?.message ?? String(e)}`).catch(() => {});
+      await sendUserVisible(msg, `❌ git status failed: ${e?.message ?? String(e)}`).catch(
+        () => {}
+      );
     }
     return true;
   }
@@ -364,10 +371,9 @@ export async function handleTextCommand(
       const rtConfig = await loadRuntimes();
       const redacted = redactConfig(rtConfig);
       if (!redacted.hosts.length) {
-        await sendUserVisible(
-          msg,
-          'No hosts configured. Use `idlehands hosts add` in CLI.'
-        ).catch(() => {});
+        await sendUserVisible(msg, 'No hosts configured. Use `idlehands hosts add` in CLI.').catch(
+          () => {}
+        );
         return true;
       }
 
@@ -430,7 +436,10 @@ export async function handleTextCommand(
 
       const enabledModels = rtConfig.models.filter((mod) => mod.enabled);
       if (!enabledModels.length) {
-        await sendUserVisible(msg, 'No enabled runtime models. Use `idlehands models enable <id>` in CLI.').catch(() => {});
+        await sendUserVisible(
+          msg,
+          'No enabled runtime models. Use `idlehands models enable <id>` in CLI.'
+        ).catch(() => {});
         return true;
       }
 
@@ -455,10 +464,12 @@ export async function handleTextCommand(
         rows.push(currentRow);
       }
 
-      await (msg.channel as any).send({
-        content: '📋 **Select a model to switch to:**',
-        components: rows.slice(0, 5),
-      }).catch(() => {});
+      await (msg.channel as any)
+        .send({
+          content: '📋 **Select a model to switch to:**',
+          components: rows.slice(0, 5),
+        })
+        .catch(() => {});
     } catch (e: any) {
       await sendUserVisible(
         msg,
@@ -548,7 +559,9 @@ export async function handleTextCommand(
 
       if (execResult.ok) {
         if (statusMsg) {
-          await statusMsg.edit(`✅ Switched to \`${planResult.model.display_name}\``).catch(() => {});
+          await statusMsg
+            .edit(`✅ Switched to \`${planResult.model.display_name}\``)
+            .catch(() => {});
         } else {
           await sendUserVisible(msg, `✅ Switched to \`${planResult.model.display_name}\``).catch(
             () => {}
@@ -569,6 +582,37 @@ export async function handleTextCommand(
   }
 
   if (content === '/anton' || content.startsWith('/anton ')) {
+    const args = content.replace(/^\/anton\s*/, '').trim();
+    const autoPinEnabled = managed.config?.anton?.auto_pin_current_dir === true;
+    if (shouldAutoPinBeforeAntonStart({ args, autoPinEnabled, dirPinned: managed.dirPinned })) {
+      const currentDir = path.resolve(expandHome(managed.config.dir || defaultDir));
+      if (!isPathAllowed(currentDir, managed.allowedDirs)) {
+        await sendUserVisible(
+          msg,
+          '❌ Anton auto-pin failed: current directory is not allowed. Use /dir <path> first.'
+        ).catch(() => {});
+        return true;
+      }
+
+      const repoCandidates = await detectRepoCandidates(currentDir, managed.allowedDirs).catch(
+        () => managed.repoCandidates
+      );
+      const cfg: IdlehandsConfig = {
+        ...managed.config,
+        dir: currentDir,
+        allowed_write_roots: managed.allowedDirs,
+        dir_pinned: true,
+        repo_candidates: repoCandidates,
+      };
+      await recreateSession(managed, cfg);
+      managed.dirPinned = true;
+      managed.repoCandidates = repoCandidates;
+      await sendUserVisible(
+        msg,
+        `📌 Anton auto-pinned working directory to \`${currentDir}\``
+      ).catch(() => {});
+    }
+
     await handleDiscordAnton(managed, msg, content, ctx);
     return true;
   }
@@ -610,18 +654,24 @@ export async function handleDiscordAnton(
 
       if (antonStatusMsg) {
         antonStatusMsg.edit(t).catch(() => {
-          channel.send(t).then((m: any) => {
-            antonStatusMsg = m;
-          }).catch(() => {});
+          channel
+            .send(t)
+            .then((m: any) => {
+              antonStatusMsg = m;
+            })
+            .catch(() => {});
         });
         return;
       }
 
-      channel.send(t).then((m: any) => {
-        antonStatusMsg = m;
-      }).catch(() => {});
+      channel
+        .send(t)
+        .then((m: any) => {
+          antonStatusMsg = m;
+        })
+        .catch(() => {});
     },
-    DISCORD_RATE_LIMIT_MS,
+    DISCORD_RATE_LIMIT_MS
   );
 
   const text = formatMarkdown(result);

@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { test, describe } from 'node:test';
 
 // Import from dist (compiled JS)
-import type { DetectedCommands, AntonAgentResult, AntonRunConfig } from '../dist/anton/types.js';
+import type { AntonRunConfig } from '../dist/anton/types.js';
 import { detectVerificationCommands, runVerification } from '../dist/anton/verifier.js';
 
 describe('Anton Verifier', () => {

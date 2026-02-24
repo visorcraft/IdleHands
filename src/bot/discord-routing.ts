@@ -1,11 +1,6 @@
 import type { Message } from 'discord.js';
 
-import type {
-  AgentPersona,
-  AgentRouting,
-  BotDiscordConfig,
-  ModelEscalation,
-} from '../types.js';
+import type { AgentPersona, AgentRouting, BotDiscordConfig, ModelEscalation } from '../types.js';
 
 import { sanitizeBotOutputText } from './format.js';
 

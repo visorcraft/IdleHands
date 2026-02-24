@@ -62,10 +62,12 @@ export function registerRuntimeCommands(bot: Bot): void {
         return;
       }
 
-      const buttons = enabledModels.map((m: any) => [{
-        text: `🟢 ${m.display_name}`,
-        callback_data: `model_select:${m.id}`,
-      }]);
+      const buttons = enabledModels.map((m: any) => [
+        {
+          text: `🟢 ${m.display_name}`,
+          callback_data: `model_select:${m.id}`,
+        },
+      ]);
 
       const keyboard: any[][] = [];
       for (let i = 0; i < buttons.length; i += 2) {
@@ -144,7 +146,7 @@ export function registerRuntimeCommands(bot: Bot): void {
           if (status === 'done') {
             await ctx.api
               .editMessageText(ctx.chat.id, statusMsg.message_id, `⏳ ${step.description}... ✓`)
-              .catch(() => { });
+              .catch(() => {});
           }
         },
         confirm: async (prompt) => {
@@ -192,9 +194,11 @@ export async function handleModelSelectCallback(ctx: any): Promise<boolean> {
     }
 
     if (result.reuse) {
-      await ctx.editMessageText(`✅ Already using *${result.model.display_name}*`, {
-        parse_mode: 'Markdown',
-      }).catch(() => {});
+      await ctx
+        .editMessageText(`✅ Already using *${result.model.display_name}*`, {
+          parse_mode: 'Markdown',
+        })
+        .catch(() => {});
       return true;
     }
 
@@ -211,11 +215,15 @@ export async function handleModelSelectCallback(ctx: any): Promise<boolean> {
     });
 
     if (execResult.ok) {
-      await ctx.editMessageText(`✅ Switched to *${result.model.display_name}*`, {
-        parse_mode: 'Markdown',
-      }).catch(() => {});
+      await ctx
+        .editMessageText(`✅ Switched to *${result.model.display_name}*`, {
+          parse_mode: 'Markdown',
+        })
+        .catch(() => {});
     } else {
-      await ctx.editMessageText(`❌ Switch failed: ${execResult.error || 'unknown error'}`).catch(() => {});
+      await ctx
+        .editMessageText(`❌ Switch failed: ${execResult.error || 'unknown error'}`)
+        .catch(() => {});
     }
   } catch (e: any) {
     await ctx.editMessageText(`❌ Switch failed: ${e?.message ?? String(e)}`).catch(() => {});

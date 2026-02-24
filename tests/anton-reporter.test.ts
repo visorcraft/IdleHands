@@ -39,7 +39,8 @@ describe('anton reporter tool-loop messaging', () => {
       level: 'critical',
       toolName: 'edit_range',
       count: 3,
-      message: 'Final loop failure after 3/3 auto-retries: tool edit_range: identical call repeated',
+      message:
+        'Final loop failure after 3/3 auto-retries: tool edit_range: identical call repeated',
     });
 
     assert.match(msg, /final loop failure/i);

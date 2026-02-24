@@ -586,6 +586,7 @@ describe('anton config', () => {
     assert.equal(config.anton.auto_commit, true);
     assert.equal(config.anton.progress_events, true);
     assert.equal(config.anton.progress_heartbeat_sec, 30);
+    assert.equal(config.anton.auto_pin_current_dir, false);
     assert.equal(config.anton.preflight?.enabled, false);
     assert.equal(config.anton.preflight?.requirements_review, true);
     assert.equal(config.anton.preflight?.discovery_timeout_sec, 600);
@@ -629,6 +630,7 @@ describe('anton config', () => {
           max_retries: 0,
           max_decompose_depth: 10,
           progress_heartbeat_sec: 1,
+          auto_pin_current_dir: 'true' as any,
           approval_mode: 'invalid',
           preflight: {
             session_max_iterations: 5000,
@@ -647,6 +649,8 @@ describe('anton config', () => {
     // preflight caps clamped to sane bounds
     assert.equal(config.anton?.preflight?.session_max_iterations, 1000);
     assert.equal(config.anton?.preflight?.session_timeout_sec, 10);
+    // bool-like values normalize correctly
+    assert.equal(config.anton?.auto_pin_current_dir, true);
     // invalid approval_mode defaults to 'yolo' with warning
     assert.equal(config.anton?.approval_mode, 'yolo');
   });

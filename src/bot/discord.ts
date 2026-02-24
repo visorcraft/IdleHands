@@ -13,8 +13,9 @@ import {
 } from 'discord.js';
 
 import { createSession, type AgentSession, type AgentHooks } from '../agent.js';
+import type { AntonProgress, AntonRunResult } from '../anton/types.js';
 import { chainAgentHooks } from '../progress/agent-hooks.js';
-import type { ApprovalMode, BotDiscordConfig, IdlehandsConfig, AgentPersona } from '../types.js';
+import type { BotDiscordConfig, IdlehandsConfig, AgentPersona } from '../types.js';
 import { projectDir, PKG_VERSION } from '../utils.js';
 import {
   WATCHDOG_RECOMMENDED_TUNING_TEXT,
@@ -23,12 +24,14 @@ import {
   shouldRecommendWatchdogTuning,
 } from '../watchdog.js';
 
-import { DiscordConfirmProvider } from './confirm-discord.js';
 import {
-  detectRepoCandidates,
-  expandHome,
-  normalizeAllowedDirs,
-} from './dir-guard.js';
+  isToolLoopBreak,
+  formatAutoContinueNotice,
+  AUTO_CONTINUE_PROMPT,
+} from './auto-continue.js';
+import { DiscordConfirmProvider } from './confirm-discord.js';
+import { detectRepoCandidates, expandHome, normalizeAllowedDirs } from './dir-guard.js';
+import { handleTextCommand, type DiscordCommandContext } from './discord-commands.js';
 import {
   parseAllowedUsers,
   normalizeApprovalMode,
@@ -39,8 +42,6 @@ import {
   sessionKeyForMessage,
 } from './discord-routing.js';
 import { DiscordStreamingMessage } from './discord-streaming.js';
-import { isToolLoopBreak, formatAutoContinueNotice, AUTO_CONTINUE_PROMPT } from './auto-continue.js';
-import { handleTextCommand, type DiscordCommandContext } from './discord-commands.js';
 import {
   beginTurn,
   isTurnActive,
@@ -72,8 +73,8 @@ export type ManagedSession = {
   lastActivity: number;
   antonActive: boolean;
   antonAbortSignal: { aborted: boolean } | null;
-  antonLastResult: import('../anton/types.js').AntonRunResult | null;
-  antonProgress: import('../anton/types.js').AntonProgress | null;
+  antonLastResult: AntonRunResult | null;
+  antonProgress: AntonProgress | null;
   antonLastLoopEvent: {
     kind: 'auto-recovered' | 'final-failure' | 'other';
     taskText: string;
@@ -308,10 +309,10 @@ When you escalate, your request will be re-run on a more capable model.`;
     s.antonLastLoopEvent = null;
     try {
       s.activeAbortController?.abort();
-    } catch { }
+    } catch {}
     try {
       s.session.cancel();
-    } catch { }
+    } catch {}
     sessions.delete(key);
   }
 
@@ -469,7 +470,7 @@ When you escalate, your request will be re-run on a more capable model.`;
           // Cancel current request, compact, and re-send
           try {
             managed.activeAbortController?.abort();
-          } catch { }
+          } catch {}
           managed.session
             .compactHistory({ force: true })
             .then((result) => {
@@ -598,10 +599,21 @@ When you escalate, your request will be re-run on a more capable model.`;
           }
 
           // Auto-continue on tool-loop breaks
-          if (!isAbort && isToolLoopBreak(e) && autoContinueEnabled && toolLoopRetryCount < autoContinueMaxRetries) {
+          if (
+            !isAbort &&
+            isToolLoopBreak(e) &&
+            autoContinueEnabled &&
+            toolLoopRetryCount < autoContinueMaxRetries
+          ) {
             toolLoopRetryCount++;
-            const notice = formatAutoContinueNotice(raw, toolLoopRetryCount, autoContinueMaxRetries);
-            console.error(`[bot:discord] ${managed.userId} tool-loop auto-continue (retry ${toolLoopRetryCount}/${autoContinueMaxRetries})`);
+            const notice = formatAutoContinueNotice(
+              raw,
+              toolLoopRetryCount,
+              autoContinueMaxRetries
+            );
+            console.error(
+              `[bot:discord] ${managed.userId} tool-loop auto-continue (retry ${toolLoopRetryCount}/${autoContinueMaxRetries})`
+            );
             if (isTurnActive(managed, turnId)) {
               await streamer.finalizeError(notice);
             }
@@ -666,14 +678,14 @@ When you escalate, your request will be re-run on a more capable model.`;
     managed.pendingQueue = [];
     try {
       managed.activeAbortController?.abort();
-    } catch { }
+    } catch {}
 
     // Preserve conversation history before destroying the old session
     const oldMessages = managed.session.messages.slice();
 
     try {
       managed.session.cancel();
-    } catch { }
+    } catch {}
 
     const session = await createSession({
       config: cfg,
@@ -1025,19 +1037,27 @@ When you escalate, your request will be re-run on a more capable model.`;
       const result = plan({ modelId, mode: 'live' }, rtConfig, active);
 
       if (!result.ok) {
-        await interaction.editReply({ content: `❌ Plan failed: ${result.reason}`, components: [] });
+        await interaction.editReply({
+          content: `❌ Plan failed: ${result.reason}`,
+          components: [],
+        });
         return;
       }
 
       if (result.reuse) {
-        await interaction.editReply({ content: `✅ Already using \`${result.model.display_name}\``, components: [] });
+        await interaction.editReply({
+          content: `✅ Already using \`${result.model.display_name}\``,
+          components: [],
+        });
         return;
       }
 
       const execResult = await execute(result, {
         onStep: async (step, status) => {
           if (status === 'done') {
-            await interaction.editReply({ content: `⏳ ${step.description}... ✓`, components: [] }).catch(() => {});
+            await interaction
+              .editReply({ content: `⏳ ${step.description}... ✓`, components: [] })
+              .catch(() => {});
           }
         },
         confirm: async (prompt) => {
@@ -1047,12 +1067,21 @@ When you escalate, your request will be re-run on a more capable model.`;
       });
 
       if (execResult.ok) {
-        await interaction.editReply({ content: `✅ Switched to \`${result.model.display_name}\``, components: [] });
+        await interaction.editReply({
+          content: `✅ Switched to \`${result.model.display_name}\``,
+          components: [],
+        });
       } else {
-        await interaction.editReply({ content: `❌ Switch failed: ${execResult.error || 'unknown error'}`, components: [] });
+        await interaction.editReply({
+          content: `❌ Switch failed: ${execResult.error || 'unknown error'}`,
+          components: [],
+        });
       }
     } catch (e: any) {
-      await interaction.editReply({ content: `❌ Switch failed: ${e?.message ?? String(e)}`, components: [] });
+      await interaction.editReply({
+        content: `❌ Switch failed: ${e?.message ?? String(e)}`,
+        components: [],
+      });
     }
   });
 
@@ -1093,14 +1122,14 @@ When you escalate, your request will be re-run on a more capable model.`;
       await sendUserVisible(
         msg,
         `✨ New session started${agentMsg}. Send a message to begin.`
-      ).catch(() => { });
+      ).catch(() => {});
       return;
     }
 
     const managed = await getOrCreate(msg);
     if (!managed) {
       await sendUserVisible(msg, '⚠️ Too many active sessions. Please retry later.').catch(
-        () => { }
+        () => {}
       );
       return;
     }
@@ -1123,11 +1152,11 @@ When you escalate, your request will be re-run on a more capable model.`;
         await sendUserVisible(
           msg,
           `⏳ Queue full (${managed.pendingQueue.length}/${maxQueue}). Use /cancel.`
-        ).catch(() => { });
+        ).catch(() => {});
         return;
       }
       managed.pendingQueue.push(msg);
-      await sendUserVisible(msg, `⏳ Queued (#${managed.pendingQueue.length}).`).catch(() => { });
+      await sendUserVisible(msg, `⏳ Queued (#${managed.pendingQueue.length}).`).catch(() => {});
       return;
     }
 
@@ -1144,10 +1173,9 @@ When you escalate, your request will be re-run on a more capable model.`;
       await sendUserVisible(
         msg,
         `⚠️ Bot error: ${errMsg.length > 300 ? errMsg.slice(0, 297) + '...' : errMsg}`
-      ).catch(() => { });
+      ).catch(() => {});
     });
   });
-
 
   const shutdown = async () => {
     clearInterval(cleanupTimer);

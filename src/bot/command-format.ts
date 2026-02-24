@@ -5,8 +5,8 @@
  * - formatMarkdown: Discord Markdown
  */
 
-import { escapeHtml } from './format.js';
 import type { CmdResult, KV } from './command-logic.js';
+import { escapeHtml } from './format.js';
 
 // ── Telegram HTML ───────────────────────────────────────────────────
 

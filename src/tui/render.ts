@@ -1,4 +1,5 @@
 import { truncate } from '../shared/strings.js';
+
 import { calculateLayout } from './layout.js';
 import { clearScreen } from './screen.js';
 import { resolveTuiTheme, type TuiColors } from './theme.js';
@@ -101,7 +102,9 @@ function buildModelPickerOverlay(state: TuiState, width: number, height: number)
   const lines: string[] = [];
   const pageSize = Math.max(5, height - 6);
 
-  lines.push(`${C.bold}Model Picker${C.reset}  (↑/↓ move, Enter select, type to filter, Esc cancel)`);
+  lines.push(
+    `${C.bold}Model Picker${C.reset}  (↑/↓ move, Enter select, type to filter, Esc cancel)`
+  );
   lines.push(`${C.dim}Filter:${C.reset} ${picker.query || '(type to search)'}`);
   lines.push('');
 
@@ -382,7 +385,10 @@ export function renderTui(state: TuiState): void {
               ? buildModelPickerOverlay(
                   state,
                   Math.min(Math.max(50, Math.floor(cols * 0.85)), cols - 2),
-                  Math.min(layout.transcriptRows, Math.max(10, Math.floor(layout.transcriptRows * 0.85)))
+                  Math.min(
+                    layout.transcriptRows,
+                    Math.max(10, Math.floor(layout.transcriptRows * 0.85))
+                  )
                 )
               : null;
 
