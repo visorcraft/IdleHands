@@ -33,7 +33,18 @@ export class ProgressPresenter {
   private renderer: ProgressMessageRenderer;
   private readonly budgets: Required<Omit<ProgressPresenterBudgets, 'toolCallSummary'>> & {
     toolCallSummary?: (call: { name: string; args: any }) => string;
+    telegramMaxLen: number;
+    discordMaxLen: number;
+    tuiMaxLines: number;
   };
+
+  getBudgets(): Required<Omit<ProgressPresenterBudgets, 'toolCallSummary'>> & {
+    telegramMaxLen: number;
+    discordMaxLen: number;
+    tuiMaxLines: number;
+  } {
+    return this.budgets;
+  }
 
   constructor(budgets?: ProgressPresenterBudgets) {
     this.budgets = {
