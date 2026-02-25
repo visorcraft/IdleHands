@@ -238,6 +238,7 @@ export type AgentSession = {
       dedupeRate: number;
     };
   };
+  lastAskInstructionText?: string;
   captureOn: (filePath?: string) => Promise<string>;
   captureOff: () => void;
   captureLast: (filePath?: string) => Promise<string>;
@@ -4414,6 +4415,9 @@ export async function createSession(opts: {
     refreshServerHealth,
     getPerfSummary,
     getToolLoopStats: () => lastToolLoopStats,
+    get lastAskInstructionText() {
+      return lastAskInstructionText;
+    },
     captureOn,
     captureOff,
     captureLast,

@@ -128,6 +128,8 @@ export type UXEventERROR = UXEventBase & {
   retryable?: boolean;
   /** Optional guidance for user */
   guidance?: string;
+  /** Optional actions available to the user */
+  actions?: UXAction[];
 };
 
 // ---------------------------------------------------------------------------
@@ -150,6 +152,8 @@ export type UXEventRESULT = UXEventBase & {
     tokensUsed?: number;
     toolsCalled?: number;
   };
+  /** Optional actions available to the user */
+  actions?: UXAction[];
 };
 
 // ---------------------------------------------------------------------------

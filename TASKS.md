@@ -128,13 +128,13 @@ session_persistence?: 'default' | 'sticky' | 'ephemeral';
   - [x] `routing.default_mode`.
   - [x] `routing.fast_model`.
   - [x] `routing.auto_escalation_rules`.
-- [ ] Add bot commands:
+- [x] Add bot commands:
   - [x] `/routing_mode fast`.
   - [x] `/routing_mode heavy`.
   - [x] `/routing_mode auto`.
-  - [ ] `/routing_mode status`.
+  - [x] `/routing_mode status`.
 - [ ] Add one-click retry actions from result/error blocks:
-  - [ ] `Retry Fast`.
+  - [x] `Retry Fast`.
   - [ ] `Retry Heavy`.
 
 ### Phase 2 Definition of Done

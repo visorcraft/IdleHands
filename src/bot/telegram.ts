@@ -39,6 +39,8 @@ import {
   handleApproval,
   handleMode,
   handleRoutingMode,
+  handleRetryFast,
+  handleRetryHeavy,
   handleSubAgents,
   handleChanges,
   handleUndo,
@@ -412,8 +414,10 @@ export async function startTelegramBot(
   bot.command('compact', (ctx) => handleCompact(cmdCtx(ctx)));
   bot.command('approval', (ctx) => handleApproval(cmdCtx(ctx)));
   bot.command('mode', (ctx) => handleMode(cmdCtx(ctx)));
-  bot.command('subagents', (ctx) => handleSubAgents(cmdCtx(ctx)));
   bot.command('routing_mode', (ctx) => handleRoutingMode(cmdCtx(ctx)));
+  bot.command('retry_fast', (ctx) => handleRetryFast(cmdCtx(ctx)));
+  bot.command('retry_heavy', (ctx) => handleRetryHeavy(cmdCtx(ctx)));
+  bot.command('subagents', (ctx) => handleSubAgents(cmdCtx(ctx)));
   bot.command('changes', (ctx) => handleChanges(cmdCtx(ctx)));
   bot.command('undo', (ctx) => handleUndo(cmdCtx(ctx)));
   bot.command('vault', (ctx) => handleVault(cmdCtx(ctx)));
