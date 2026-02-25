@@ -593,6 +593,7 @@ export async function startTelegramBot(
     { command: 'agents', description: 'List all configured agents' },
     { command: 'escalate', description: 'Use larger model for next message' },
     { command: 'deescalate', description: 'Return to base model' },
+    { command: 'restart_bot', description: 'Restart bot service' },
     { command: 'upgrade', description: 'Upgrade IdleHands and restart' },
     { command: 'dir', description: 'Get/set working directory' },
     { command: 'model', description: 'Show current model' },
