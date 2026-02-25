@@ -44,14 +44,6 @@ This file is now the **practical backlog**, not the original RFC implementation 
 
 ---
 
-## 💤 Deferred / not worth doing right now
-
-- Full rollout-percentage/canary feature-flag platform from the original RFC (overkill for current single-owner deployment model).
-- Session persistence mode matrix (`default|sticky|ephemeral`) until there is real user pain proving the need.
-- Duplicate command aliases that add surface area without adding capability.
-
----
-
 ## Guardrails (keep)
 
 - Keep `runtimes.json` as the runtime/model source of truth.
