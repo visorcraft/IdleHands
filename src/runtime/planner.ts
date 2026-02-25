@@ -217,6 +217,7 @@ export function plan(
   }
 
   const rpcHelperHosts = resolveRpcHelperHosts(config, backendCfg, targetHosts);
+  const isRpcBacked = rpcHelperHosts.length > 0;
   const allStepHosts: RuntimeHost[] = [...targetHosts, ...rpcHelperHosts];
 
   const resolvedModel: ResolvedModel = {
@@ -248,8 +249,11 @@ export function plan(
   const planHostIds = resolvedHosts.map((h) => h.id);
   const targetBackendId = resolvedBackend?.id;
 
+  // RPC-backed models always do a stop/start cycle on selection so helper hosts
+  // get pre-cleared (frees memory on both target + RPC nodes).
   if (
     !request.forceRestart &&
+    !isRpcBacked &&
     activeState &&
     activeState.healthy === true &&
     activeState.modelId === resolvedModel.id &&

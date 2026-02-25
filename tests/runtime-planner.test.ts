@@ -342,6 +342,25 @@ describe('runtime planner', () => {
       out.steps.filter((s) => s.kind === 'probe_health').map((s) => s.host_id),
       ['bee']
     );
+
+    // Even exact active match should not reuse for RPC models; selection should
+    // still perform pre-clear stop/start to free RAM on both hosts.
+    const activeRpc: ActiveRuntime = {
+      modelId: 'qwen-rpc',
+      backendId: 'rocm-rpc-evo',
+      hostIds: ['bee', 'evo-x2'],
+      healthy: true,
+      startedAt: new Date(0).toISOString(),
+    };
+
+    const out2 = plan({ modelId: 'qwen-rpc', mode: 'live' }, cfg, activeRpc);
+    assert.equal(out2.ok, true);
+    if (!out2.ok) return;
+    assert.equal(out2.reuse, false);
+    assert.equal(
+      out2.steps.filter((s) => s.kind === 'stop_model').length >= 2,
+      true
+    );
   });
 
   it('planner has no I/O imports', async () => {
