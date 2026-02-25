@@ -919,6 +919,13 @@ export async function loadConfig(opts: {
     if (routing.heavy_model != null && routing.heavyModel == null) {
       routing.heavyModel = routing.heavy_model;
     }
+    // runtime-native aliases (optional)
+    if (routing.fast_runtime_model != null && routing.fastModel == null) {
+      routing.fastModel = routing.fast_runtime_model;
+    }
+    if (routing.heavy_runtime_model != null && routing.heavyModel == null) {
+      routing.heavyModel = routing.heavy_runtime_model;
+    }
     if (routing.fast_provider != null && routing.fastProvider == null) {
       routing.fastProvider = routing.fast_provider;
     }
@@ -936,6 +943,12 @@ export async function loadConfig(opts: {
     }
     if (routing.heavy_fallback_models != null && routing.heavyFallbackModels == null) {
       routing.heavyFallbackModels = routing.heavy_fallback_models;
+    }
+    if (routing.fast_runtime_fallback_models != null && routing.fastFallbackModels == null) {
+      routing.fastFallbackModels = routing.fast_runtime_fallback_models;
+    }
+    if (routing.heavy_runtime_fallback_models != null && routing.heavyFallbackModels == null) {
+      routing.heavyFallbackModels = routing.heavy_runtime_fallback_models;
     }
     if (routing.hint_mode_map != null && routing.hintModeMap == null) {
       routing.hintModeMap = routing.hint_mode_map;

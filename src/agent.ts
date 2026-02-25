@@ -1592,6 +1592,98 @@ export async function createSession(opts: {
     return routed;
   };
 
+  let runtimeRoutingModules:
+    | {
+        planner: typeof import('./runtime/planner.js');
+        executor: typeof import('./runtime/executor.js');
+        store: typeof import('./runtime/store.js');
+      }
+    | null = null;
+  let runtimeRoutingUnavailable = false;
+  let runtimeModelIdsCache: Set<string> | null = null;
+
+  const loadRuntimeRoutingModules = async () => {
+    if (runtimeRoutingUnavailable) return null;
+    if (runtimeRoutingModules) return runtimeRoutingModules;
+    try {
+      const [planner, executor, store] = await Promise.all([
+        import('./runtime/planner.js'),
+        import('./runtime/executor.js'),
+        import('./runtime/store.js'),
+      ]);
+      runtimeRoutingModules = { planner, executor, store };
+      return runtimeRoutingModules;
+    } catch {
+      runtimeRoutingUnavailable = true;
+      return null;
+    }
+  };
+
+  const loadRuntimeModelIds = async (): Promise<Set<string>> => {
+    if (runtimeModelIdsCache) return runtimeModelIdsCache;
+    const mods = await loadRuntimeRoutingModules();
+    if (!mods) {
+      runtimeModelIdsCache = new Set();
+      return runtimeModelIdsCache;
+    }
+    try {
+      const runtimes = await mods.store.loadRuntimes();
+      runtimeModelIdsCache = new Set(
+        runtimes.models.filter((m) => m.enabled !== false).map((m) => m.id)
+      );
+      return runtimeModelIdsCache;
+    } catch {
+      runtimeModelIdsCache = new Set();
+      return runtimeModelIdsCache;
+    }
+  };
+
+  const ensureRuntimeModelActive = async (runtimeModelId: string): Promise<void> => {
+    const mods = await loadRuntimeRoutingModules();
+    if (!mods) throw new Error('Runtime routing is unavailable in this build/environment');
+
+    const runtimes = await mods.store.loadRuntimes();
+    runtimeModelIdsCache = new Set(runtimes.models.filter((m) => m.enabled !== false).map((m) => m.id));
+
+    const modelExists = runtimes.models.some((m) => m.enabled !== false && m.id === runtimeModelId);
+    if (!modelExists) {
+      throw new Error(`Runtime model not found or disabled: ${runtimeModelId}`);
+    }
+
+    let active = await mods.executor.loadActiveRuntime();
+    if (active?.healthy && active.modelId === runtimeModelId && active.endpoint) {
+      if (normalizeEndpoint(active.endpoint) !== normalizeEndpoint(cfg.endpoint)) {
+        await setEndpoint(active.endpoint);
+      }
+      return;
+    }
+
+    const planResult = mods.planner.plan({ modelId: runtimeModelId, mode: 'live' }, runtimes, active);
+    if (!planResult.ok) {
+      throw new Error(`Runtime switch plan failed for ${runtimeModelId}: ${planResult.reason}`);
+    }
+
+    if (!planResult.reuse) {
+      const execResult = await mods.executor.execute(planResult, {
+        confirm: async () => false,
+      });
+      if (!execResult.ok) {
+        throw new Error(
+          `Runtime switch failed for ${runtimeModelId}: ${execResult.error ?? 'unknown error'}`
+        );
+      }
+    }
+
+    active = await mods.executor.loadActiveRuntime();
+    if (!active?.endpoint || active.healthy !== true) {
+      throw new Error(`Runtime did not become healthy for ${runtimeModelId}`);
+    }
+
+    if (normalizeEndpoint(active.endpoint) !== normalizeEndpoint(cfg.endpoint)) {
+      await setEndpoint(active.endpoint);
+    }
+  };
+
   const wireCaptureHook = () => {
     attachCaptureHook(client);
   };
@@ -2234,8 +2326,19 @@ export async function createSession(opts: {
 
     const turnRoute = decideTurnRoute(cfg, rawInstructionText, model);
     const primaryRoute = turnRoute.providerTargets[0];
+    const runtimeModelIds = await loadRuntimeModelIds();
 
-    if (primaryRoute?.model && primaryRoute.model !== model) {
+    const routeRuntimeFallbackModels = (primaryRoute?.fallbackModels ?? []).filter((m) =>
+      runtimeModelIds.has(m)
+    );
+    const routeApiFallbackModels = (primaryRoute?.fallbackModels ?? []).filter(
+      (m) => !runtimeModelIds.has(m)
+    );
+
+    const primaryUsesRuntimeModel = !!primaryRoute?.model && runtimeModelIds.has(primaryRoute.model);
+
+    // Non-runtime route models can be selected directly in-session.
+    if (!primaryUsesRuntimeModel && primaryRoute?.model && primaryRoute.model !== model) {
       setModel(primaryRoute.model);
     }
 
@@ -2249,6 +2352,14 @@ export async function createSession(opts: {
         `model=${primaryRoute?.model ?? model}`,
       ];
       if (turnRoute.heuristicDecision) routeParts.push(`heuristic=${turnRoute.heuristicDecision}`);
+      if (primaryUsesRuntimeModel) {
+        const runtimeChain = [primaryRoute?.model, ...routeRuntimeFallbackModels]
+          .filter(Boolean)
+          .join(' -> ');
+        routeParts.push(`runtime_chain=${runtimeChain || 'none'}`);
+      } else if (routeApiFallbackModels.length) {
+        routeParts.push(`api_fallbacks=${routeApiFallbackModels.join(',')}`);
+      }
       console.error(`[routing] ${routeParts.join(' ')}`);
     }
 
@@ -2747,23 +2858,7 @@ export async function createSession(opts: {
             }
 
             if (!resp) {
-              // ── Routed client: use provider from turn route plan ────
-              const routeEndpoint = primaryRoute?.endpoint;
-              const activeClient = getClientForEndpoint(routeEndpoint);
-              const endpointKey = routeEndpoint ? normalizeEndpoint(routeEndpoint) : undefined;
-              if (endpointKey && !probedEndpoints.has(endpointKey)) {
-                if (typeof (activeClient as any).probeConnection === 'function') {
-                  try {
-                    await (activeClient as any).probeConnection();
-                  } catch {
-                    // best-effort: if probe fails we still try the call
-                  }
-                  probedEndpoints.add(endpointKey);
-                }
-              }
-
-              const chatOpts = {
-                model,
+              const chatOptsBase = {
                 messages,
                 tools: toolsForTurn,
                 tool_choice: toolChoiceForTurn,
@@ -2773,7 +2868,9 @@ export async function createSession(opts: {
                 extra: {
                   cache_prompt: cfg.cache_prompt ?? true,
                   ...(cfg.draft_model ? { draft_model: cfg.draft_model } : {}),
-                  ...(cfg.draft_n ? { speculative: { n: cfg.draft_n, p_min: cfg.draft_p_min ?? 0.5 } } : {}),
+                  ...(cfg.draft_n
+                    ? { speculative: { n: cfg.draft_n, p_min: cfg.draft_p_min ?? 0.5 } }
+                    : {}),
                   ...(frequencyPenalty && { frequency_penalty: frequencyPenalty }),
                   ...(presencePenalty && { presence_penalty: presencePenalty }),
                 },
@@ -2783,31 +2880,82 @@ export async function createSession(opts: {
                 onFirstDelta,
               };
 
-              // If turn-router selected fallback models, wrap in resilientCall
-              const fallbacks = primaryRoute?.fallbackModels ?? [];
-              if (fallbacks.length > 0) {
-                const modelFallbackMap: Record<string, string[]> = {};
-                modelFallbackMap[model] = fallbacks;
+              if (primaryUsesRuntimeModel && primaryRoute?.model) {
+                // Runtime-native routing: lane model/fallbacks reference runtime model IDs.
+                const runtimePrimaryModel = primaryRoute.model;
+                const runtimeFallbackMap: Record<string, string[]> = {};
+                if (routeRuntimeFallbackModels.length > 0) {
+                  runtimeFallbackMap[runtimePrimaryModel] = routeRuntimeFallbackModels;
+                }
+
                 resp = await resilientCall(
-                  [{
-                    name: primaryRoute?.name ?? 'default',
-                    execute: (m: string) => activeClient.chatStream({ ...chatOpts, model: m }),
-                  }],
-                  model,
+                  [
+                    {
+                      name: 'runtime-router',
+                      execute: async (runtimeModelId: string) => {
+                        await ensureRuntimeModelActive(runtimeModelId);
+                        const runtimeClient = getClientForEndpoint();
+                        const runtimeModel = model;
+                        return runtimeClient.chatStream({ ...chatOptsBase, model: runtimeModel });
+                      },
+                    },
+                  ],
+                  runtimePrimaryModel,
                   {
-                    maxRetries: 1,
-                    modelFallbacks: modelFallbackMap,
+                    maxRetries: 0,
+                    modelFallbacks: runtimeFallbackMap,
                     onRetry: (info) => {
                       if (cfg.verbose) {
                         console.error(
-                          `[routing] retry: provider=${info.provider} model=${info.model} attempt=${info.attempt}/${info.maxAttempts} reason=${info.reason}`
+                          `[routing] runtime-fallback: model=${info.model} attempt=${info.attempt}/${info.maxAttempts} reason=${info.reason}`
                         );
                       }
                     },
-                  },
+                  }
                 );
               } else {
-                resp = await activeClient.chatStream(chatOpts);
+                const routeEndpoint = primaryRoute?.endpoint;
+                const activeClient = getClientForEndpoint(routeEndpoint);
+                const endpointKey = routeEndpoint ? normalizeEndpoint(routeEndpoint) : undefined;
+                if (endpointKey && !probedEndpoints.has(endpointKey)) {
+                  if (typeof (activeClient as any).probeConnection === 'function') {
+                    try {
+                      await (activeClient as any).probeConnection();
+                    } catch {
+                      // best-effort: if probe fails we still try the call
+                    }
+                    probedEndpoints.add(endpointKey);
+                  }
+                }
+
+                const routeModel = primaryRoute?.model ?? model;
+                if (routeApiFallbackModels.length > 0) {
+                  const modelFallbackMap: Record<string, string[]> = {
+                    [routeModel]: routeApiFallbackModels,
+                  };
+                  resp = await resilientCall(
+                    [
+                      {
+                        name: primaryRoute?.name ?? 'default',
+                        execute: (m: string) => activeClient.chatStream({ ...chatOptsBase, model: m }),
+                      },
+                    ],
+                    routeModel,
+                    {
+                      maxRetries: 1,
+                      modelFallbacks: modelFallbackMap,
+                      onRetry: (info) => {
+                        if (cfg.verbose) {
+                          console.error(
+                            `[routing] retry: provider=${info.provider} model=${info.model} attempt=${info.attempt}/${info.maxAttempts} reason=${info.reason}`
+                          );
+                        }
+                      },
+                    }
+                  );
+                } else {
+                  resp = await activeClient.chatStream({ ...chatOptsBase, model: routeModel });
+                }
               }
             } // end if (!resp) — cache miss path
 
