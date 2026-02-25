@@ -335,6 +335,35 @@ export async function handleMode({ ctx, sessions }: CommandContext): Promise<voi
   await reply(ctx, modeSetCommand(managed as unknown as ManagedLike, arg));
 }
 
+export async function handleRoutingMode({ ctx, sessions }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const text = ctx.message?.text ?? '';
+  const arg = text
+    .replace(/^\/routing_mode\s*/, '')
+    .trim()
+    .toLowerCase();
+  const managed = sessions.get(chatId);
+
+  if (!managed) {
+    await ctx.reply('No active session. Send a message to start one.');
+    return;
+  }
+
+  if (!arg) {
+    await reply(ctx, modeShowCommand(managed as unknown as ManagedLike));
+    return;
+  }
+
+  // Handle status command
+  if (arg === 'status') {
+    await reply(ctx, modeStatusCommand(managed as unknown as ManagedLike));
+    return;
+  }
+
+  await reply(ctx, modeSetCommand(managed as unknown as ManagedLike, arg));
+}
+
 export async function handleSubAgents({ ctx, sessions }: CommandContext): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) return;
