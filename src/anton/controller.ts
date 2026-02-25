@@ -41,6 +41,8 @@ import {
   buildRequirementsReviewPrompt,
   parseRequirementsReviewResult,
   ensurePlanFileExistsOrBootstrap,
+  FORCE_DISCOVERY_DECISION_PROMPT,
+  FORCE_REVIEW_DECISION_PROMPT,
 } from './preflight.js';
 import { buildAntonPrompt, parseAntonResult, classifyTaskComplexity } from './prompt.js';
 import { formatDryRunPlan } from './reporter.js';
@@ -517,30 +519,49 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         await ensureAgentsTasksDir(config.projectDir);
         const plannedFilePath =
           taskPlanByTaskKey.get(currentTask.key) ?? makeUniqueTaskPlanFilename(config.projectDir);
+        // Default to 50 iterations for discovery (was 500 - way too high for a simple JSON check)
         let discoveryIterationCap = Math.max(
           1,
-          Math.floor(config.preflightSessionMaxIterations ?? 500)
+          Math.floor(config.preflightSessionMaxIterations ?? 50)
         );
         let discoveryRetryHint: string | undefined;
 
+        // Shared preflight session - reused between discovery and review stages to avoid
+        // session creation overhead. Created lazily, closed on error (for fresh retry state)
+        // or at end of preflight block.
+        let preflightSession: AgentSession | undefined;
+        const closePreflightSession = async () => {
+          if (preflightSession) {
+            try {
+              await preflightSession.close();
+            } catch {
+              // best effort
+            }
+            preflightSession = undefined;
+          }
+        };
+
+        try {
         // Stage 1: discovery (retry discovery only).
         for (let discoveryTry = 0; discoveryTry <= preflightMaxRetries; discoveryTry++) {
           const stageStart = Date.now();
           const discoveryTimeoutSec = config.preflightDiscoveryTimeoutSec ?? config.taskTimeoutSec;
           const discoveryTimeoutMs = discoveryTimeoutSec * 1000;
-          let discoverySession: AgentSession | undefined;
 
           try {
             progress.onStage?.('🔎 Discovery: checking if already done...');
-            discoverySession = await createSessionFn(
-              buildPreflightConfig(
-                idlehandsConfig,
-                config,
-                discoveryTimeoutSec,
-                discoveryIterationCap
-              ),
-              apiKey
-            );
+            // Create session if not already open (first try or after error closed it)
+            if (!preflightSession) {
+              preflightSession = await createSessionFn(
+                buildPreflightConfig(
+                  idlehandsConfig,
+                  config,
+                  discoveryTimeoutSec,
+                  discoveryIterationCap
+                ),
+                apiKey
+              );
+            }
 
             const discoveryPrompt = buildDiscoveryPrompt({
               task: currentTask,
@@ -552,11 +573,11 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
 
             let discoveryTimeoutHandle: NodeJS.Timeout;
             const discoveryRes = await Promise.race([
-              discoverySession.ask(discoveryPrompt).finally(() => clearTimeout(discoveryTimeoutHandle)),
+              preflightSession.ask(discoveryPrompt).finally(() => clearTimeout(discoveryTimeoutHandle)),
               new Promise<never>((_, reject) => {
                 discoveryTimeoutHandle = setTimeout(() => {
                   try {
-                    discoverySession?.cancel();
+                    preflightSession?.cancel();
                   } catch {
                     // best effort
                   }
@@ -565,10 +586,34 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               }),
             ]);
 
-            const discoveryTokens =
-              discoverySession.usage.prompt + discoverySession.usage.completion;
+            let discoveryTokens =
+              preflightSession.usage.prompt + preflightSession.usage.completion;
             totalTokens += discoveryTokens;
-            const discovery = parseDiscoveryResult(discoveryRes.text, config.projectDir);
+
+            // Try to parse discovery result; if invalid JSON, attempt force-decision prompt
+            let discovery;
+            try {
+              discovery = parseDiscoveryResult(discoveryRes.text, config.projectDir);
+            } catch (parseError) {
+              const parseErrMsg = parseError instanceof Error ? parseError.message : String(parseError);
+              // Only try force-decision for JSON/format errors, not file path errors
+              if (/preflight-json-missing-object|preflight-discovery-invalid/i.test(parseErrMsg)) {
+                progress.onStage?.('⚠️ Discovery output invalid, requesting forced decision...');
+                try {
+                  const forceRes = await preflightSession.ask(FORCE_DISCOVERY_DECISION_PROMPT);
+                  const forceTokens = preflightSession.usage.prompt + preflightSession.usage.completion - discoveryTokens;
+                  discoveryTokens += forceTokens;
+                  totalTokens += forceTokens;
+                  discovery = parseDiscoveryResult(forceRes.text, config.projectDir);
+                  progress.onStage?.('✅ Forced decision succeeded');
+                } catch (forceError) {
+                  // Force-decision also failed, throw original error
+                  throw parseError;
+                }
+              } else {
+                throw parseError;
+              }
+            }
 
             preflightRecords.push({
               taskKey: currentTask.key,
@@ -586,6 +631,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               progress.onStage?.(`✅ Discovery confirmed already complete: ${currentTask.text}`);
               preflightMarkedComplete = true;
               discoveryOk = true;
+              // No review needed - close session now
+              await closePreflightSession();
               break;
             }
 
@@ -643,6 +690,9 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             }
 
             if (discoveryTry < preflightMaxRetries) {
+              // Close session on error so retry gets fresh state
+              await closePreflightSession();
+
               if (/max iterations exceeded/i.test(errMsg)) {
                 const nextCap = Math.min(
                   Math.max(discoveryIterationCap * 2, discoveryIterationCap + 2),
@@ -682,13 +732,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             taskPlanByTaskKey.set(currentTask.key, plannedFilePath);
             discoveryOk = true;
             break;
-          } finally {
-            try {
-              await discoverySession?.close();
-            } catch {
-              // best effort
-            }
           }
+          // Note: session stays open for reuse in review stage (closed at end of preflight block)
         }
 
         // Discovery already marked complete -> next task.
@@ -701,35 +746,42 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         }
 
         // Stage 2: requirements review (retry review only; keep same plan file).
-        if (config.preflightRequirementsReview) {
+        // NOTE: Discovery prompt now includes review instructions, producing a "reviewed" plan.
+        // Separate review stage is skipped by default to save an LLM round-trip.
+        // Set preflightRequirementsReview=true AND preflightSeparateReview=true to force separate review.
+        const skipSeparateReview = !config.preflightSeparateReview;
+        if (config.preflightRequirementsReview && !skipSeparateReview) {
           const reviewPlanFile = taskPlanByTaskKey.get(currentTask.key) ?? plannedFilePath;
           let reviewOk = false;
+          // Default to 30 iterations for review (simpler than discovery, just refining existing plan)
           let reviewIterationCap = Math.max(
             1,
-            Math.floor(config.preflightSessionMaxIterations ?? 500)
+            Math.floor(config.preflightSessionMaxIterations ?? 30)
           );
 
           for (let reviewTry = 0; reviewTry <= preflightMaxRetries; reviewTry++) {
             const stageStart = Date.now();
             const reviewTimeoutSec = config.preflightReviewTimeoutSec ?? config.taskTimeoutSec;
             const reviewTimeoutMs = reviewTimeoutSec * 1000;
-            let reviewSession: AgentSession | undefined;
 
             try {
               progress.onStage?.('🧪 Requirements review: refining plan...');
-              reviewSession = await createSessionFn(
-                buildPreflightConfig(idlehandsConfig, config, reviewTimeoutSec, reviewIterationCap),
-                apiKey
-              );
+              // Reuse preflight session from discovery, or create new one if needed (e.g., after error)
+              if (!preflightSession) {
+                preflightSession = await createSessionFn(
+                  buildPreflightConfig(idlehandsConfig, config, reviewTimeoutSec, reviewIterationCap),
+                  apiKey
+                );
+              }
 
               const reviewPrompt = buildRequirementsReviewPrompt(reviewPlanFile);
               let reviewTimeoutHandle: NodeJS.Timeout;
               const reviewRes = await Promise.race([
-                reviewSession.ask(reviewPrompt).finally(() => clearTimeout(reviewTimeoutHandle)),
+                preflightSession.ask(reviewPrompt).finally(() => clearTimeout(reviewTimeoutHandle)),
                 new Promise<never>((_, reject) => {
                   reviewTimeoutHandle = setTimeout(() => {
                     try {
-                      reviewSession?.cancel();
+                      preflightSession?.cancel();
                     } catch {
                       // best effort
                     }
@@ -738,9 +790,33 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                 }),
               ]);
 
-              const reviewTokens = reviewSession.usage.prompt + reviewSession.usage.completion;
+              let reviewTokens = preflightSession.usage.prompt + preflightSession.usage.completion;
               totalTokens += reviewTokens;
-              const review = parseRequirementsReviewResult(reviewRes.text, config.projectDir);
+
+              // Try to parse review result; if invalid JSON, attempt force-decision prompt
+              let review;
+              try {
+                review = parseRequirementsReviewResult(reviewRes.text, config.projectDir);
+              } catch (parseError) {
+                const parseErrMsg = parseError instanceof Error ? parseError.message : String(parseError);
+                // Only try force-decision for JSON/format errors
+                if (/preflight-json-missing-object|preflight-review-invalid/i.test(parseErrMsg)) {
+                  progress.onStage?.('⚠️ Review output invalid, requesting forced decision...');
+                  try {
+                    const forceRes = await preflightSession.ask(FORCE_REVIEW_DECISION_PROMPT);
+                    const forceTokens = preflightSession.usage.prompt + preflightSession.usage.completion - reviewTokens;
+                    reviewTokens += forceTokens;
+                    totalTokens += forceTokens;
+                    review = parseRequirementsReviewResult(forceRes.text, config.projectDir);
+                    progress.onStage?.('✅ Forced decision succeeded');
+                  } catch (forceError) {
+                    // Force-decision also failed, throw original error
+                    throw parseError;
+                  }
+                } else {
+                  throw parseError;
+                }
+              }
 
               const reviewPlanState = await ensurePlanFileExistsOrBootstrap({
                 absPath: review.filename,
@@ -803,6 +879,9 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               }
 
               if (reviewTry < preflightMaxRetries) {
+                // Close session on error so retry gets fresh state
+                await closePreflightSession();
+
                 if (/max iterations exceeded/i.test(errMsg)) {
                   const nextCap = Math.min(
                     Math.max(reviewIterationCap * 2, reviewIterationCap + 2),
@@ -837,18 +916,17 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               attempts.push(preflightAttempt);
               taskRetryCount.set(currentTask.key, retries + 1);
               if (!config.skipOnFail) break mainLoop;
-            } finally {
-              try {
-                await reviewSession?.close();
-              } catch {
-                // best effort
-              }
             }
+            // Note: session stays open, will be closed at end of preflight block
           }
 
           if (!reviewOk) {
             continue;
           }
+        }
+        } finally {
+          // Always close preflight session at end of preflight block
+          await closePreflightSession();
         }
       }
 

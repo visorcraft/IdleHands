@@ -3,6 +3,25 @@
  */
 
 import { createHash } from 'node:crypto';
+
+// Force-decision prompts for when the model doesn't return valid JSON in time
+export const FORCE_DISCOVERY_DECISION_PROMPT = `STOP. You must return your discovery result NOW.
+
+Return ONLY this JSON (no markdown, no explanation, no tool calls):
+{"status":"complete","filename":""}
+OR
+{"status":"incomplete","filename":"<absolute-path-to-plan-file-you-created>"}
+
+If you wrote a plan file, use that path. If task is already done, use "complete" with empty filename.
+JSON only. Nothing else.`;
+
+export const FORCE_REVIEW_DECISION_PROMPT = `STOP. You must return your review result NOW.
+
+Return ONLY this JSON (no markdown, no explanation, no tool calls):
+{"status":"ready","filename":"<absolute-path-to-plan-file>"}
+
+Use the plan file path you were reviewing.
+JSON only. Nothing else.`;
 import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -148,46 +167,50 @@ export function buildDiscoveryPrompt(opts: {
   planFilePath: string;
   retryHint?: string;
 }): string {
-  return `You are running PRE-FLIGHT DISCOVERY for an autonomous coding orchestrator.
+  return `You are running PRE-FLIGHT for an autonomous coding orchestrator.
 
-CRITICAL: DO NOT COMPLETE THE TASK. DO NOT IMPLEMENT ANY CODE CHANGES.
-Your only goals are:
-1) Verify whether the task is already fully complete in the current codebase.
-2) If incomplete, determine what likely needs to change and which files are likely involved.
+## SPEED PRIORITY
+Return your JSON decision IMMEDIATELY if possible.
+- Most new tasks are obviously incomplete — don't waste time verifying.
+- Only read files if you CANNOT determine status from the task description alone.
+- If in doubt, assume INCOMPLETE and write the plan.
 
-Task metadata:
-- Task file: ${opts.taskFilePath}
-- Task line: ${opts.task.line}
-- Phase: ${opts.task.phasePath.join(' > ') || 'N/A'}
-- Project dir: ${opts.projectDir}
+## RULES
+- DO NOT implement code changes. DO NOT modify source files.
+- You may ONLY write to: ${path.resolve(opts.projectDir, '.agents', 'tasks')}
 
-FULL TASK (VERBATIM):
+## TASK
+File: ${opts.taskFilePath} (line ${opts.task.line})
+Phase: ${opts.task.phasePath.join(' > ') || 'N/A'}
+
 ${opts.task.text}
 
-If task is already complete:
-- Return EXACT JSON only:
-{"status":"complete","filename":""}
+## DECISION FLOW
 
-If task is incomplete:
-- Create/update this markdown file path exactly: ${opts.planFilePath}
-- You MUST NOT modify any files outside: ${path.resolve(opts.projectDir, '.agents', 'tasks')}
-- DO NOT call edit_range/apply_patch on source files in discovery.
-- The markdown MUST include:
-  - The FULL TASK (VERBATIM)
-  - What is missing
-  - Concrete implementation recommendation
-  - Likely files to modify/create (or explicitly state none)
-- Then return EXACT JSON only:
-{"status":"incomplete","filename":"${opts.planFilePath}"}
+**If task is ALREADY COMPLETE** (you are CERTAIN it's done):
+→ Return: {"status":"complete","filename":""}
 
+**If task is INCOMPLETE or UNCERTAIN** (the common case):
+1. Write a plan to: ${opts.planFilePath}
+2. The plan MUST include:
+   - Task description (verbatim)
+   - What needs to be done
+   - Implementation approach (reviewed for correctness, edge cases, code reuse)
+   - Files to modify/create
+3. Return: {"status":"incomplete","filename":"${opts.planFilePath}"}
+
+Note: Write a REVIEWED plan — thorough enough that implementation can proceed without further planning.
 ${
   opts.retryHint
-    ? `RETRY CONTEXT: ${opts.retryHint}
-If prior attempts failed, keep output minimal, write/update only the plan file above, and return valid JSON.`
+    ? `
+## RETRY CONTEXT
+${opts.retryHint}
+Keep output minimal. Write the plan file and return JSON immediately.`
     : ''
 }
 
-Return JSON only. No markdown fences. No commentary.`;
+## OUTPUT
+Return ONLY the JSON object. No markdown fences. No explanation.`;
 }
 
 export function buildRequirementsReviewPrompt(planFilePath: string): string {

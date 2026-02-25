@@ -768,6 +768,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       projectDir: tmpDir,
       preflightEnabled: true,
       preflightRequirementsReview: true,
+      preflightSeparateReview: true,
     } as any);
 
     const prompts: string[] = [];
@@ -858,7 +859,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       ({
         ...createMockSession(['<anton-result>status: done</anton-result>']),
         async ask(prompt: string) {
-          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+          if (prompt.includes('PRE-FLIGHT')) {
             return { text: 'not-json', turns: 1, toolCalls: 0 } as any;
           }
           return {
@@ -911,7 +912,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       ({
         ...createMockSession(['<anton-result>status: done</anton-result>']),
         async ask(prompt: string) {
-          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+          if (prompt.includes('PRE-FLIGHT')) {
             await new Promise((r) => setTimeout(r, 120));
             return { text: '{"status":"complete","filename":""}', turns: 1, toolCalls: 0 } as any;
           }
@@ -947,6 +948,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       projectDir: tmpDir,
       preflightEnabled: true,
       preflightRequirementsReview: true,
+      preflightSeparateReview: true,
     } as any);
 
     const stageMessages: string[] = [];
@@ -1006,6 +1008,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       projectDir: tmpDir,
       preflightEnabled: true,
       preflightRequirementsReview: true,
+      preflightSeparateReview: true,
       preflightMaxRetries: 1,
     } as any);
 
@@ -1023,7 +1026,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       ({
         ...createMockSession(['<anton-result>status: done</anton-result>']),
         async ask(prompt: string) {
-          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+          if (prompt.includes('PRE-FLIGHT')) {
             discoveryCalls++;
             return {
               text: `{"status":"incomplete","filename":"${planFile}"}`,
@@ -1088,7 +1091,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       return {
         ...createMockSession(['<anton-result>status: done</anton-result>']),
         async ask(prompt: string) {
-          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+          if (prompt.includes('PRE-FLIGHT')) {
             return {
               text: `{"status":"incomplete","filename":"${planFile}"}`,
               turns: 1,
@@ -1142,7 +1145,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       ({
         ...createMockSession(['<anton-result>status: done</anton-result>']),
         async ask(prompt: string) {
-          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+          if (prompt.includes('PRE-FLIGHT')) {
             return {
               text: `{"status":"incomplete","filename":"${planFile}"}`,
               turns: 1,
@@ -1200,7 +1203,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       ({
         ...createMockSession(['<anton-result>status: done</anton-result>']),
         async ask(prompt: string) {
-          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+          if (prompt.includes('PRE-FLIGHT')) {
             discoveryCalls++;
             discoveryCaps.push(sessionConfig.max_iterations ?? 0);
             if (discoveryCalls === 1) throw new Error('max iterations exceeded (3)');
@@ -1247,7 +1250,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       ({
         ...createMockSession(['<anton-result>status: done</anton-result>']),
         async ask(prompt: string) {
-          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+          if (prompt.includes('PRE-FLIGHT')) {
             discoveryCalls++;
             return {
               text: 'not-json-output',
@@ -1306,7 +1309,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       ({
         ...createMockSession(['<anton-result>status: done</anton-result>']),
         async ask(prompt: string) {
-          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+          if (prompt.includes('PRE-FLIGHT')) {
             discoveryCalls++;
             throw new Error(
               'tool edit_range: identical call repeated 3x across turns; breaking loop.'
