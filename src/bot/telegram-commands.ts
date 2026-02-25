@@ -11,9 +11,32 @@ import type { Bot } from 'grammy';
 import {
   TELEGRAM_MODELS_PER_PAGE,
   buildRuntimeModelPickerPage,
+  filterRuntimeModels,
   formatRuntimeModelPickerText,
   truncateLabel,
 } from './runtime-model-picker.js';
+
+const modelQueryRegistry = new Map<string, string>();
+const MODEL_QUERY_REGISTRY_LIMIT = 200;
+
+function registerModelQuery(query: string): string {
+  const trimmed = String(query ?? '').trim();
+  if (!trimmed) return '-';
+  const key = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  modelQueryRegistry.set(key, trimmed);
+
+  if (modelQueryRegistry.size > MODEL_QUERY_REGISTRY_LIMIT) {
+    const oldest = modelQueryRegistry.keys().next().value;
+    if (oldest) modelQueryRegistry.delete(oldest);
+  }
+
+  return key;
+}
+
+function readModelQuery(key: string | undefined): string {
+  if (!key || key === '-') return '';
+  return modelQueryRegistry.get(key) ?? '';
+}
 
 /**
  * Register runtime-related command handlers on the bot instance.
@@ -56,7 +79,7 @@ export function registerRuntimeCommands(bot: Bot): void {
     }
   });
 
-  const buildTelegramModelPage = async (page: number) => {
+  const buildTelegramModelPage = async (page: number, query = '', queryKey = '-') => {
     const { loadRuntimes } = await import('../runtime/store.js');
     const { loadActiveRuntime } = await import('../runtime/executor.js');
 
@@ -66,14 +89,15 @@ export function registerRuntimeCommands(bot: Bot): void {
       return { empty: 'No runtime models configured.' } as const;
     }
 
-    const enabledModels = config.models.filter((m: any) => m.enabled);
-    if (!enabledModels.length) {
+    const filteredModels = filterRuntimeModels(config.models as any, query);
+    if (!filteredModels.length) {
+      const suffix = query ? ` matching "${truncateLabel(query, 48)}"` : '';
       return {
-        empty: 'No enabled runtime models. Use `idlehands models enable <id>` in CLI.',
+        empty: `No enabled runtime models${suffix}.`,
       } as const;
     }
 
-    const modelPage = buildRuntimeModelPickerPage(enabledModels as any, {
+    const modelPage = buildRuntimeModelPickerPage(filteredModels as any, {
       page,
       perPage: TELEGRAM_MODELS_PER_PAGE,
       activeModelId: active?.modelId,
@@ -92,7 +116,9 @@ export function registerRuntimeCommands(bot: Bot): void {
       rows.push([
         {
           text: modelPage.hasPrev ? '⬅️ Prev' : '·',
-          callback_data: modelPage.hasPrev ? `model_page:${modelPage.page - 1}` : 'model_page_noop',
+          callback_data: modelPage.hasPrev
+            ? `model_page:${modelPage.page - 1}:${queryKey}`
+            : 'model_page_noop',
         },
         {
           text: `${modelPage.page + 1}/${modelPage.totalPages}`,
@@ -100,7 +126,9 @@ export function registerRuntimeCommands(bot: Bot): void {
         },
         {
           text: modelPage.hasNext ? 'Next ➡️' : '·',
-          callback_data: modelPage.hasNext ? `model_page:${modelPage.page + 1}` : 'model_page_noop',
+          callback_data: modelPage.hasNext
+            ? `model_page:${modelPage.page + 1}:${queryKey}`
+            : 'model_page_noop',
         },
       ]);
     }
@@ -109,6 +137,7 @@ export function registerRuntimeCommands(bot: Bot): void {
       header: '📋 Select a model to switch to',
       maxDisplayName: 64,
       maxModelId: 72,
+      query,
     });
 
     return { text, keyboard: rows } as const;
@@ -116,7 +145,9 @@ export function registerRuntimeCommands(bot: Bot): void {
 
   const handleRuntimeModels = async (ctx: any) => {
     try {
-      const page = await buildTelegramModelPage(0);
+      const query = ctx.match?.toString()?.trim() ?? '';
+      const queryKey = registerModelQuery(query);
+      const page = await buildTelegramModelPage(0, query, queryKey);
       if ('empty' in page) {
         await ctx.reply(page.empty);
         return;
@@ -338,15 +369,15 @@ export async function handleModelSelectCallback(ctx: any): Promise<boolean> {
     return true;
   }
 
-  const buildTelegramModelPage = async (page: number) => {
+  const buildTelegramModelPage = async (page: number, query = '', queryKey = '-') => {
     const { loadRuntimes } = await import('../runtime/store.js');
     const { loadActiveRuntime } = await import('../runtime/executor.js');
 
     const config = await loadRuntimes();
     const active = await loadActiveRuntime().catch(() => null);
-    const enabledModels = config.models.filter((m: any) => m.enabled);
+    const filteredModels = filterRuntimeModels(config.models as any, query);
 
-    const modelPage = buildRuntimeModelPickerPage(enabledModels as any, {
+    const modelPage = buildRuntimeModelPickerPage(filteredModels as any, {
       page,
       perPage: TELEGRAM_MODELS_PER_PAGE,
       activeModelId: active?.modelId,
@@ -366,7 +397,9 @@ export async function handleModelSelectCallback(ctx: any): Promise<boolean> {
       rows.push([
         {
           text: modelPage.hasPrev ? '⬅️ Prev' : '·',
-          callback_data: modelPage.hasPrev ? `model_page:${modelPage.page - 1}` : 'model_page_noop',
+          callback_data: modelPage.hasPrev
+            ? `model_page:${modelPage.page - 1}:${queryKey}`
+            : 'model_page_noop',
         },
         {
           text: `${modelPage.page + 1}/${modelPage.totalPages}`,
@@ -374,7 +407,9 @@ export async function handleModelSelectCallback(ctx: any): Promise<boolean> {
         },
         {
           text: modelPage.hasNext ? 'Next ➡️' : '·',
-          callback_data: modelPage.hasNext ? `model_page:${modelPage.page + 1}` : 'model_page_noop',
+          callback_data: modelPage.hasNext
+            ? `model_page:${modelPage.page + 1}:${queryKey}`
+            : 'model_page_noop',
         },
       ]);
     }
@@ -383,17 +418,22 @@ export async function handleModelSelectCallback(ctx: any): Promise<boolean> {
       header: '📋 Select a model to switch to',
       maxDisplayName: 64,
       maxModelId: 72,
+      query,
     });
 
     return { text, keyboard: rows };
   };
 
   if (data.startsWith('model_page:')) {
-    const page = Number.parseInt(data.slice('model_page:'.length), 10);
+    const rest = data.slice('model_page:'.length);
+    const [pageRaw, queryKeyRaw] = rest.split(':', 2);
+    const page = Number.parseInt(pageRaw, 10);
+    const queryKey = queryKeyRaw ?? '-';
+    const query = readModelQuery(queryKey);
     await ctx.answerCallbackQuery().catch(() => {});
 
     try {
-      const payload = await buildTelegramModelPage(Number.isFinite(page) ? page : 0);
+      const payload = await buildTelegramModelPage(Number.isFinite(page) ? page : 0, query, queryKey);
       await ctx
         .editMessageText(payload.text, {
           reply_markup: { inline_keyboard: payload.keyboard },
