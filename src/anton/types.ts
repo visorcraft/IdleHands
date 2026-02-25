@@ -56,6 +56,8 @@ export interface AntonRunConfig {
   preflightEnabled?: boolean;
   /** Run peer requirements review stage after discovery (when preflight is enabled). */
   preflightRequirementsReview?: boolean;
+  /** Force separate review stage (by default, review is merged into discovery prompt). */
+  preflightSeparateReview?: boolean;
   /** Discovery-stage timeout in seconds. Falls back to taskTimeoutSec. */
   preflightDiscoveryTimeoutSec?: number;
   /** Requirements-review-stage timeout in seconds. Falls back to taskTimeoutSec. */
