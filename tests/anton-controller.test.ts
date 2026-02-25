@@ -7,7 +7,7 @@
 
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
-import { mkdtemp, writeFile, readFile, mkdir, readdir } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, mkdir, readdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, describe, beforeEach, afterEach } from 'node:test';
@@ -1172,6 +1172,70 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     const fallbackBody = await readFile(planFile, 'utf8');
     assert.match(fallbackBody, /auto-generated fallback/i);
     assert.ok(stageMessages.some((m) => m.includes('Created fallback plan file')));
+  });
+
+  test('17i2. Discovery retries write when filename exists in JSON but file is missing', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+    const planFile = join(tmpDir, '.agents', 'tasks', 'rewrite-plan.md');
+
+    const stageMessages: string[] = [];
+    const progress = {
+      ...createMockProgressCallback(),
+      onStage: (m: string) => stageMessages.push(m),
+    } as any;
+
+    const createSession = async () =>
+      ({
+        ...createMockSession(['<anton-result>status: done</anton-result>']),
+        async ask(prompt: string) {
+          if (prompt.includes('PRE-FLIGHT DISCOVERY')) {
+            return {
+              text: `{"status":"incomplete","filename":"${planFile}"}`,
+              turns: 1,
+              toolCalls: 0,
+            } as any;
+          }
+          if (prompt.includes('The plan file you returned is invalid')) {
+            await mkdir(join(tmpDir, '.agents', 'tasks'), { recursive: true });
+            await writeFile(planFile, '# rewritten plan\n\n- item', 'utf8');
+            return {
+              text: `{"status":"incomplete","filename":"${planFile}"}`,
+              turns: 1,
+              toolCalls: 0,
+            } as any;
+          }
+          return {
+            text: '<anton-result>status: done</anton-result>',
+            turns: 1,
+            toolCalls: 0,
+          } as any;
+        },
+      }) as any;
+
+    const result = await runAnton({
+      config: createTestConfig({
+        taskFile,
+        projectDir: tmpDir,
+        preflightEnabled: true,
+        preflightRequirementsReview: false,
+        preflightMaxRetries: 0,
+      } as any),
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress,
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.equal(result.completedAll, true);
+    const plans = await readdir(join(tmpDir, '.agents', 'tasks'));
+    assert.ok(plans.some((f) => f.endsWith('.md')));
+    const sizes = await Promise.all(
+      plans
+        .filter((f) => f.endsWith('.md'))
+        .map(async (f) => (await stat(join(tmpDir, '.agents', 'tasks', f))).size)
+    );
+    assert.ok(sizes.some((n) => n > 0));
   });
 
   test('17j. Discovery max-iterations error auto-increases preflight cap on retry', async () => {
