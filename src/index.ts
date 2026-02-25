@@ -285,6 +285,8 @@ async function main() {
     max_tokens: asNum(args['max-tokens'] ?? args.max_tokens),
     temperature: asNum(args.temperature),
     top_p: asNum(args['top-p'] ?? args.top_p),
+    frequency_penalty: asNum(args['frequency-penalty'] ?? args.frequency_penalty),
+    presence_penalty: asNum(args['presence-penalty'] ?? args.presence_penalty),
     timeout: asNum(args.timeout),
     response_timeout: asNum(args['response-timeout'] ?? args.response_timeout),
     connection_timeout: asNum(args['connection-timeout'] ?? args.connection_timeout),
