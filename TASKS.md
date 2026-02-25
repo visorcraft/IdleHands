@@ -66,14 +66,14 @@ Existing commands that **must not break**:
 
 New behavior must be additive:
 - `/health discover` for port scanning (new)
-- `/mode fast|heavy|auto` for routing (new)
+- `/routing_mode fast|heavy|auto` for routing (new)
 - `/anton doctor` for preflight diagnostics (new)
 
 ---
 
 ### Session Persistence Modes
 
-Phase 6 mentions `default|sticky|ephemeral` modes:
+Phase 6 mentions `default|sticky|ephemeral` routing modes:
 
 - **default**: Session timeout after inactivity (current behavior)
 - **sticky**: Session persists until explicit `/reset`
@@ -128,11 +128,11 @@ session_persistence?: 'default' | 'sticky' | 'ephemeral';
   - [x] `routing.default_mode`.
   - [x] `routing.fast_model`.
   - [x] `routing.auto_escalation_rules`.
-- [x] Add bot commands:
-  - [x] `/mode fast`.
-  - [x] `/mode heavy`.
-  - [x] `/mode auto`.
-  - [x] `/mode status`.
+- [ ] Add bot commands:
+  - [ ] `/routing_mode fast`.
+  - [ ] `/routing_mode heavy`.
+  - [ ] `/routing_mode auto`.
+  - [ ] `/routing_mode status`.
 - [ ] Add one-click retry actions from result/error blocks:
   - [ ] `Retry Fast`.
   - [ ] `Retry Heavy`.
