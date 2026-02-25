@@ -71,27 +71,14 @@ export function approvalSetCommand(managed: ManagedLike, arg: string): CmdResult
   return { success: `✅ Approval mode set to ${arg}` };
 }
 
-// Routing modes for Phase 2 - Fast/Heavy/Auto Routing
-const ROUTING_MODES = ['auto', 'fast', 'heavy'] as const;
-
 export function modeShowCommand(managed: ManagedLike): CmdResult {
   const mode = managed.config.mode ?? 'code';
-  return { 
+  return {
     kv: [['Mode', mode, true]],
-    lines: mode === 'auto' || mode === 'fast' || mode === 'heavy' 
-      ? [`Routing mode: ${mode}`] 
-      : undefined
   };
 }
 
 export function modeSetCommand(managed: ManagedLike, arg: string): CmdResult {
-  // Check if it's a routing mode
-  if (ROUTING_MODES.includes(arg as any)) {
-    managed.config.mode = arg as any;
-    return { success: `✅ Routing mode set to ${arg}` };
-  }
-  
-  // Check if it's a legacy mode (code/sys)
   if (arg === 'code' || arg === 'sys') {
     managed.config.mode = arg;
     if (arg === 'sys' && managed.config.approval_mode === 'auto-edit') {
@@ -100,36 +87,20 @@ export function modeSetCommand(managed: ManagedLike, arg: string): CmdResult {
     }
     return { success: `✅ Mode set to ${arg}` };
   }
-  
-  // Invalid mode
-  return { 
-    error: `Invalid mode. Options: code, sys, ${ROUTING_MODES.join(', ')}`
+
+  return {
+    error: 'Invalid mode. Options: code, sys',
   };
 }
 
 export function modeStatusCommand(managed: ManagedLike): CmdResult {
   const mode = managed.config.mode ?? 'code';
-  const lines: string[] = [];
-  
-  if (mode === 'auto' || mode === 'fast' || mode === 'heavy') {
-    lines.push(`Current routing mode: ${mode}`);
-  } else {
-    lines.push(`Current mode: ${mode}`);
-  }
-  
-  // Show routing config if available
-  const routing = managed.config.routing;
-  if (routing) {
-    lines.push(`Default mode: ${routing.defaultMode ?? 'auto'}`);
-    lines.push(`Fast model: ${routing.fastModel ?? 'not configured'}`);
-    lines.push(`Heavy model: ${routing.heavyModel ?? 'not configured'}`);
-  } else {
-    lines.push('Routing not configured');
-  }
-  
-  return { 
-    title: 'Routing Mode Status',
-    lines
+  return {
+    title: 'Mode Status',
+    lines: [
+      `Current mode: ${mode}`,
+      'Use /plan and /approval for planning/approval behavior.',
+    ],
   };
 }
 
