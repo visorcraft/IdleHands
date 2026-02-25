@@ -7,6 +7,7 @@
 
 import type { UXBlock } from './renderer.js';
 import { blocksToPlainText } from './renderer.js';
+import { truncateBlocks } from './shared-formatter.js';
 
 /**
  * Telegram message length limit (hard limit: 4096 characters).
@@ -96,31 +97,10 @@ function blockToTelegramHtml(block: UXBlock, opts?: TelegramRenderOptions): stri
  * Truncates content if necessary and adds ellipsis.
  */
 export function renderTelegramHtml(blocks: UXBlock[], opts?: TelegramRenderOptions): string {
-  const maxLen = Math.max(256, Math.floor(opts?.maxLen ?? TELEGRAM_MAX_LEN));
-
-  const parts: string[] = [];
-  let used = 0;
-  let truncated = false;
-
-  for (const block of blocks) {
-    const piece = blockToTelegramHtml(block, opts);
-    const sep = parts.length ? '\n\n' : '';
-    const add = sep + piece;
-
-    if (used + add.length > maxLen) {
-      truncated = true;
-      break;
-    }
-
-    parts.push(add);
-    used += add.length;
-  }
-
-  let out = parts.join('');
-  if (truncated && out.length + 2 <= maxLen) out += '\n…';
-  if (!out.trim()) out = '⏳ Thinking...';
-
-  return out;
+  return truncateBlocks(blocks, blockToTelegramHtml, {
+    maxLen: opts?.maxLen ?? TELEGRAM_MAX_LEN,
+    fallback: '⏳ Thinking...',
+  });
 }
 
 /**

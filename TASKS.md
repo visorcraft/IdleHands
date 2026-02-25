@@ -118,7 +118,7 @@ session_persistence?: 'default' | 'sticky' | 'ephemeral';
 ### Phase 1 Definition of Done
 
 - [x] Telegram and Discord emit identical semantic events for the same workflow stage.
-- [ ] No duplicated status/progress formatting blocks across bot implementations.
+- [x] No duplicated status/progress formatting blocks across bot implementations.
 
 ## Phase 2 — Fast/Heavy/Auto Routing (Latency UX Breakthrough)
 
