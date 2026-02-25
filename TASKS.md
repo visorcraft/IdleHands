@@ -130,8 +130,8 @@ session_persistence?: 'default' | 'sticky' | 'ephemeral';
   - [x] `routing.auto_escalation_rules`.
 - [ ] Add bot commands:
   - [x] `/routing_mode fast`.
-  - [ ] `/routing_mode heavy`.
-  - [ ] `/routing_mode auto`.
+  - [x] `/routing_mode heavy`.
+  - [x] `/routing_mode auto`.
   - [ ] `/routing_mode status`.
 - [ ] Add one-click retry actions from result/error blocks:
   - [ ] `Retry Fast`.
