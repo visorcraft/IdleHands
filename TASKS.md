@@ -113,7 +113,7 @@ session_persistence?: 'default' | 'sticky' | 'ephemeral';
 - [x] Create shared module `src/bot/ux/progress-throttle.ts` for unified rate-limiting and heartbeat behavior.
 - [x] Refactor Telegram and Discord handlers to consume shared UX core instead of duplicating message composition logic.
 - [x] Add tests: `tests/bot-ux-events.test.ts`, `tests/bot-ux-renderer.test.ts`, `tests/bot-ux-throttle.test.ts`.
-- [ ] Add lint/CI check preventing duplicate platform formatter logic for identical event types.
+- [x] Add lint/CI check preventing duplicate platform formatter logic for identical event types.
 
 ### Phase 1 Definition of Done
 
