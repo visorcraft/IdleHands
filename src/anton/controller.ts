@@ -652,8 +652,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                 filename: discovery.filename || undefined,
               });
               await markTaskChecked(config.taskFile, currentTask.key);
-              await autoCompleteAncestors(config.taskFile, currentTask.key);
-              autoCompleted += 1;
+              const ancestorsCompleted = await autoCompleteAncestors(config.taskFile, currentTask.key);
+              autoCompleted += 1 + ancestorsCompleted.length;
               progress.onStage?.(`✅ Discovery confirmed already complete: ${currentTask.text}`);
               preflightMarkedComplete = true;
               discoveryOk = true;
@@ -1480,13 +1480,15 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               if (config.autoCommit) {
                 // Mark task as checked and auto-complete ancestors first
                 await markTaskChecked(config.taskFile, currentTask.key);
-                await autoCompleteAncestors(config.taskFile, currentTask.key);
+                const ancestorsCompleted = await autoCompleteAncestors(config.taskFile, currentTask.key);
+                autoCompleted += ancestorsCompleted.length; // ancestors weren't directly worked on
 
                 commitHash = commitAll(config.projectDir, `Anton: ${currentTask.text}`);
                 if (commitHash) totalCommits++;
               } else {
                 await markTaskChecked(config.taskFile, currentTask.key);
-                await autoCompleteAncestors(config.taskFile, currentTask.key);
+                const ancestorsCompleted = await autoCompleteAncestors(config.taskFile, currentTask.key);
+                autoCompleted += ancestorsCompleted.length; // ancestors weren't directly worked on
               }
             } else {
               status = 'failed';
