@@ -46,6 +46,7 @@ export function buildAntonRunConfig(defaults: any, cwd: string, filePath: string
     skipOnFail: defaults.skip_on_fail ?? false,
     skipOnBlocked: defaults.skip_on_blocked ?? true,
     rollbackOnFail: defaults.rollback_on_fail ?? false,
+    scopeGuard: defaults.scope_guard ?? 'lax',
     maxIdenticalFailures: defaults.max_identical_failures ?? 3,
     approvalMode: (defaults.approval_mode ?? 'yolo') as AntonRunConfig['approvalMode'],
     verbose: false,

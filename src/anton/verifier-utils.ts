@@ -2,12 +2,79 @@ import { spawnSync } from 'node:child_process';
 
 import { getChangedFiles } from '../git.js';
 
+export type ScopeGuardMode = 'off' | 'lax' | 'strict';
+
 export type ScopeGuardResult = { ok: true } | { ok: false; reason: string; details: string };
 
 /**
- * If task text explicitly names files, enforce working tree changes stay in scope.
+ * Check if a changed file is related to an expected file.
+ * Used in 'lax' mode to allow test files, same-directory files, etc.
  */
-export function checkTaskScopeGuard(taskText: string, projectDir: string): ScopeGuardResult {
+function isRelatedFile(changedFile: string, expectedFile: string): boolean {
+  const changedBase = changedFile.replace(/^.*\//, '').replace(/\.[^.]+$/, '');
+  const expectedBase = expectedFile.replace(/^.*\//, '').replace(/\.[^.]+$/, '');
+  const changedDir = changedFile.includes('/') ? changedFile.replace(/\/[^/]+$/, '') : '';
+  const expectedDir = expectedFile.includes('/') ? expectedFile.replace(/\/[^/]+$/, '') : '';
+
+  // Same base name (e.g., AdminAction.php and AdminActionTest.php)
+  if (changedBase === expectedBase || changedBase.startsWith(expectedBase) || expectedBase.startsWith(changedBase)) {
+    return true;
+  }
+
+  // Test file patterns: FooTest, Foo.test, Foo.spec, test_Foo, foo_test
+  const testPatterns = [
+    new RegExp(`^${expectedBase}[._-]?[Tt]est`, 'i'),
+    new RegExp(`^${expectedBase}[._-]?[Ss]pec`, 'i'),
+    new RegExp(`^[Tt]est[._-]?${expectedBase}`, 'i'),
+    new RegExp(`${expectedBase}[._-]test$`, 'i'),
+    new RegExp(`${expectedBase}[._-]spec$`, 'i'),
+  ];
+  if (testPatterns.some(p => p.test(changedBase))) {
+    return true;
+  }
+
+  // Changed file is in a test directory and references the expected file's base name
+  const testDirs = ['tests', 'test', '__tests__', 'spec', 'specs', 'unit', 'integration', 'feature'];
+  const changedDirParts = changedDir.toLowerCase().split('/');
+  if (testDirs.some(d => changedDirParts.includes(d)) && changedBase.toLowerCase().includes(expectedBase.toLowerCase())) {
+    return true;
+  }
+
+  // Same directory
+  if (changedDir && expectedDir && changedDir === expectedDir) {
+    return true;
+  }
+
+  // Factory, fixture, mock, stub files related to the expected file
+  const relatedPatterns = [
+    new RegExp(`${expectedBase}[._-]?[Ff]actory`, 'i'),
+    new RegExp(`${expectedBase}[._-]?[Ff]ixture`, 'i'),
+    new RegExp(`${expectedBase}[._-]?[Mm]ock`, 'i'),
+    new RegExp(`${expectedBase}[._-]?[Ss]tub`, 'i'),
+    new RegExp(`[Mm]ock[._-]?${expectedBase}`, 'i'),
+  ];
+  if (relatedPatterns.some(p => p.test(changedBase))) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * If task text explicitly names files, enforce working tree changes stay in scope.
+ * 
+ * @param mode - 'off' (disabled), 'lax' (allow related files), 'strict' (exact match only)
+ */
+export function checkTaskScopeGuard(
+  taskText: string,
+  projectDir: string,
+  mode: ScopeGuardMode = 'strict'
+): ScopeGuardResult {
+  // Mode: off - no scope checking
+  if (mode === 'off') {
+    return { ok: true };
+  }
+
   const expected = extractExplicitTaskFiles(taskText);
   if (expected.length === 0) return { ok: true };
 
@@ -18,13 +85,35 @@ export function checkTaskScopeGuard(taskText: string, projectDir: string): Scope
   if (changed.length === 0) return { ok: true };
 
   const expectedSet = new Set(expected);
-  const outOfScope = changed.filter((f) => !expectedSet.has(f));
+  
+  let outOfScope: string[];
+  
+  if (mode === 'strict') {
+    // Strict: only exact matches allowed
+    outOfScope = changed.filter((f) => !expectedSet.has(f));
+  } else {
+    // Lax: allow related files (tests, same directory, etc.)
+    outOfScope = changed.filter((changedFile) => {
+      // Check exact match first
+      if (expectedSet.has(changedFile)) return false;
+      
+      // Check if related to any expected file
+      for (const expectedFile of expected) {
+        if (isRelatedFile(changedFile, expectedFile)) {
+          return false; // Not out of scope - it's related
+        }
+      }
+      
+      return true; // Out of scope
+    });
+  }
+
   if (outOfScope.length === 0) return { ok: true };
 
   return {
     ok: false,
     reason: `Scope guard failed: task explicitly targets ${expected.join(', ')} but modified out-of-scope files`,
-    details: `Expected: ${expected.join(', ')}\nChanged: ${changed.join(', ')}\nOut-of-scope: ${outOfScope.join(', ')}`,
+    details: `Expected: ${expected.join(', ')}\nChanged: ${changed.join(', ')}\nOut-of-scope: ${outOfScope.join(', ')}\nMode: ${mode}`,
   };
 }
 
