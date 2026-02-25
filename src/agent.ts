@@ -58,6 +58,7 @@ import { buildDefaultSystemPrompt, SystemPromptBuilder, VaultContextSection } fr
 import type { PromptContext } from './agent/prompt-builder.js';
 import { LeakDetector } from './security/leak-detector.js';
 import { PromptGuard } from './security/prompt-guard.js';
+import { ResponseCache } from './agent/response-cache.js';
 import { ToolLoopGuard } from './agent/tool-loop-guard.js';
 import { isLspTool, isMutationTool, isReadOnlyTool, planModeSummary } from './agent/tool-policy.js';
 import { buildToolsSchema } from './agent/tools-schema.js';
@@ -2295,6 +2296,18 @@ export async function createSession(opts: {
     // ── Security: credential leak detection + prompt injection guard ──
     const leakDetector = new LeakDetector();
     const promptGuard = new PromptGuard('warn');
+
+    // ── Performance: response cache for repeated identical prompts ──
+    let responseCache: ResponseCache | undefined;
+    try {
+      responseCache = new ResponseCache({
+        cacheDir: path.join(projectDir, '.idlehands', 'cache'),
+        ttlMinutes: 60,
+        maxEntries: 200,
+      });
+    } catch {
+      // Cache init failure is non-fatal — proceed without caching
+    }
     // Prevent repeating the same "stop rerunning" reminder every turn.
     const readOnlyExecHintedSigs = new Set<string>();
     // Tool loop recovery: poisoned results and selective tool suppression.
@@ -2626,7 +2639,32 @@ export async function createSession(opts: {
                 ? []
                 : getToolsSchema().filter((t) => !suppressedTools.has(t.function.name));
             const toolChoiceForTurn = cfg.no_tools || forceToollessRecoveryTurn ? 'none' : 'auto';
-            resp = await client.chatStream({
+
+            // ── Response cache: check for cached response ──────────────
+            // Only cache tool-less turns (final answers, explanations) since
+            // tool-calling turns have side effects that shouldn't be replayed.
+            const cacheableRequest = toolsForTurn.length === 0 && !!responseCache;
+            const lastUserMsg = messages.filter((m) => m.role === 'user').pop();
+            const userPromptForCache = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
+            const systemPromptForCache = messages.find((m) => m.role === 'system')?.content ?? '';
+
+            if (cacheableRequest && userPromptForCache.length >= 10) {
+              const cached = responseCache!.get(model, systemPromptForCache, userPromptForCache);
+              if (cached) {
+                resp = {
+                  id: 'cache-hit',
+                  choices: [{
+                    index: 0,
+                    message: { role: 'assistant' as const, content: cached },
+                    finish_reason: 'stop',
+                  }],
+                } as any;
+                if (cfg.verbose) console.log('[response-cache] cache hit, skipping API call');
+              }
+            }
+
+            if (!resp) {
+              resp = await client.chatStream({
               model,
               messages,
               tools: toolsForTurn,
@@ -2634,14 +2672,39 @@ export async function createSession(opts: {
               temperature,
               top_p: topP,
               max_tokens: maxTokens,
-              extra: { cache_prompt: cfg.cache_prompt ?? true },
+              extra: {
+                cache_prompt: cfg.cache_prompt ?? true,
+                // Speculative decoding: draft model params for llama-server
+                ...(cfg.draft_model ? { draft_model: cfg.draft_model } : {}),
+                ...(cfg.draft_n ? { speculative: { n: cfg.draft_n, p_min: cfg.draft_p_min ?? 0.5 } } : {}),
+              },
               signal: ac.signal,
               requestId: `r${reqCounter}`,
               onToken: hookObj.onToken,
               onFirstDelta,
             });
+            } // end if (!resp) — cache miss path
+
             // Successful response resets overflow recovery budget.
             overflowCompactionAttempts = 0;
+
+            // ── Response cache: store cacheable responses ─────────────
+            if (cacheableRequest && userPromptForCache.length >= 10 && resp.id !== 'cache-hit') {
+              const respContent = resp.choices?.[0]?.message?.content;
+              if (respContent && typeof respContent === 'string') {
+                try {
+                  responseCache!.set(
+                    model,
+                    systemPromptForCache,
+                    userPromptForCache,
+                    respContent,
+                    resp.usage?.completion_tokens ?? 0
+                  );
+                } catch {
+                  // Cache write failure is non-fatal
+                }
+              }
+            }
           } catch (e) {
             if (
               isContextWindowExceededError(e) &&
@@ -2762,7 +2825,7 @@ export async function createSession(opts: {
           console.warn(`[thinking] ${st.thinking}`);
         }
 
-        let toolCallsArr = msg?.tool_calls;
+        let toolCallsArr: import('./types.js').ToolCall[] | undefined = msg?.tool_calls;
 
         // For models with unreliable tool_calls arrays, validate entries and
         // fall through to content parsing if they look malformed (§4i).
@@ -3671,6 +3734,20 @@ export async function createSession(opts: {
               if (consec >= 2) {
                 content += `\n\n[WARNING: You have read this exact same resource ${consec}x consecutively with identical arguments. The content has NOT changed. Do NOT read it again. Use the information above and move on to the next step.]`;
               }
+            }
+
+            // ── Early truncation pass ──────────────────────────────────
+            // Cap extremely large tool output (>50KB) early to avoid
+            // running leak detection, loop guard, and other processing
+            // on megabytes of npm install / build output. The final
+            // precise truncation still happens before return.
+            const EARLY_TRUNCATION_LIMIT = 50_000;
+            if (content.length > EARLY_TRUNCATION_LIMIT) {
+              const headLen = Math.floor(EARLY_TRUNCATION_LIMIT * 0.8);
+              const tailLen = EARLY_TRUNCATION_LIMIT - headLen - 100;
+              content = content.slice(0, headLen) +
+                `\n\n[...${content.length - headLen - tailLen} chars truncated for processing efficiency...]\n\n` +
+                content.slice(-tailLen);
             }
 
             // Hook: onToolResult (Phase 8.5 + Phase 7 rich display)
