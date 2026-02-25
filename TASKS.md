@@ -134,8 +134,8 @@ session_persistence?: 'default' | 'sticky' | 'ephemeral';
   - [x] `/routing_mode auto`.
   - [x] `/routing_mode status`.
 - [ ] Add one-click retry actions from result/error blocks:
-  - [x] `Retry Fast`.
-  - [ ] `Retry Heavy`.
+  - [ ] `Retry Fast`.
+  - [x] `Retry Heavy`.
 
 ### Phase 2 Definition of Done
 
