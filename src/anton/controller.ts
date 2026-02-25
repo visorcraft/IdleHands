@@ -41,6 +41,8 @@ import {
   buildRequirementsReviewPrompt,
   parseRequirementsReviewResult,
   ensurePlanFileExistsOrBootstrap,
+  FORCE_DISCOVERY_DECISION_PROMPT,
+  FORCE_REVIEW_DECISION_PROMPT,
 } from './preflight.js';
 import { buildAntonPrompt, parseAntonResult, classifyTaskComplexity } from './prompt.js';
 import { formatDryRunPlan } from './reporter.js';
@@ -517,9 +519,10 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         await ensureAgentsTasksDir(config.projectDir);
         const plannedFilePath =
           taskPlanByTaskKey.get(currentTask.key) ?? makeUniqueTaskPlanFilename(config.projectDir);
+        // Default to 50 iterations for discovery (was 500 - way too high for a simple JSON check)
         let discoveryIterationCap = Math.max(
           1,
-          Math.floor(config.preflightSessionMaxIterations ?? 500)
+          Math.floor(config.preflightSessionMaxIterations ?? 50)
         );
         let discoveryRetryHint: string | undefined;
 
@@ -565,10 +568,34 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               }),
             ]);
 
-            const discoveryTokens =
+            let discoveryTokens =
               discoverySession.usage.prompt + discoverySession.usage.completion;
             totalTokens += discoveryTokens;
-            const discovery = parseDiscoveryResult(discoveryRes.text, config.projectDir);
+
+            // Try to parse discovery result; if invalid JSON, attempt force-decision prompt
+            let discovery;
+            try {
+              discovery = parseDiscoveryResult(discoveryRes.text, config.projectDir);
+            } catch (parseError) {
+              const parseErrMsg = parseError instanceof Error ? parseError.message : String(parseError);
+              // Only try force-decision for JSON/format errors, not file path errors
+              if (/preflight-json-missing-object|preflight-discovery-invalid/i.test(parseErrMsg)) {
+                progress.onStage?.('⚠️ Discovery output invalid, requesting forced decision...');
+                try {
+                  const forceRes = await discoverySession.ask(FORCE_DISCOVERY_DECISION_PROMPT);
+                  const forceTokens = discoverySession.usage.prompt + discoverySession.usage.completion - discoveryTokens;
+                  discoveryTokens += forceTokens;
+                  totalTokens += forceTokens;
+                  discovery = parseDiscoveryResult(forceRes.text, config.projectDir);
+                  progress.onStage?.('✅ Forced decision succeeded');
+                } catch (forceError) {
+                  // Force-decision also failed, throw original error
+                  throw parseError;
+                }
+              } else {
+                throw parseError;
+              }
+            }
 
             preflightRecords.push({
               taskKey: currentTask.key,
@@ -704,9 +731,10 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         if (config.preflightRequirementsReview) {
           const reviewPlanFile = taskPlanByTaskKey.get(currentTask.key) ?? plannedFilePath;
           let reviewOk = false;
+          // Default to 30 iterations for review (simpler than discovery, just refining existing plan)
           let reviewIterationCap = Math.max(
             1,
-            Math.floor(config.preflightSessionMaxIterations ?? 500)
+            Math.floor(config.preflightSessionMaxIterations ?? 30)
           );
 
           for (let reviewTry = 0; reviewTry <= preflightMaxRetries; reviewTry++) {
@@ -738,9 +766,33 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                 }),
               ]);
 
-              const reviewTokens = reviewSession.usage.prompt + reviewSession.usage.completion;
+              let reviewTokens = reviewSession.usage.prompt + reviewSession.usage.completion;
               totalTokens += reviewTokens;
-              const review = parseRequirementsReviewResult(reviewRes.text, config.projectDir);
+
+              // Try to parse review result; if invalid JSON, attempt force-decision prompt
+              let review;
+              try {
+                review = parseRequirementsReviewResult(reviewRes.text, config.projectDir);
+              } catch (parseError) {
+                const parseErrMsg = parseError instanceof Error ? parseError.message : String(parseError);
+                // Only try force-decision for JSON/format errors
+                if (/preflight-json-missing-object|preflight-review-invalid/i.test(parseErrMsg)) {
+                  progress.onStage?.('⚠️ Review output invalid, requesting forced decision...');
+                  try {
+                    const forceRes = await reviewSession.ask(FORCE_REVIEW_DECISION_PROMPT);
+                    const forceTokens = reviewSession.usage.prompt + reviewSession.usage.completion - reviewTokens;
+                    reviewTokens += forceTokens;
+                    totalTokens += forceTokens;
+                    review = parseRequirementsReviewResult(forceRes.text, config.projectDir);
+                    progress.onStage?.('✅ Forced decision succeeded');
+                  } catch (forceError) {
+                    // Force-decision also failed, throw original error
+                    throw parseError;
+                  }
+                } else {
+                  throw parseError;
+                }
+              }
 
               const reviewPlanState = await ensurePlanFileExistsOrBootstrap({
                 absPath: review.filename,
