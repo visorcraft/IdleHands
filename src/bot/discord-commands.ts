@@ -23,6 +23,7 @@ import {
   approvalSetCommand,
   modeShowCommand,
   modeSetCommand,
+  modeStatusCommand,
   subagentsShowCommand,
   subagentsSetCommand,
   changesCommand,
@@ -259,6 +260,11 @@ export async function handleTextCommand(
     const arg = content.slice('/mode'.length).trim().toLowerCase();
     if (!arg) {
       await send(modeShowCommand(m));
+      return true;
+    }
+    // Handle status command
+    if (arg === 'status') {
+      await send(modeStatusCommand(m));
       return true;
     }
     await send(modeSetCommand(m, arg));

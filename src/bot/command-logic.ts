@@ -15,6 +15,7 @@ export {
   dirShowCommand,
   modeSetCommand,
   modeShowCommand,
+  modeStatusCommand,
   pinFail,
   pinOk,
   subagentsSetCommand,

@@ -71,20 +71,66 @@ export function approvalSetCommand(managed: ManagedLike, arg: string): CmdResult
   return { success: `✅ Approval mode set to ${arg}` };
 }
 
+// Routing modes for Phase 2 - Fast/Heavy/Auto Routing
+const ROUTING_MODES = ['auto', 'fast', 'heavy'] as const;
+
 export function modeShowCommand(managed: ManagedLike): CmdResult {
-  return { kv: [['Mode', managed.config.mode ?? 'code', true]] };
+  const mode = managed.config.mode ?? 'code';
+  return { 
+    kv: [['Mode', mode, true]],
+    lines: mode === 'auto' || mode === 'fast' || mode === 'heavy' 
+      ? [`Routing mode: ${mode}`] 
+      : undefined
+  };
 }
 
 export function modeSetCommand(managed: ManagedLike, arg: string): CmdResult {
-  if (arg !== 'code' && arg !== 'sys') {
-    return { error: 'Invalid mode. Options: code, sys' };
+  // Check if it's a routing mode
+  if (ROUTING_MODES.includes(arg as any)) {
+    managed.config.mode = arg as any;
+    return { success: `✅ Routing mode set to ${arg}` };
   }
-  managed.config.mode = arg;
-  if (arg === 'sys' && managed.config.approval_mode === 'auto-edit') {
-    managed.config.approval_mode = 'default';
-    if ('approvalMode' in managed) (managed as any).approvalMode = 'default';
+  
+  // Check if it's a legacy mode (code/sys)
+  if (arg === 'code' || arg === 'sys') {
+    managed.config.mode = arg;
+    if (arg === 'sys' && managed.config.approval_mode === 'auto-edit') {
+      managed.config.approval_mode = 'default';
+      if ('approvalMode' in managed) (managed as any).approvalMode = 'default';
+    }
+    return { success: `✅ Mode set to ${arg}` };
   }
-  return { success: `✅ Mode set to ${arg}` };
+  
+  // Invalid mode
+  return { 
+    error: `Invalid mode. Options: code, sys, ${ROUTING_MODES.join(', ')}`
+  };
+}
+
+export function modeStatusCommand(managed: ManagedLike): CmdResult {
+  const mode = managed.config.mode ?? 'code';
+  const lines: string[] = [];
+  
+  if (mode === 'auto' || mode === 'fast' || mode === 'heavy') {
+    lines.push(`Current routing mode: ${mode}`);
+  } else {
+    lines.push(`Current mode: ${mode}`);
+  }
+  
+  // Show routing config if available
+  const routing = managed.config.routing;
+  if (routing) {
+    lines.push(`Default mode: ${routing.defaultMode ?? 'auto'}`);
+    lines.push(`Fast model: ${routing.fastModel ?? 'not configured'}`);
+    lines.push(`Heavy model: ${routing.heavyModel ?? 'not configured'}`);
+  } else {
+    lines.push('Routing not configured');
+  }
+  
+  return { 
+    title: 'Routing Mode Status',
+    lines
+  };
 }
 
 export function subagentsShowCommand(managed: ManagedLike): CmdResult {
