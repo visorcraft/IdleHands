@@ -271,6 +271,21 @@ export async function handleTextCommand(
     return true;
   }
 
+  if (content === '/routing_mode' || content.startsWith('/routing_mode ')) {
+    const arg = content.slice('/routing_mode'.length).trim().toLowerCase();
+    if (!arg) {
+      await send(modeShowCommand(m));
+      return true;
+    }
+    // Handle status command
+    if (arg === 'status') {
+      await send(modeStatusCommand(m));
+      return true;
+    }
+    await send(modeSetCommand(m, arg));
+    return true;
+  }
+
   if (content === '/subagents' || content.startsWith('/subagents ')) {
     const arg = content.slice('/subagents'.length).trim().toLowerCase();
     if (!arg) {

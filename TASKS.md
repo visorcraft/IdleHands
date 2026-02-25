@@ -129,7 +129,7 @@ session_persistence?: 'default' | 'sticky' | 'ephemeral';
   - [x] `routing.fast_model`.
   - [x] `routing.auto_escalation_rules`.
 - [ ] Add bot commands:
-  - [ ] `/routing_mode fast`.
+  - [x] `/routing_mode fast`.
   - [ ] `/routing_mode heavy`.
   - [ ] `/routing_mode auto`.
   - [ ] `/routing_mode status`.
