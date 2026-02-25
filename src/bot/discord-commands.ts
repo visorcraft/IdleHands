@@ -24,6 +24,9 @@ import {
   modeShowCommand,
   modeSetCommand,
   modeStatusCommand,
+  routingModeShowCommand,
+  routingModeSetCommand,
+  routingModeStatusCommand,
   subagentsShowCommand,
   subagentsSetCommand,
   changesCommand,
@@ -274,21 +277,20 @@ export async function handleTextCommand(
   if (content === '/routing_mode' || content.startsWith('/routing_mode ')) {
     const arg = content.slice('/routing_mode'.length).trim().toLowerCase();
     if (!arg) {
-      await send(modeShowCommand(m));
+      await send(routingModeShowCommand(m));
       return true;
     }
-    // Handle status command
     if (arg === 'status') {
-      await send(modeStatusCommand(m));
+      await send(routingModeStatusCommand(m));
       return true;
     }
-    await send(modeSetCommand(m, arg));
+    await send(routingModeSetCommand(m, arg));
     return true;
   }
 
   if (content === '/retry_fast') {
     // Set routing mode to fast
-    await send(modeSetCommand(m, 'fast'));
+    await send(routingModeSetCommand(m, 'fast'));
     
     // Re-run the last task
     const lastInstruction = managed.session.lastAskInstructionText || '';
@@ -310,7 +312,7 @@ export async function handleTextCommand(
 
   if (content === '/retry_heavy') {
     // Set routing mode to heavy
-    await send(modeSetCommand(m, 'heavy'));
+    await send(routingModeSetCommand(m, 'heavy'));
     
     // Re-run the last task
     const lastInstruction = managed.session.lastAskInstructionText || '';

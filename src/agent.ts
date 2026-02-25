@@ -59,6 +59,7 @@ import type { PromptContext } from './agent/prompt-builder.js';
 import { LeakDetector } from './security/leak-detector.js';
 import { PromptGuard } from './security/prompt-guard.js';
 import { ResponseCache } from './agent/response-cache.js';
+import { resilientCall } from './agent/resilient-provider.js';
 import { ToolLoopGuard } from './agent/tool-loop-guard.js';
 import { isLspTool, isMutationTool, isReadOnlyTool, planModeSummary } from './agent/tool-policy.js';
 import { buildToolsSchema } from './agent/tools-schema.js';
@@ -88,6 +89,7 @@ import {
 } from './model-customization.js';
 import { ReplayStore } from './replay.js';
 import { checkExecSafety, checkPathSafety } from './safety.js';
+import { decideTurnRoute } from './routing/turn-router.js';
 import { normalizeApprovalMode } from './shared/config-utils.js';
 import { collectSnapshot } from './sys/context.js';
 import { ToolError, ValidationError } from './tools/tool-error.js';
@@ -1520,6 +1522,10 @@ export async function createSession(opts: {
   let captureEnabled = false;
   let capturePath: string | undefined;
   let lastCaptureRecord: any | null = null;
+  const routedClients = new Map<string, OpenAIClient>();
+  const probedEndpoints = new Set<string>();
+
+  const normalizeEndpoint = (endpoint: string): string => endpoint.trim().replace(/\/+$/, '');
 
   const defaultCapturePath = () => {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -1531,15 +1537,63 @@ export async function createSession(opts: {
     await fs.appendFile(outPath, JSON.stringify(record) + '\n', 'utf8');
   };
 
-  const wireCaptureHook = () => {
-    if (typeof (client as any).setExchangeHook !== 'function') return;
-    (client as any).setExchangeHook(async (record: any) => {
+  const applyClientRuntimeOptions = (target: OpenAIClient) => {
+    if (typeof (target as any).setVerbose === 'function') {
+      (target as any).setVerbose(cfg.verbose);
+    }
+    if (typeof cfg.response_timeout === 'number' && cfg.response_timeout > 0) {
+      target.setResponseTimeout(cfg.response_timeout);
+    }
+    if (
+      typeof (target as any).setConnectionTimeout === 'function' &&
+      typeof cfg.connection_timeout === 'number' &&
+      cfg.connection_timeout > 0
+    ) {
+      (target as any).setConnectionTimeout(cfg.connection_timeout);
+    }
+    if (
+      typeof (target as any).setInitialConnectionCheck === 'function' &&
+      typeof cfg.initial_connection_check === 'boolean'
+    ) {
+      (target as any).setInitialConnectionCheck(cfg.initial_connection_check);
+    }
+    if (
+      typeof (target as any).setInitialConnectionProbeTimeout === 'function' &&
+      typeof cfg.initial_connection_timeout === 'number' &&
+      cfg.initial_connection_timeout > 0
+    ) {
+      (target as any).setInitialConnectionProbeTimeout(cfg.initial_connection_timeout);
+    }
+  };
+
+  const attachCaptureHook = (target: OpenAIClient) => {
+    if (typeof (target as any).setExchangeHook !== 'function') return;
+    (target as any).setExchangeHook(async (record: any) => {
       lastCaptureRecord = record;
       if (!captureEnabled) return;
-      const target = capturePath || defaultCapturePath();
-      capturePath = target;
-      await appendCaptureRecord(record, target);
+      const outFile = capturePath || defaultCapturePath();
+      capturePath = outFile;
+      await appendCaptureRecord(record, outFile);
     });
+  };
+
+  const getClientForEndpoint = (endpoint?: string): OpenAIClient => {
+    if (!endpoint) return client;
+    const normalized = normalizeEndpoint(endpoint);
+    if (!normalized || normalized === normalizeEndpoint(cfg.endpoint)) return client;
+
+    const existing = routedClients.get(normalized);
+    if (existing) return existing;
+
+    const routed = new OpenAIClient(normalized, opts.apiKey, cfg.verbose);
+    applyClientRuntimeOptions(routed);
+    attachCaptureHook(routed);
+    routedClients.set(normalized, routed);
+    return routed;
+  };
+
+  const wireCaptureHook = () => {
+    attachCaptureHook(client);
   };
 
   wireCaptureHook();
@@ -1726,10 +1780,10 @@ export async function createSession(opts: {
       client = new OpenAIClient(normalized, opts.apiKey, cfg.verbose);
     }
 
-    if (typeof (client as any).setVerbose === 'function') {
-      (client as any).setVerbose(cfg.verbose);
-    }
+    applyClientRuntimeOptions(client);
 
+    routedClients.clear();
+    probedEndpoints.clear();
     wireCaptureHook();
 
     modelsList = normalizeModelsResponse(await client.models());
@@ -1798,6 +1852,7 @@ export async function createSession(opts: {
   const close = async () => {
     await mcpManager?.close().catch(() => {});
     await lspManager?.close().catch(() => {});
+    routedClients.clear();
     vault?.close();
     lens?.close();
   };
@@ -2115,6 +2170,9 @@ export async function createSession(opts: {
       if (typeof (client as any).probeConnection === 'function') {
         await (client as any).probeConnection();
         initialConnectionProbeDone = true;
+        if (typeof (client as any).getEndpoint === 'function') {
+          probedEndpoints.add(normalizeEndpoint((client as any).getEndpoint()));
+        }
       }
     }
 
@@ -2172,6 +2230,26 @@ export async function createSession(opts: {
         completionTokens: cumulativeUsage.completion,
       });
       return await finalizeAsk(miss);
+    }
+
+    const turnRoute = decideTurnRoute(cfg, rawInstructionText, model);
+    const primaryRoute = turnRoute.providerTargets[0];
+
+    if (primaryRoute?.model && primaryRoute.model !== model) {
+      setModel(primaryRoute.model);
+    }
+
+    if (cfg.verbose) {
+      const routeParts = [
+        `requested=${turnRoute.requestedMode}`,
+        `selected=${turnRoute.selectedMode}`,
+        `source=${turnRoute.selectedModeSource}`,
+        `hint=${turnRoute.classificationHint ?? 'none'}`,
+        `provider=${primaryRoute?.name ?? 'default'}`,
+        `model=${primaryRoute?.model ?? model}`,
+      ];
+      if (turnRoute.heuristicDecision) routeParts.push(`heuristic=${turnRoute.heuristicDecision}`);
+      console.error(`[routing] ${routeParts.join(' ')}`);
     }
 
     const persistReviewArtifact = async (finalText: string): Promise<void> => {
@@ -2669,27 +2747,68 @@ export async function createSession(opts: {
             }
 
             if (!resp) {
-              resp = await client.chatStream({
-              model,
-              messages,
-              tools: toolsForTurn,
-              tool_choice: toolChoiceForTurn,
-              temperature,
-              top_p: topP,
-              max_tokens: maxTokens,
-              extra: {
-                cache_prompt: cfg.cache_prompt ?? true,
-                // Speculative decoding: draft model params for llama-server
-                ...(cfg.draft_model ? { draft_model: cfg.draft_model } : {}),
-                ...(cfg.draft_n ? { speculative: { n: cfg.draft_n, p_min: cfg.draft_p_min ?? 0.5 } } : {}),
-                ...(frequencyPenalty && { frequency_penalty: frequencyPenalty }),
-                ...(presencePenalty && { presence_penalty: presencePenalty }),
-              },
-              signal: ac.signal,
-              requestId: `r${reqCounter}`,
-              onToken: hookObj.onToken,
-              onFirstDelta,
-            });
+              // ── Routed client: use provider from turn route plan ────
+              const routeEndpoint = primaryRoute?.endpoint;
+              const activeClient = getClientForEndpoint(routeEndpoint);
+              const endpointKey = routeEndpoint ? normalizeEndpoint(routeEndpoint) : undefined;
+              if (endpointKey && !probedEndpoints.has(endpointKey)) {
+                if (typeof (activeClient as any).probeConnection === 'function') {
+                  try {
+                    await (activeClient as any).probeConnection();
+                  } catch {
+                    // best-effort: if probe fails we still try the call
+                  }
+                  probedEndpoints.add(endpointKey);
+                }
+              }
+
+              const chatOpts = {
+                model,
+                messages,
+                tools: toolsForTurn,
+                tool_choice: toolChoiceForTurn,
+                temperature,
+                top_p: topP,
+                max_tokens: maxTokens,
+                extra: {
+                  cache_prompt: cfg.cache_prompt ?? true,
+                  ...(cfg.draft_model ? { draft_model: cfg.draft_model } : {}),
+                  ...(cfg.draft_n ? { speculative: { n: cfg.draft_n, p_min: cfg.draft_p_min ?? 0.5 } } : {}),
+                  ...(frequencyPenalty && { frequency_penalty: frequencyPenalty }),
+                  ...(presencePenalty && { presence_penalty: presencePenalty }),
+                },
+                signal: ac.signal,
+                requestId: `r${reqCounter}`,
+                onToken: hookObj.onToken,
+                onFirstDelta,
+              };
+
+              // If turn-router selected fallback models, wrap in resilientCall
+              const fallbacks = primaryRoute?.fallbackModels ?? [];
+              if (fallbacks.length > 0) {
+                const modelFallbackMap: Record<string, string[]> = {};
+                modelFallbackMap[model] = fallbacks;
+                resp = await resilientCall(
+                  [{
+                    name: primaryRoute?.name ?? 'default',
+                    execute: (m: string) => activeClient.chatStream({ ...chatOpts, model: m }),
+                  }],
+                  model,
+                  {
+                    maxRetries: 1,
+                    modelFallbacks: modelFallbackMap,
+                    onRetry: (info) => {
+                      if (cfg.verbose) {
+                        console.error(
+                          `[routing] retry: provider=${info.provider} model=${info.model} attempt=${info.attempt}/${info.maxAttempts} reason=${info.reason}`
+                        );
+                      }
+                    },
+                  },
+                );
+              } else {
+                resp = await activeClient.chatStream(chatOpts);
+              }
             } // end if (!resp) — cache miss path
 
             // Successful response resets overflow recovery budget.

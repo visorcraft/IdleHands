@@ -599,6 +599,7 @@ export async function startTelegramBot(
     { command: 'compact', description: 'Compact context' },
     { command: 'approval', description: 'Get/set approval mode' },
     { command: 'mode', description: 'Get/set mode (code/sys)' },
+    { command: 'routing_mode', description: 'Get/set routing mode (auto/fast/heavy)' },
     { command: 'subagents', description: 'Toggle sub-agents on/off' },
     { command: 'changes', description: 'Files modified this session' },
     { command: 'undo', description: 'Undo last edit' },

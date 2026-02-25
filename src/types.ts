@@ -148,17 +148,59 @@ export type HookSystemConfig = {
   >;
 };
 
+export type RoutingMode = 'auto' | 'fast' | 'heavy';
+
+export type QueryClassificationRuleConfig = {
+  hint?: string;
+  keywords?: string[];
+  patterns?: string[];
+  priority?: number;
+  minLength?: number;
+  maxLength?: number;
+};
+
+export type QueryClassificationConfig = {
+  enabled?: boolean;
+  rules?: QueryClassificationRuleConfig[];
+};
+
+export type RoutingProviderConfig = {
+  /** Provider endpoint (OpenAI-compatible /v1 base). */
+  endpoint?: string;
+  /** Optional provider-specific primary model override. */
+  model?: string;
+  /** Optional provider-specific model fallback chain. */
+  fallbackModels?: string[];
+  /** Disable this provider entry without deleting it. */
+  enabled?: boolean;
+};
+
 /**
  * Routing policy configuration for fast/heavy model selection.
  * Phase 2 - Fast/Heavy/Auto Routing (Latency UX Breakthrough).
  */
 export type RoutingConfig = {
   /** Default routing mode when not specified */
-  defaultMode: 'auto' | 'fast' | 'heavy';
+  defaultMode: RoutingMode;
   /** Model identifier for fast mode */
   fastModel: string;
   /** Model identifier for heavy mode */
   heavyModel: string;
+  /** Optional provider id for fast lane */
+  fastProvider?: string;
+  /** Optional provider id for heavy lane */
+  heavyProvider?: string;
+  /** Optional fallback provider ids (tried after the primary provider). */
+  fallbackProviders?: string[];
+  /** Optional provider registry keyed by provider id. */
+  providers?: Record<string, RoutingProviderConfig>;
+  /** Optional fallback chain by model id. */
+  modelFallbacks?: Record<string, string[]>;
+  /** Optional lane-specific fallback chains. */
+  fastFallbackModels?: string[];
+  heavyFallbackModels?: string[];
+  /** Optional explicit hint→lane mapping (e.g. reasoning→heavy). */
+  hintModeMap?: Record<string, Exclude<RoutingMode, 'auto'>>;
   /** Thresholds for auto-selection */
   thresholds: {
     /** Maximum prompt length (chars) to use fast model in auto mode */
@@ -244,6 +286,8 @@ export type IdlehandsConfig = {
 
   // mode (Phase 9)
   mode?: 'code' | 'sys';
+  /** Per-turn model routing override. */
+  routing_mode?: RoutingMode;
   sys_eager?: boolean;
 
   // bot dir-guard controls (session-scoped)
@@ -304,7 +348,8 @@ export type IdlehandsConfig = {
   hooks?: HookSystemConfig;
 
 
-  // Routing configuration (Phase 2 - Fast/Heavy/Auto Routing)
+  // Query classification and routing (Phase 2)
+  query_classification?: QueryClassificationConfig;
   routing?: RoutingConfig;
   // LSP integration (Phase 17)
   lsp?: LspConfig;

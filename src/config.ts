@@ -44,6 +44,7 @@ const DEFAULTS: IdlehandsConfig = {
   fail_on_error: true,
   diff_only: false,
   mode: 'code',
+  routing_mode: 'auto',
   sys_eager: false,
   context_window: 131072,
   cache_prompt: true,
@@ -266,6 +267,11 @@ export async function loadConfig(opts: {
       const m = process.env.IDLEHANDS_MODE?.toLowerCase();
       if (!m) return undefined;
       return m === 'code' || m === 'sys' ? m : undefined;
+    })(),
+    routing_mode: ((): 'auto' | 'fast' | 'heavy' | undefined => {
+      const m = process.env.IDLEHANDS_ROUTING_MODE?.toLowerCase();
+      if (!m) return undefined;
+      return m === 'auto' || m === 'fast' || m === 'heavy' ? m : undefined;
     })(),
     sys_eager: parseBool(process.env.IDLEHANDS_SYS_EAGER),
     context_window: parseNum(process.env.IDLEHANDS_CONTEXT_WINDOW),
@@ -892,6 +898,123 @@ export async function loadConfig(opts: {
   const validRunModes = ['code', 'sys'];
   if (!merged.mode || !validRunModes.includes(merged.mode)) {
     merged.mode = 'code';
+  }
+
+  // Normalize routing_mode override
+  const validRoutingModes = ['auto', 'fast', 'heavy'];
+  if (!merged.routing_mode || !validRoutingModes.includes(merged.routing_mode)) {
+    merged.routing_mode = 'auto';
+  }
+
+  // Normalize routing config (accept snake_case aliases from older docs)
+  if (merged.routing && typeof merged.routing === 'object') {
+    const routing = merged.routing as any;
+
+    if (routing.default_mode != null && routing.defaultMode == null) {
+      routing.defaultMode = routing.default_mode;
+    }
+    if (routing.fast_model != null && routing.fastModel == null) {
+      routing.fastModel = routing.fast_model;
+    }
+    if (routing.heavy_model != null && routing.heavyModel == null) {
+      routing.heavyModel = routing.heavy_model;
+    }
+    if (routing.fast_provider != null && routing.fastProvider == null) {
+      routing.fastProvider = routing.fast_provider;
+    }
+    if (routing.heavy_provider != null && routing.heavyProvider == null) {
+      routing.heavyProvider = routing.heavy_provider;
+    }
+    if (routing.fallback_providers != null && routing.fallbackProviders == null) {
+      routing.fallbackProviders = routing.fallback_providers;
+    }
+    if (routing.model_fallbacks != null && routing.modelFallbacks == null) {
+      routing.modelFallbacks = routing.model_fallbacks;
+    }
+    if (routing.fast_fallback_models != null && routing.fastFallbackModels == null) {
+      routing.fastFallbackModels = routing.fast_fallback_models;
+    }
+    if (routing.heavy_fallback_models != null && routing.heavyFallbackModels == null) {
+      routing.heavyFallbackModels = routing.heavy_fallback_models;
+    }
+    if (routing.hint_mode_map != null && routing.hintModeMap == null) {
+      routing.hintModeMap = routing.hint_mode_map;
+    }
+
+    if (!routing.defaultMode || !validRoutingModes.includes(String(routing.defaultMode))) {
+      routing.defaultMode = 'auto';
+    }
+
+    if (typeof routing.fastModel === 'string') routing.fastModel = routing.fastModel.trim();
+    if (typeof routing.heavyModel === 'string') routing.heavyModel = routing.heavyModel.trim();
+    if (typeof routing.fastProvider === 'string') routing.fastProvider = routing.fastProvider.trim();
+    if (typeof routing.heavyProvider === 'string') {
+      routing.heavyProvider = routing.heavyProvider.trim();
+    }
+
+    if (!Array.isArray(routing.fallbackProviders)) routing.fallbackProviders = [];
+    routing.fallbackProviders = routing.fallbackProviders
+      .map((x: any) => String(x).trim())
+      .filter(Boolean);
+
+    const normalizeModelList = (input: unknown): string[] =>
+      Array.isArray(input) ? input.map((x: any) => String(x).trim()).filter(Boolean) : [];
+
+    routing.fastFallbackModels = normalizeModelList(routing.fastFallbackModels);
+    routing.heavyFallbackModels = normalizeModelList(routing.heavyFallbackModels);
+
+    if (!routing.modelFallbacks || typeof routing.modelFallbacks !== 'object') {
+      routing.modelFallbacks = {};
+    }
+    for (const [k, v] of Object.entries(routing.modelFallbacks as Record<string, unknown>)) {
+      const key = String(k).trim();
+      if (!key) {
+        delete routing.modelFallbacks[k];
+        continue;
+      }
+      routing.modelFallbacks[key] = normalizeModelList(v);
+      if (key !== k) {
+        delete routing.modelFallbacks[k];
+      }
+    }
+
+    if (!routing.providers || typeof routing.providers !== 'object') {
+      routing.providers = {};
+    }
+    for (const [k, v] of Object.entries(routing.providers as Record<string, any>)) {
+      const key = String(k).trim();
+      const p = v && typeof v === 'object' ? { ...v } : {};
+      if (typeof p.endpoint === 'string') p.endpoint = p.endpoint.trim().replace(/\/+$/, '');
+      if (typeof p.model === 'string') p.model = p.model.trim();
+      p.fallbackModels = normalizeModelList(p.fallbackModels);
+      if (typeof p.enabled !== 'boolean') p.enabled = true;
+      if (!key) {
+        delete routing.providers[k];
+        continue;
+      }
+      routing.providers[key] = p;
+      if (key !== k) {
+        delete routing.providers[k];
+      }
+    }
+
+    if (!routing.hintModeMap || typeof routing.hintModeMap !== 'object') {
+      routing.hintModeMap = {};
+    }
+    for (const [k, v] of Object.entries(routing.hintModeMap as Record<string, unknown>)) {
+      const key = String(k).trim();
+      const val = String(v ?? '')
+        .trim()
+        .toLowerCase();
+      if (!key || (val !== 'fast' && val !== 'heavy')) {
+        delete routing.hintModeMap[k];
+        continue;
+      }
+      routing.hintModeMap[key] = val;
+      if (key !== k) {
+        delete routing.hintModeMap[k];
+      }
+    }
   }
 
   // Normalize approval_mode

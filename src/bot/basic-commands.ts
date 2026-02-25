@@ -51,6 +51,7 @@ export function helpCommand(surface: 'telegram' | 'discord'): CmdResult {
     '/model — Show current model',
     '/approval [mode] — Get/set approval mode',
     '/mode [code|sys|status] — Get/set mode',
+    '/routing_mode [auto|fast|heavy|status] — Get/set routing mode',
     '/compact — Trigger context compaction',
     '/changes — Show files modified this session',
     '/undo — Undo last edit',
