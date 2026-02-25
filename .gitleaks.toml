@@ -1,0 +1,9 @@
+# Gitleaks configuration
+# Allow test fixtures in leak-detector tests — these are intentionally fake
+# credentials used to verify the detector works correctly.
+
+[allowlist]
+  paths = [
+    '''tests/leak-detector\.test\.ts''',
+    '''src/security/leak-detector\.ts''',
+  ]
