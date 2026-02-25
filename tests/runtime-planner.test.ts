@@ -222,6 +222,35 @@ describe('runtime planner', () => {
     );
   });
 
+  it('plan() interpolates {chat_template_args} when chat_template is set on model', () => {
+    const cfg = makeConfig();
+    cfg.models[0].launch.start_cmd =
+      'llama-server --model {source} --port {port} {chat_template_args}';
+    (cfg.models[0] as any).chat_template = 'chatml';
+
+    const out = plan({ modelId: 'test-model', mode: 'live' }, cfg, null);
+    assert.equal(out.ok, true);
+    if (!out.ok) return;
+
+    const startStep = out.steps.find((s) => s.kind === 'start_model');
+    assert.ok(startStep);
+    assert.ok(startStep.command.includes("--chat-template 'chatml'"));
+  });
+
+  it('plan() leaves {chat_template_args} empty when chat_template is not set', () => {
+    const cfg = makeConfig();
+    cfg.models[0].launch.start_cmd =
+      'llama-server --model {source} --port {port} {chat_template_args}';
+
+    const out = plan({ modelId: 'test-model', mode: 'live' }, cfg, null);
+    assert.equal(out.ok, true);
+    if (!out.ok) return;
+
+    const startStep = out.steps.find((s) => s.kind === 'start_model');
+    assert.ok(startStep);
+    assert.ok(!startStep.command.includes('--chat-template'));
+  });
+
   it('planner has no I/O imports', async () => {
     const fs = await import('node:fs/promises');
     const src = await fs.readFile('src/runtime/planner.ts', 'utf8');

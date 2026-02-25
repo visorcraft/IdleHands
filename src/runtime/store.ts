@@ -17,6 +17,7 @@ const ALLOWED_TEMPLATE_VARS = new Set([
   'model_id',
   'host_id',
   'backend_id',
+  'chat_template_args',
 ]);
 
 function runtimesPath(): string {
@@ -259,6 +260,7 @@ function validateModel(raw: unknown, index: number): RuntimeModel {
       'backend_policy',
       'launch',
       'runtime_defaults',
+      'chat_template',
       'split_policy',
     ],
     `models[${index}]`
@@ -327,6 +329,11 @@ function validateModel(raw: unknown, index: number): RuntimeModel {
     };
   }
 
+  const chat_template =
+    raw.chat_template == null
+      ? undefined
+      : assertString(raw.chat_template, `models[${index}].chat_template`);
+
   return {
     id,
     display_name,
@@ -336,6 +343,7 @@ function validateModel(raw: unknown, index: number): RuntimeModel {
     backend_policy,
     launch,
     runtime_defaults,
+    chat_template,
     split_policy: raw.split_policy as any,
   };
 }

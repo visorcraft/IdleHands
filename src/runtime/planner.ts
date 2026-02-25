@@ -50,6 +50,9 @@ function buildVars(
     model_id: shellEscape(model.id),
     host_id: shellEscape(host.id),
     backend_id: shellEscape(backend?.id ?? backendCfg?.id ?? ''),
+    chat_template_args: model.chat_template
+      ? `--chat-template ${shellEscape(model.chat_template)}`
+      : '',
   };
 }
 
@@ -132,6 +135,7 @@ export function plan(
     source: modelCfg.source,
     launch: modelCfg.launch,
     runtime_defaults: modelCfg.runtime_defaults,
+    chat_template: modelCfg.chat_template,
   };
 
   const resolvedHosts: ResolvedHost[] = targetHosts.map((h) => ({

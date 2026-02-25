@@ -77,6 +77,8 @@ export interface RuntimeModel {
   backend_policy: 'any' | string[];
   launch: ModelLaunch;
   runtime_defaults?: ModelRuntimeDefaults;
+  /** Jinja chat template path or built-in name (e.g. "chatml", path to .jinja file). Passed as --chat-template to llama-server. */
+  chat_template?: string;
   split_policy?: any | null; // Phase D only
 }
 
@@ -120,6 +122,7 @@ export interface ResolvedModel {
   source: string;
   launch: ModelLaunch;
   runtime_defaults?: ModelRuntimeDefaults;
+  chat_template?: string;
 }
 
 export type PlanStepKind =
