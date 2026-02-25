@@ -40,7 +40,11 @@ import {
 } from './auto-continue.js';
 import { DiscordConfirmProvider } from './confirm-discord.js';
 import { detectRepoCandidates, expandHome, normalizeAllowedDirs } from './dir-guard.js';
-import { handleTextCommand, type DiscordCommandContext } from './discord-commands.js';
+import {
+  handleTextCommand,
+  readDiscordModelQuery,
+  type DiscordCommandContext,
+} from './discord-commands.js';
 import {
   parseAllowedUsers,
   normalizeApprovalMode,
@@ -54,7 +58,9 @@ import { DiscordStreamingMessage } from './discord-streaming.js';
 import {
   DISCORD_MODELS_PER_PAGE,
   buildRuntimeModelPickerPage,
+  filterRuntimeModels,
   formatRuntimeModelPickerText,
+  truncateLabel,
 } from './runtime-model-picker.js';
 import {
   beginTurn,
@@ -1081,14 +1087,27 @@ When you escalate, your request will be re-run on a more capable model.`;
       const { loadActiveRuntime } = await import('../runtime/executor.js');
 
       if (isModelPage) {
-        const pageRaw = customId.slice('model_page:'.length);
+        const pagePayload = customId.slice('model_page:'.length);
+        const [pageRaw, queryKeyRaw] = pagePayload.split(':', 2);
         const page = Number.parseInt(pageRaw, 10);
+        const query = readDiscordModelQuery(queryKeyRaw);
 
         const rtConfig = await loadRuntimes();
-        const enabledModels = rtConfig.models.filter((mod) => mod.enabled);
+        const filteredModels = filterRuntimeModels(rtConfig.models as any, query);
         const active = await loadActiveRuntime().catch(() => null);
 
-        const modelPage = buildRuntimeModelPickerPage(enabledModels as any, {
+        if (!filteredModels.length) {
+          const q = query ? ` matching "${truncateLabel(query, 48)}"` : '';
+          await interaction
+            .editReply({
+              content: `No enabled runtime models${q}.`,
+              components: [],
+            })
+            .catch(() => {});
+          return;
+        }
+
+        const modelPage = buildRuntimeModelPickerPage(filteredModels as any, {
           page: Number.isFinite(page) ? page : 0,
           perPage: DISCORD_MODELS_PER_PAGE,
           activeModelId: active?.modelId,
@@ -1115,7 +1134,11 @@ When you escalate, your request will be re-run on a more capable model.`;
         if (modelPage.totalPages > 1) {
           const navRow = new ActionRowBuilder<any>().addComponents(
             new ButtonBuilder()
-              .setCustomId(modelPage.hasPrev ? `model_page:${modelPage.page - 1}` : 'model_page_noop')
+              .setCustomId(
+                modelPage.hasPrev
+                  ? `model_page:${modelPage.page - 1}:${queryKeyRaw ?? '-'}`
+                  : 'model_page_noop'
+              )
               .setLabel('⬅ Prev')
               .setStyle(ButtonStyle.Secondary)
               .setDisabled(!modelPage.hasPrev),
@@ -1125,7 +1148,11 @@ When you escalate, your request will be re-run on a more capable model.`;
               .setStyle(ButtonStyle.Secondary)
               .setDisabled(true),
             new ButtonBuilder()
-              .setCustomId(modelPage.hasNext ? `model_page:${modelPage.page + 1}` : 'model_page_noop')
+              .setCustomId(
+                modelPage.hasNext
+                  ? `model_page:${modelPage.page + 1}:${queryKeyRaw ?? '-'}`
+                  : 'model_page_noop'
+              )
               .setLabel('Next ➜')
               .setStyle(ButtonStyle.Secondary)
               .setDisabled(!modelPage.hasNext)
@@ -1137,6 +1164,7 @@ When you escalate, your request will be re-run on a more capable model.`;
           header: '📋 Select a model to switch to',
           maxDisplayName: 68,
           maxModelId: 72,
+          query,
         });
 
         await interaction

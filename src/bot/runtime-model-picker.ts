@@ -1,4 +1,4 @@
-type RuntimeModelLike = {
+export type RuntimeModelLike = {
   id: string;
   display_name: string;
   enabled?: boolean;
@@ -23,6 +23,22 @@ export type RuntimeModelPickerPage = {
 
 export const TELEGRAM_MODELS_PER_PAGE = 8;
 export const DISCORD_MODELS_PER_PAGE = 10;
+
+export function normalizeModelQuery(query: string | undefined | null): string {
+  return String(query ?? '').trim().toLowerCase();
+}
+
+export function filterRuntimeModels(models: RuntimeModelLike[], query?: string): RuntimeModelLike[] {
+  const normalized = normalizeModelQuery(query);
+  const enabled = (models ?? []).filter((m) => m && m.enabled !== false);
+  if (!normalized) return enabled;
+
+  const terms = normalized.split(/\s+/).filter(Boolean);
+  return enabled.filter((m) => {
+    const hay = `${m.display_name} ${m.id}`.toLowerCase();
+    return terms.every((term) => hay.includes(term));
+  });
+}
 
 export function truncateLabel(input: string, max = 48): string {
   const text = String(input ?? '').trim();
@@ -79,14 +95,17 @@ export function formatRuntimeModelPickerText(
     header?: string;
     maxDisplayName?: number;
     maxModelId?: number;
+    query?: string;
   }
 ): string {
   const header = opts?.header ?? '📋 Select a model to switch to:';
   const maxDisplayName = opts?.maxDisplayName ?? 72;
   const maxModelId = opts?.maxModelId ?? 80;
+  const query = String(opts?.query ?? '').trim();
 
   const lines: string[] = [];
   lines.push(`${header} (page ${page.page + 1}/${page.totalPages}, total ${page.totalModels})`);
+  if (query) lines.push(`Filter: "${truncateLabel(query, 48)}"`);
   lines.push('');
 
   if (!page.items.length) {

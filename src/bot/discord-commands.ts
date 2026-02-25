@@ -14,7 +14,9 @@ import { PKG_VERSION } from '../utils.js';
 import {
   DISCORD_MODELS_PER_PAGE,
   buildRuntimeModelPickerPage,
+  filterRuntimeModels,
   formatRuntimeModelPickerText,
+  truncateLabel,
 } from './runtime-model-picker.js';
 
 import {
@@ -53,6 +55,26 @@ import { handleDiscordAnton } from './discord-anton.js';
 import { sendDiscordResult } from './discord-result.js';
 import { splitDiscord } from './discord-routing.js';
 import type { ManagedSession } from './discord.js';
+
+const modelQueryRegistry = new Map<string, string>();
+const MODEL_QUERY_REGISTRY_LIMIT = 200;
+
+function registerModelQuery(query: string): string {
+  const trimmed = String(query ?? '').trim();
+  if (!trimmed) return '-';
+  const key = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  modelQueryRegistry.set(key, trimmed);
+  if (modelQueryRegistry.size > MODEL_QUERY_REGISTRY_LIMIT) {
+    const oldest = modelQueryRegistry.keys().next().value;
+    if (oldest) modelQueryRegistry.delete(oldest);
+  }
+  return key;
+}
+
+export function readDiscordModelQuery(key: string | undefined): string {
+  if (!key || key === '-') return '';
+  return modelQueryRegistry.get(key) ?? '';
+}
 
 export interface DiscordCommandContext {
   sendUserVisible: (msg: Message, text: string) => Promise<Message>;
@@ -513,11 +535,21 @@ export async function handleTextCommand(
     return true;
   }
 
-  if (content === '/models' || content === '/rtmodels') {
+  if (
+    content === '/models' ||
+    content.startsWith('/models ') ||
+    content === '/rtmodels' ||
+    content.startsWith('/rtmodels ')
+  ) {
     try {
       const { loadRuntimes } = await import('../runtime/store.js');
       const { loadActiveRuntime } = await import('../runtime/executor.js');
       const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
+
+      const query = content
+        .replace(/^\/(?:rt)?models\s*/i, '')
+        .trim();
+      const queryKey = registerModelQuery(query);
 
       const rtConfig = await loadRuntimes();
       if (!rtConfig.models.length) {
@@ -525,17 +557,15 @@ export async function handleTextCommand(
         return true;
       }
 
-      const enabledModels = rtConfig.models.filter((mod) => mod.enabled);
-      if (!enabledModels.length) {
-        await sendUserVisible(
-          msg,
-          'No enabled runtime models. Use `idlehands models enable <id>` in CLI.'
-        ).catch(() => {});
+      const filteredModels = filterRuntimeModels(rtConfig.models as any, query);
+      if (!filteredModels.length) {
+        const q = query ? ` matching "${truncateLabel(query, 48)}"` : '';
+        await sendUserVisible(msg, `No enabled runtime models${q}.`).catch(() => {});
         return true;
       }
 
       const active = await loadActiveRuntime().catch(() => null);
-      const modelPage = buildRuntimeModelPickerPage(enabledModels as any, {
+      const modelPage = buildRuntimeModelPickerPage(filteredModels as any, {
         page: 0,
         perPage: DISCORD_MODELS_PER_PAGE,
         activeModelId: active?.modelId,
@@ -560,7 +590,9 @@ export async function handleTextCommand(
       if (modelPage.totalPages > 1) {
         const navRow = new ActionRowBuilder<any>().addComponents(
           new ButtonBuilder()
-            .setCustomId(modelPage.hasPrev ? `model_page:${modelPage.page - 1}` : 'model_page_noop')
+            .setCustomId(
+              modelPage.hasPrev ? `model_page:${modelPage.page - 1}:${queryKey}` : 'model_page_noop'
+            )
             .setLabel('⬅ Prev')
             .setStyle(ButtonStyle.Secondary)
             .setDisabled(!modelPage.hasPrev),
@@ -570,7 +602,9 @@ export async function handleTextCommand(
             .setStyle(ButtonStyle.Secondary)
             .setDisabled(true),
           new ButtonBuilder()
-            .setCustomId(modelPage.hasNext ? `model_page:${modelPage.page + 1}` : 'model_page_noop')
+            .setCustomId(
+              modelPage.hasNext ? `model_page:${modelPage.page + 1}:${queryKey}` : 'model_page_noop'
+            )
             .setLabel('Next ➜')
             .setStyle(ButtonStyle.Secondary)
             .setDisabled(!modelPage.hasNext)
@@ -582,6 +616,7 @@ export async function handleTextCommand(
         header: '📋 Select a model to switch to',
         maxDisplayName: 68,
         maxModelId: 72,
+        query,
       });
 
       await (msg.channel as any)

@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import {
   buildRuntimeModelPickerPage,
+  filterRuntimeModels,
   formatRuntimeModelPickerText,
   truncateLabel,
 } from '../dist/bot/runtime-model-picker.js';
@@ -46,7 +47,15 @@ describe('runtime model picker helpers', () => {
     assert.equal(page.items.find((i) => i.id === 'model-1')?.isActive, false);
   });
 
-  it('formats list text with page counters and active marker', () => {
+  it('filters models by id/display_name and multiple terms', () => {
+    const all = models(8);
+    assert.equal(filterRuntimeModels(all, '').length, 8);
+    assert.equal(filterRuntimeModels(all, 'model-3').length, 1);
+    assert.equal(filterRuntimeModels(all, 'runtime name 4').length, 1);
+    assert.equal(filterRuntimeModels(all, 'runtime 999').length, 0);
+  });
+
+  it('formats list text with page counters, active marker, and query', () => {
     const page = buildRuntimeModelPickerPage(models(6), {
       page: 0,
       perPage: 3,
@@ -56,9 +65,11 @@ describe('runtime model picker helpers', () => {
       header: 'Pick model',
       maxDisplayName: 32,
       maxModelId: 32,
+      query: 'qwen coder',
     });
 
     assert.ok(text.includes('Pick model (page 1/2, total 6)'));
+    assert.ok(text.includes('Filter: "qwen coder"'));
     assert.ok(text.includes('02. ★'));
     assert.ok(text.includes('id: model-2'));
     assert.ok(text.includes('Tap a number button below to switch.'));
