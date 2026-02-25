@@ -77,7 +77,8 @@ export interface RuntimeModel {
   backend_policy: 'any' | string[];
   launch: ModelLaunch;
   runtime_defaults?: ModelRuntimeDefaults;
-  /** Jinja chat template path or built-in name (e.g. "chatml", path to .jinja file). Passed as --chat-template to llama-server. */
+  /** Chat template override for llama-server. If it ends in .jinja or contains a path separator,
+   *  passed as --chat-template-file; otherwise passed as --chat-template (built-in name like "chatml"). */
   chat_template?: string;
   split_policy?: any | null; // Phase D only
 }

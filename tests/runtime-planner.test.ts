@@ -222,7 +222,7 @@ describe('runtime planner', () => {
     );
   });
 
-  it('plan() interpolates {chat_template_args} when chat_template is set on model', () => {
+  it('plan() interpolates {chat_template_args} with --chat-template for built-in names', () => {
     const cfg = makeConfig();
     cfg.models[0].launch.start_cmd =
       'llama-server --model {source} --port {port} {chat_template_args}';
@@ -235,6 +235,22 @@ describe('runtime planner', () => {
     const startStep = out.steps.find((s) => s.kind === 'start_model');
     assert.ok(startStep);
     assert.ok(startStep.command.includes("--chat-template 'chatml'"));
+    assert.ok(!startStep.command.includes('--chat-template-file'));
+  });
+
+  it('plan() interpolates {chat_template_args} with --chat-template-file for .jinja paths', () => {
+    const cfg = makeConfig();
+    cfg.models[0].launch.start_cmd =
+      'llama-server --model {source} --port {port} {chat_template_args}';
+    (cfg.models[0] as any).chat_template = '/home/user/templates/qwen3.jinja';
+
+    const out = plan({ modelId: 'test-model', mode: 'live' }, cfg, null);
+    assert.equal(out.ok, true);
+    if (!out.ok) return;
+
+    const startStep = out.steps.find((s) => s.kind === 'start_model');
+    assert.ok(startStep);
+    assert.ok(startStep.command.includes("--chat-template-file '/home/user/templates/qwen3.jinja'"));
   });
 
   it('plan() leaves {chat_template_args} empty when chat_template is not set', () => {
