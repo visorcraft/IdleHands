@@ -196,6 +196,32 @@ export async function execTool(ctx: ExecToolContext, args: any): Promise<string>
   const killProcessGroup = () => {
     const pid = child.pid;
     if (!pid) return;
+
+    // First, kill all descendants by walking /proc (catches children that escaped the pgid)
+    try {
+      const { execSync } = require('node:child_process');
+      // pgrep -P finds direct children; --full tree via recursive kill
+      const descendants = execSync(`pgrep -P ${pid} 2>/dev/null || true`, {
+        encoding: 'utf8',
+        timeout: 2000,
+      })
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map(Number)
+        .filter(Number.isFinite);
+      for (const dpid of descendants) {
+        try {
+          process.kill(dpid, 'SIGKILL');
+        } catch {
+          // already dead
+        }
+      }
+    } catch {
+      // pgrep not available or failed — fall through to pgid kill
+    }
+
+    // Then kill the process group (covers same-pgid children)
     try {
       process.kill(-pid, 'SIGKILL');
     } catch {
