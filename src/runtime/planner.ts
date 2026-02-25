@@ -51,7 +51,9 @@ function buildVars(
     host_id: shellEscape(host.id),
     backend_id: shellEscape(backend?.id ?? backendCfg?.id ?? ''),
     chat_template_args: model.chat_template
-      ? `--chat-template ${shellEscape(model.chat_template)}`
+      ? /\.jinja\b|[/\\]/.test(model.chat_template)
+        ? `--chat-template-file ${shellEscape(model.chat_template)}`
+        : `--chat-template ${shellEscape(model.chat_template)}`
       : '',
   };
 }
