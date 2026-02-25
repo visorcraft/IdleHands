@@ -129,10 +129,10 @@ session_persistence?: 'default' | 'sticky' | 'ephemeral';
   - [x] `routing.fast_model`.
   - [x] `routing.auto_escalation_rules`.
 - [ ] Add bot commands:
-  - [ ] `/mode fast`.
-  - [ ] `/mode heavy`.
-  - [ ] `/mode auto`.
-  - [ ] `/mode status`.
+  - [x] `/mode fast`.
+  - [x] `/mode heavy`.
+  - [x] `/mode auto`.
+  - [x] `/mode status`.
 - [ ] Add one-click retry actions from result/error blocks:
   - [ ] `Retry Fast`.
   - [ ] `Retry Heavy`.
