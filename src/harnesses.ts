@@ -51,6 +51,8 @@ export type Harness = {
     max_tokens?: number;
     temperature?: number;
     top_p?: number;
+    frequency_penalty?: number;
+    presence_penalty?: number;
     trifecta?: {
       vaultMode?: TrifectaMode;
     };
@@ -95,6 +97,8 @@ const HARNESS: Harness[] = [
       temperature: 0.2,
       top_p: 0.95,
       max_tokens: 32768,
+      frequency_penalty: 0.1,
+      presence_penalty: 0.1,
       trifecta: { vaultMode: 'active' },
     },
     thinking: { format: 'xml', openTag: '<think>', closeTag: '</think>', strip: true },
