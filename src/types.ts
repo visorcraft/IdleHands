@@ -385,6 +385,7 @@ export type IdlehandsConfig = {
     skip_on_fail?: boolean;
     skip_on_blocked?: boolean;
     rollback_on_fail?: boolean;
+    scope_guard?: 'off' | 'lax' | 'strict';
     max_identical_failures?: number;
     approval_mode?: string;
     verbose?: boolean;
