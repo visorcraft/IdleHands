@@ -1233,8 +1233,9 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             },
             onTurnEnd: (stats: { turn: number; toolCalls: number }) => {
               const tokens = session ? session.usage.prompt + session.usage.completion : 0;
-              // Update progress with current turn so heartbeats can report it
+              // Update progress with current turn and tokens so heartbeats can report them
               currentProgress.currentTurn = stats.turn;
+              currentProgress.taskTokens = tokens;
               currentProgress.elapsedMs = Date.now() - startTimeMs;
               console.error(
                 `[anton:turn] task="${currentTask.text.slice(0, 40)}" turn=${stats.turn}/${config.taskMaxIterations} toolCalls=${stats.toolCalls} tokens=${tokens}`
