@@ -1131,6 +1131,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               vault,
               lens,
               maxContextTokens: idlehandsConfig.context_max_tokens || 8000,
+              currentTurn: 1,
+              maxIterations: config.taskMaxIterations,
             });
 
             const promptText = typeof prompt === 'string' ? prompt : JSON.stringify(prompt);
