@@ -238,7 +238,7 @@ describe('runtime planner', () => {
     assert.ok(!startStep.command.includes('--chat-template-file'));
   });
 
-  it('plan() interpolates {chat_template_args} with --chat-template-file for .jinja paths', () => {
+  it('plan() interpolates {chat_template_args} with --chat-template-file using remote path', () => {
     const cfg = makeConfig();
     cfg.models[0].launch.start_cmd =
       'llama-server --model {source} --port {port} {chat_template_args}';
@@ -250,7 +250,26 @@ describe('runtime planner', () => {
 
     const startStep = out.steps.find((s) => s.kind === 'start_model');
     assert.ok(startStep);
-    assert.ok(startStep.command.includes("--chat-template-file '/home/user/templates/qwen3.jinja'"));
+    // Local transport resolves to absolute local path
+    assert.ok(startStep.command.includes('--chat-template-file'));
+    assert.ok(startStep.command.includes('qwen3.jinja'));
+  });
+
+  it('plan() uses remote /home/<user>/.idlehands/templates/ path for SSH hosts', () => {
+    const cfg = makeConfig();
+    cfg.hosts[0].transport = 'ssh' as any;
+    cfg.hosts[0].connection = { host: '10.0.0.1', user: 'alice' } as any;
+    cfg.models[0].launch.start_cmd =
+      'llama-server --model {source} --port {port} {chat_template_args}';
+    (cfg.models[0] as any).chat_template = 'templates/qwen3.jinja';
+
+    const out = plan({ modelId: 'test-model', mode: 'live' }, cfg, null);
+    assert.equal(out.ok, true);
+    if (!out.ok) return;
+
+    const startStep = out.steps.find((s) => s.kind === 'start_model');
+    assert.ok(startStep);
+    assert.ok(startStep.command.includes("--chat-template-file '/home/alice/.idlehands/templates/qwen3.jinja'"));
   });
 
   it('plan() leaves {chat_template_args} empty when chat_template is not set', () => {

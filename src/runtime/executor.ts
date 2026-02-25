@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -401,6 +402,84 @@ async function teardownPartialStart(plan: PlanResult, outcomes: StepOutcome[]): 
 /**
  * Execute a runtime plan.
  */
+/**
+ * Sync chat template files to remote hosts before starting a model.
+ * Copies from the local project repo to ~/.idlehands/templates/ on each remote host.
+ */
+async function syncTemplatesToHosts(
+  plan: PlanResult,
+  onStep?: ExecuteOpts['onStep']
+): Promise<void> {
+  const chatTemplate = plan.model.chat_template;
+  if (!chatTemplate) return;
+  // Only sync file paths (not built-in names like "chatml")
+  if (!/\.jinja\b|[/\\]/.test(chatTemplate)) return;
+
+  // Resolve local path: try absolute, then relative to cwd
+  const localPath = path.isAbsolute(chatTemplate) ? chatTemplate : path.resolve(chatTemplate);
+  if (!existsSync(localPath)) {
+    console.error(`[runtime] chat_template file not found locally: ${localPath}`);
+    return;
+  }
+
+  const remoteDir = '.idlehands/templates';
+  const remoteFilename = path.basename(localPath);
+  const remotePath = `${remoteDir}/${remoteFilename}`;
+
+  for (const host of plan.hosts) {
+    if (host.transport === 'local') continue; // local hosts don't need SCP
+
+    const targetHost = host.connection.host;
+    if (!targetHost) continue;
+
+    const target = host.connection.user ? `${host.connection.user}@${targetHost}` : targetHost;
+
+    // Resolve key path
+    let keyPath = host.connection.key_path;
+    if (keyPath) {
+      try {
+        const store = new SecretsStore(process.env.IDLEHANDS_SECRETS_PASSPHRASE || null);
+        await store.load();
+        keyPath = resolveSecretRef(keyPath, store);
+      } catch {
+        // keep original
+      }
+    }
+
+    try {
+      // Create remote directory
+      const mkdirArgs = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10'];
+      if (keyPath) mkdirArgs.push('-i', keyPath);
+      if (host.connection.port && host.connection.port !== 22)
+        mkdirArgs.push('-p', String(host.connection.port));
+      mkdirArgs.push(target, `mkdir -p ~/${remoteDir}`);
+
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn('ssh', mkdirArgs, { stdio: 'ignore' });
+        child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`mkdir exit ${code}`))));
+        child.on('error', reject);
+      });
+
+      // SCP the template file
+      const scpArgs = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10'];
+      if (keyPath) scpArgs.push('-i', keyPath);
+      if (host.connection.port && host.connection.port !== 22)
+        scpArgs.push('-P', String(host.connection.port));
+      scpArgs.push(localPath, `${target}:~/${remotePath}`);
+
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn('scp', scpArgs, { stdio: 'ignore' });
+        child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`scp exit ${code}`))));
+        child.on('error', reject);
+      });
+
+      console.error(`[runtime] synced template ${remoteFilename} → ${host.id}:~/${remotePath}`);
+    } catch (e: any) {
+      console.error(`[runtime] failed to sync template to ${host.id}: ${e?.message ?? e}`);
+    }
+  }
+}
+
 export async function execute(plan: PlanResult, opts: ExecuteOpts = {}): Promise<ExecuteResult> {
   const lock = await acquireRuntimeLock(plan, opts);
   if (!lock.ok) {
@@ -478,6 +557,9 @@ export async function execute(plan: PlanResult, opts: ExecuteOpts = {}): Promise
 
       return { ok: true, reused: true, steps: outcomes };
     }
+
+    // Sync template files to remote hosts before starting
+    await syncTemplatesToHosts(plan, opts.onStep);
 
     for (const step of plan.steps) {
       if (opts.signal?.aborted) {
