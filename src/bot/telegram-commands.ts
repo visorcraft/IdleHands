@@ -162,7 +162,6 @@ export function registerRuntimeCommands(bot: Bot): void {
   };
 
   bot.command('models', handleRuntimeModels);
-  bot.command('rtmodels', handleRuntimeModels);
 
   bot.command('rtstatus', async (ctx) => {
     try {
