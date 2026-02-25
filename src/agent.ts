@@ -56,6 +56,8 @@ import {
 import { resolveToolAlias } from './agent/tool-name-alias.js';
 import { buildDefaultSystemPrompt, SystemPromptBuilder, VaultContextSection } from './agent/prompt-builder.js';
 import type { PromptContext } from './agent/prompt-builder.js';
+import { LeakDetector } from './security/leak-detector.js';
+import { PromptGuard } from './security/prompt-guard.js';
 import { ToolLoopGuard } from './agent/tool-loop-guard.js';
 import { isLspTool, isMutationTool, isReadOnlyTool, planModeSummary } from './agent/tool-policy.js';
 import { buildToolsSchema } from './agent/tools-schema.js';
@@ -2289,6 +2291,10 @@ export async function createSession(opts: {
     const toolLoopWarningKeys = new Set<string>();
     let forceToollessRecoveryTurn = false;
     let toollessRecoveryUsed = false;
+
+    // ── Security: credential leak detection + prompt injection guard ──
+    const leakDetector = new LeakDetector();
+    const promptGuard = new PromptGuard('warn');
     // Prevent repeating the same "stop rerunning" reminder every turn.
     const readOnlyExecHintedSigs = new Set<string>();
     // Tool loop recovery: poisoned results and selective tool suppression.
@@ -3811,6 +3817,11 @@ export async function createSession(opts: {
                 }
               }
             }
+
+            // ── Credential leak scrubbing ─────────────────────────────
+            // Scan tool output for credential leaks before passing back
+            // to the model (and potentially to a chat channel).
+            content = leakDetector.redactIfNeeded(content);
 
             // Context-aware truncation: cap oversized tool results before returning
             // to prevent blowing out the context window on subsequent LLM calls.
