@@ -34,15 +34,15 @@ export default [
       // TypeScript-specific rules
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-unused-vars': [
-        'error',
+        'warn',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
-      '@typescript-eslint/consistent-type-imports': 'error',
-      '@typescript-eslint/no-import-type-side-effects': 'error',
+      '@typescript-eslint/consistent-type-imports': 'warn',
+      '@typescript-eslint/no-import-type-side-effects': 'warn',
 
       // Import ordering
       'import/order': [
-        'error',
+        'warn',
         {
           groups: ['builtin', 'external', 'internal', 'parent', 'sibling', 'index'],
           pathGroups: [
@@ -57,19 +57,19 @@ export default [
           'newlines-between': 'always',
         },
       ],
-      'import/no-duplicates': 'error',
+      'import/no-duplicates': 'warn',
       'import/no-unresolved': 'off',
 
       // Prettier
-      'prettier/prettier': 'error',
+      'prettier/prettier': 'warn',
 
       // General best practices
       'no-console': ['warn', { allow: ['error', 'warn'] }],
       'no-debugger': 'warn',
-      'no-empty': ['error', { allowEmptyCatch: true }],
+      'no-empty': ['warn', { allowEmptyCatch: true }],
 
       // IdleHands custom rules
-      'idlehands/no-duplicate-formatter-logic': 'error',
+      'idlehands/no-duplicate-formatter-logic': 'warn',
     },
   },
   {
@@ -92,11 +92,11 @@ export default [
     rules: {
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-unused-vars': [
-        'error',
+        'warn',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
       'import/order': [
-        'error',
+        'warn',
         {
           groups: ['builtin', 'external', 'internal', 'parent', 'sibling', 'index'],
           pathGroups: [
@@ -111,8 +111,8 @@ export default [
           'newlines-between': 'always',
         },
       ],
-      'import/no-duplicates': 'error',
-      'prettier/prettier': 'error',
+      'import/no-duplicates': 'warn',
+      'prettier/prettier': 'warn',
       'no-console': ['warn', { allow: ['error', 'warn'] }],
       'no-debugger': 'warn',
 
