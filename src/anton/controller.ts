@@ -456,7 +456,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         break mainLoop;
       }
 
-      // Progress tracking
+      // Progress tracking (mutable so onTurnEnd can update currentTurn)
       const currentProgress: AntonProgress = {
         currentIndex: 0,
         totalPending: initialPending,
@@ -467,6 +467,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         estimatedRemainingMs: undefined,
         currentTask: currentTask.text,
         currentAttempt: (taskRetryCount.get(currentTask.key) || 0) + 1,
+        currentTurn: 1,
+        maxTurns: config.taskMaxIterations,
       };
 
       // Handle max retries
@@ -1209,8 +1211,11 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             },
             onTurnEnd: (stats: { turn: number; toolCalls: number }) => {
               const tokens = session ? session.usage.prompt + session.usage.completion : 0;
+              // Update progress with current turn so heartbeats can report it
+              currentProgress.currentTurn = stats.turn;
+              currentProgress.elapsedMs = Date.now() - startTimeMs;
               console.error(
-                `[anton:turn] task="${currentTask.text.slice(0, 40)}" turn=${stats.turn} toolCalls=${stats.toolCalls} tokens=${tokens}`
+                `[anton:turn] task="${currentTask.text.slice(0, 40)}" turn=${stats.turn}/${config.taskMaxIterations} toolCalls=${stats.toolCalls} tokens=${tokens}`
               );
             },
           };
