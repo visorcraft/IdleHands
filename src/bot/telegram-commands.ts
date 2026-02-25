@@ -204,6 +204,9 @@ export function registerRuntimeCommands(bot: Bot): void {
         // Save the updated config
         await saveRuntimes(rtConfig);
         lines.push('💾 runtimes.json saved');
+      } else if (!result.fixed && result.templatePath) {
+        lines.push('\n⚠️ GGUF template differs from HuggingFace (this is expected for quantized models)');
+        lines.push(`✅ Override already correct: \`${result.templatePath}\``);
       } else {
         lines.push('\n❌ MISMATCH detected but could not auto-fix');
       }
