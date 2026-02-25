@@ -130,28 +130,66 @@ export class TurnProgressController {
   };
   private sink: TurnProgressSink | null = null;
 
-  constructor(opts?: TurnProgressOptions) {
-    this.heartbeatMs = opts?.heartbeatMs ?? 1000;
-    this.bucketMs = opts?.bucketMs ?? 5000;
-    this.maxToolLines = opts?.maxToolLines ?? 6;
-    this.toolSummary = opts?.toolCallSummary ?? formatToolCallSummary;
-    this.now = opts?.now ?? (() => Date.now());
+  constructor(sink?: TurnProgressSink | null, opts?: TurnProgressOptions);
+  constructor(opts?: TurnProgressOptions);
+  constructor(
+    sinkOrOpts?: TurnProgressSink | TurnProgressOptions | null,
+    maybeOpts?: TurnProgressOptions
+  ) {
+    let resolvedOpts: TurnProgressOptions | undefined;
+    if (typeof sinkOrOpts === 'function') {
+      this.sink = sinkOrOpts;
+      resolvedOpts = maybeOpts;
+    } else if (sinkOrOpts && typeof sinkOrOpts === 'object') {
+      resolvedOpts = sinkOrOpts as TurnProgressOptions;
+    } else {
+      resolvedOpts = maybeOpts;
+    }
+    this.heartbeatMs = resolvedOpts?.heartbeatMs ?? 1000;
+    this.bucketMs = resolvedOpts?.bucketMs ?? 5000;
+    this.maxToolLines = resolvedOpts?.maxToolLines ?? 6;
+    this.toolSummary = resolvedOpts?.toolCallSummary ?? formatToolCallSummary;
+    this.now = resolvedOpts?.now ?? (() => Date.now());
   }
 
-  attach(hooks: AgentHooks): () => void {
-    const onToolCall = (ev: ToolCallEvent) => this.onToolCall(ev);
-    const onToolResult = (ev: ToolResultEvent) => this.onToolResult(ev);
-    const onTurnEnd = (ev: TurnEndEvent) => this.onTurnEnd(ev);
+  /** Agent-hooks bridge: returns AgentHooks-compatible callbacks. */
+  get hooks(): Pick<AgentHooks, 'onToolCall' | 'onToolResult' | 'onTurnEnd' | 'onToken' | 'onFirstDelta'> {
+    return {
+      onToken: () => {},
+      onFirstDelta: () => {},
+      onToolCall: (ev: ToolCallEvent) => this.onToolCall(ev),
+      onToolResult: (ev: ToolResultEvent) => this.onToolResult(ev),
+      onTurnEnd: (ev: TurnEndEvent) => this.onTurnEnd(ev),
+    };
+  }
 
-    hooks.toolCall.on(onToolCall);
-    hooks.toolResult.on(onToolResult);
-    hooks.turnEnd.on(onTurnEnd);
+  /** Take a snapshot on demand. */
+  snapshot(reason: TurnProgressReason = 'manual'): TurnProgressSnapshot {
+    const now = this.now();
+    const elapsedMs = now - this.startedAt;
+    const elapsedBucketMs = bucket(elapsedMs, this.bucketMs);
+    const sinceLastActivityMs = now - this.lastActivityMs;
 
-    return () => {
-      hooks.toolCall.off(onToolCall);
-      hooks.toolResult.off(onToolResult);
-      hooks.turnEnd.off(onTurnEnd);
-      this.stop();
+    return {
+      phase: this.phase,
+      reason,
+      startedAt: this.startedAt,
+      now,
+      elapsedMs,
+      elapsedBucketMs,
+      sinceLastActivityMs,
+      statusLine: this.statusLine,
+      toolLines: [...this.toolLines],
+      activeTool: this.activeTool
+        ? {
+            name: this.activeTool.name,
+            summary: this.activeTool.summary,
+            startedAt: this.activeTool.startedAt,
+            elapsedMs: now - this.activeTool.startedAt,
+            elapsedBucketMs: bucket(now - this.activeTool.startedAt, this.bucketMs),
+          }
+        : undefined,
+      lastTurnEnd: this.lastTurnEnd,
     };
   }
 

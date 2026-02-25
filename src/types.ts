@@ -201,6 +201,12 @@ export type RoutingConfig = {
   heavyFallbackModels?: string[];
   /** Optional explicit hint→lane mapping (e.g. reasoning→heavy). */
   hintModeMap?: Record<string, Exclude<RoutingMode, 'auto'>>;
+  /** In auto mode, suppress tool schemas for clearly-fast turns (default: true in runtime logic). */
+  fastLaneToolless?: boolean;
+  /** In auto mode, use a compact first-turn prelude for fast turns (default: true in runtime logic). */
+  fastCompactPrelude?: boolean;
+  /** Optional cap for compact prelude length (characters). */
+  fastCompactPreludeMaxChars?: number;
   /** Thresholds for auto-selection */
   thresholds: {
     /** Maximum prompt length (chars) to use fast model in auto mode */

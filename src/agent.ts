@@ -193,6 +193,22 @@ export type TurnPerformance = {
   health?: ServerHealthSnapshot;
 };
 
+export type TurnRoutingDebug = {
+  requestedMode: string;
+  selectedMode: string;
+  selectedModeSource: string;
+  classificationHint: string | null;
+  provider: string;
+  model: string;
+  runtimeRoute: boolean;
+  compactPrelude: boolean;
+  fastLaneToolless: boolean;
+  promptBytes?: number;
+  toolSchemaBytes?: number;
+  toolSchemaTokens?: number;
+  toolCount?: number;
+};
+
 export type PerfSummary = {
   turns: number;
   totalTokens: number;
@@ -266,6 +282,7 @@ export type AgentSession = {
   hookManager?: HookManager;
   lastEditedPath?: string;
   lastTurnMetrics?: TurnPerformance;
+  lastTurnDebug?: TurnRoutingDebug;
   lastServerHealth?: ServerHealthSnapshot;
   /** Plan mode: accumulated steps from the last ask() in plan mode */
   planSteps: PlanStep[];
@@ -701,6 +718,27 @@ export async function createSession(opts: {
       console.warn(`[warn] sys-eager snapshot failed: ${e?.message ?? e}`);
     }
   }
+
+  const buildCompactSessionMeta = (): string => {
+    const caps: string[] = [];
+    if (vaultEnabled) caps.push('vault');
+    if (lspManager?.hasServers()) caps.push('lsp');
+    if (mcpManager) caps.push('mcp');
+    if (spawnTaskEnabled) caps.push('subagents');
+
+    const lines = [
+      `[cwd: ${cfg.dir}]`,
+      `[harness: ${harness.id}]`,
+      '[fast-lane prelude: concise response by default; ask for details if needed.]',
+      caps.length ? `[optional capabilities: ${caps.join(', ')}]` : '',
+    ].filter(Boolean);
+
+    const maxChars = (cfg.routing as any)?.fastCompactPreludeMaxChars ?? 320;
+    const joined = lines.join('\n');
+    return joined.length > maxChars ? `${joined.slice(0, maxChars - 1)}…` : joined;
+  };
+
+  const compactSessionMeta = buildCompactSessionMeta();
 
   const defaultSystemPromptBase = SYSTEM_PROMPT;
   let activeSystemPromptBase = (cfg.system_prompt_override ?? '').trim() || defaultSystemPromptBase;
@@ -1484,6 +1522,7 @@ export async function createSession(opts: {
   const ppSamples: number[] = [];
   const tgSamples: number[] = [];
   let lastTurnMetrics: TurnPerformance | undefined;
+  let lastTurnDebug: TurnRoutingDebug | undefined;
   let lastServerHealth: ServerHealthSnapshot | undefined;
   let lastToolLoopStats: {
     totalHistory: number;
@@ -2057,16 +2096,35 @@ export async function createSession(opts: {
     const wallStart = Date.now();
 
     const delegationForbiddenByUser = userDisallowsDelegation(instruction);
+    const rawInstructionText = userContentToText(instruction).trim();
+
+    // Route early so first-turn prelude/tool choices can adapt.
+    const turnRoute = decideTurnRoute(cfg, rawInstructionText, model);
+    const routeFastByAuto =
+      turnRoute.requestedMode === 'auto' &&
+      turnRoute.selectedMode === 'fast' &&
+      turnRoute.selectedModeSource !== 'override';
+    const compactPreludeEnabled = (cfg.routing as any)?.fastCompactPrelude !== false;
+    // Never use compact prelude when the harness injected format reminders
+    // (e.g. tool_calls format for nemotron) — those are critical for correctness.
+    const hasHarnessInjection = sessionMetaPending
+      ? sessionMetaPending.includes('Use the tool_calls mechanism') ||
+        sessionMetaPending.includes('[Format reminder]')
+      : false;
+    const useCompactPrelude = Boolean(
+      sessionMetaPending && compactPreludeEnabled && routeFastByAuto && !hasHarnessInjection
+    );
 
     // Prepend session meta to the first user instruction (§9b: variable context
     // goes in first user message, not system prompt, to preserve KV cache).
     // This avoids two consecutive user messages without an assistant response.
     let userContent: UserContent = instruction;
     if (sessionMetaPending) {
+      const prelude = useCompactPrelude ? compactSessionMeta : sessionMetaPending;
       if (typeof instruction === 'string') {
-        userContent = `${sessionMetaPending}\n\n${instruction}`;
+        userContent = `${prelude}\n\n${instruction}`;
       } else {
-        userContent = [{ type: 'text', text: sessionMetaPending }, ...instruction];
+        userContent = [{ type: 'text', text: prelude }, ...instruction];
       }
       sessionMetaPending = null;
     }
@@ -2244,7 +2302,6 @@ export async function createSession(opts: {
       return { text: finalText, turns, toolCalls };
     };
 
-    const rawInstructionText = userContentToText(instruction).trim();
     lastAskInstructionText = rawInstructionText;
     lastCompactionReminderObjective = '';
     if (hooksEnabled)
@@ -2324,7 +2381,6 @@ export async function createSession(opts: {
       return await finalizeAsk(miss);
     }
 
-    const turnRoute = decideTurnRoute(cfg, rawInstructionText, model);
     const primaryRoute = turnRoute.providerTargets[0];
     const runtimeModelIds = await loadRuntimeModelIds();
 
@@ -2336,6 +2392,10 @@ export async function createSession(opts: {
     );
 
     const primaryUsesRuntimeModel = !!primaryRoute?.model && runtimeModelIds.has(primaryRoute.model);
+    const fastLaneToolless =
+      (cfg.routing as any)?.fastLaneToolless !== false &&
+      routeFastByAuto &&
+      turnRoute.classificationHint === 'fast';
 
     // Non-runtime route models can be selected directly in-session.
     if (!primaryUsesRuntimeModel && primaryRoute?.model && primaryRoute.model !== model) {
@@ -2360,6 +2420,8 @@ export async function createSession(opts: {
       } else if (routeApiFallbackModels.length) {
         routeParts.push(`api_fallbacks=${routeApiFallbackModels.join(',')}`);
       }
+      if (useCompactPrelude) routeParts.push('compact_prelude=on');
+      if (fastLaneToolless) routeParts.push('fast_toolless=on');
       console.error(`[routing] ${routeParts.join(' ')}`);
     }
 
@@ -2828,11 +2890,41 @@ export async function createSession(opts: {
         let resp;
         try {
           try {
+            const forceToollessByRouting = fastLaneToolless && turns === 0;
             const toolsForTurn =
-              cfg.no_tools || forceToollessRecoveryTurn
+              cfg.no_tools || forceToollessRecoveryTurn || forceToollessByRouting
                 ? []
                 : getToolsSchema().filter((t) => !suppressedTools.has(t.function.name));
-            const toolChoiceForTurn = cfg.no_tools || forceToollessRecoveryTurn ? 'none' : 'auto';
+            const toolChoiceForTurn =
+              cfg.no_tools || forceToollessRecoveryTurn || forceToollessByRouting ? 'none' : 'auto';
+
+            const promptBytesEstimate = Buffer.byteLength(JSON.stringify(messages), 'utf8');
+            const toolSchemaBytesEstimate = toolsForTurn.length
+              ? Buffer.byteLength(JSON.stringify(toolsForTurn), 'utf8')
+              : 0;
+            const toolSchemaTokenEstimate = estimateToolSchemaTokens(toolsForTurn);
+
+            lastTurnDebug = {
+              requestedMode: turnRoute.requestedMode,
+              selectedMode: turnRoute.selectedMode,
+              selectedModeSource: turnRoute.selectedModeSource,
+              classificationHint: turnRoute.classificationHint,
+              provider: primaryRoute?.name ?? 'default',
+              model: primaryRoute?.model ?? model,
+              runtimeRoute: primaryUsesRuntimeModel,
+              compactPrelude: useCompactPrelude,
+              fastLaneToolless,
+              promptBytes: promptBytesEstimate,
+              toolSchemaBytes: toolSchemaBytesEstimate,
+              toolSchemaTokens: toolSchemaTokenEstimate,
+              toolCount: toolsForTurn.length,
+            };
+
+            if (cfg.verbose) {
+              console.error(
+                `[turn-debug] prompt_bytes=${promptBytesEstimate} tools=${toolsForTurn.length} tool_schema_bytes=${toolSchemaBytesEstimate} tool_schema_tokens~=${toolSchemaTokenEstimate}`
+              );
+            }
 
             // ── Response cache: check for cached response ──────────────
             // Only cache tool-less turns (final answers, explanations) since
@@ -4716,6 +4808,9 @@ export async function createSession(opts: {
     },
     get lastTurnMetrics() {
       return lastTurnMetrics;
+    },
+    get lastTurnDebug() {
+      return lastTurnDebug;
     },
     get lastServerHealth() {
       return lastServerHealth;

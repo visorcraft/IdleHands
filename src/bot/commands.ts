@@ -22,6 +22,8 @@ import {
   compactCommand,
   statusCommand,
   watchdogCommand,
+  captureSetCommand,
+  captureShowCommand,
   dirShowCommand,
   approvalShowCommand,
   approvalSetCommand,
@@ -272,6 +274,37 @@ export async function handleCompact({ ctx, sessions }: CommandContext): Promise<
     return;
   }
   await reply(ctx, compactCommand(managed as unknown as ManagedLike));
+}
+
+export async function handleCapture({ ctx, sessions }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  const userId = ctx.from?.id;
+  if (!chatId) return;
+
+  const text = ctx.message?.text ?? '';
+  const arg = text.replace(/^\/capture\s*/i, '').trim();
+
+  let managed = sessions.get(chatId);
+  if (!managed && userId) {
+    managed = (await sessions.getOrCreate(chatId, userId)) ?? undefined;
+  }
+
+  if (!managed) {
+    await ctx.reply('No active session. Send a message to start one.');
+    return;
+  }
+
+  if (!arg) {
+    await reply(ctx, captureShowCommand(managed as unknown as ManagedLike));
+    return;
+  }
+
+  const mode = firstToken(arg).toLowerCase();
+  const filePath = arg.slice(mode.length).trim() || undefined;
+  await reply(
+    ctx,
+    await captureSetCommand(managed as unknown as ManagedLike, mode, filePath)
+  );
 }
 
 export async function handleApproval({ ctx, sessions }: CommandContext): Promise<void> {

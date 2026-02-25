@@ -24,6 +24,8 @@ import {
   helpCommand,
   modelCommand,
   compactCommand,
+  captureSetCommand,
+  captureShowCommand,
   statusCommand,
   dirShowCommand,
   approvalShowCommand,
@@ -175,6 +177,19 @@ export async function handleTextCommand(
 
   if (content === '/compact') {
     await send(compactCommand(m));
+    return true;
+  }
+
+  if (content === '/capture' || content.startsWith('/capture ')) {
+    const arg = content.slice('/capture'.length).trim();
+    if (!arg) {
+      await send(captureShowCommand(m));
+      return true;
+    }
+
+    const [modeToken, ...rest] = arg.split(/\s+/);
+    const filePath = rest.join(' ').trim() || undefined;
+    await send(await captureSetCommand(m, modeToken.toLowerCase(), filePath));
     return true;
   }
 
