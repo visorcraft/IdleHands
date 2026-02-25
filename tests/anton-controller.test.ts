@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
 import { mkdtemp, writeFile, readFile, mkdir, readdir, stat } from 'node:fs/promises';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, describe, beforeEach, afterEach } from 'node:test';
@@ -250,6 +251,68 @@ describe('Anton Controller', { concurrency: 1 }, () => {
       'intermediate failed attempts should not count as final failed tasks'
     );
     assert.equal(sessionCount, 2);
+  });
+
+  test('2b. Retry pin keeps retrying same task key even if task was accidentally checked', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(
+      tmpDir,
+      ['# Test Tasks', '', '- [ ] Task 1', '- [ ] Task 2'].join('\n')
+    );
+
+    const config = createTestConfig({
+      taskFile,
+      projectDir: tmpDir,
+      maxRetriesPerTask: 2,
+      skipOnFail: true,
+      rollbackOnFail: false,
+    });
+
+    const progress = createMockProgressCallback();
+    let tampered = false;
+    const originalOnTaskEnd = progress.onTaskEnd;
+    progress.onTaskEnd = (task, result, prog) => {
+      originalOnTaskEnd(task, result, prog);
+
+      // Simulate accidental TASKS.md mutation by model/tools after a failed attempt.
+      if (!tampered && result.status === 'failed') {
+        const content = readFileSync(taskFile, 'utf8');
+        writeFileSync(taskFile, content.replace('- [ ] Task 1', '- [x] Task 1'));
+        tampered = true;
+      }
+    };
+
+    let sessionCount = 0;
+    const createSession = async () => {
+      sessionCount++;
+      if (sessionCount === 1) {
+        return createMockSession([
+          '<anton-result>status: failed\nreason: test failure needs retry</anton-result>',
+        ]);
+      }
+      return createMockSession(['<anton-result>status: done</anton-result>']);
+    };
+
+    const result = await runAnton({
+      config,
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress,
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.ok(result.attempts.length >= 2, 'expected at least one retry attempt');
+    assert.equal(
+      result.attempts[1].taskKey,
+      result.attempts[0].taskKey,
+      'expected retry to stay pinned to the same failed task key'
+    );
+
+    // Ensure run can still proceed to later tasks after pinned retry succeeds.
+    assert.ok(
+      result.attempts.some((a) => a.taskText === 'Task 2'),
+      'expected Task 2 to run after Task 1 retry succeeds'
+    );
   });
 
   test('3. Max retries exceeded → skipped=1', async () => {

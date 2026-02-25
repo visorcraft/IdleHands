@@ -63,6 +63,7 @@ import type {
   AntonProgressCallback,
   AntonProgress,
   AntonAttempt,
+  AntonTask,
   AntonStopReason,
   AntonAttemptStatus,
   AntonPreflightRecord,
@@ -378,9 +379,41 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         attempts.filter((a) => a.status === 'skipped').map((a) => a.taskKey)
       );
       const runnableTasks = findRunnablePendingTasks(taskFile, skippedKeys);
-      if (runnableTasks.length === 0) break; // No more work
 
-      const currentTask = runnableTasks[0];
+      // Retry pinning: if a task failed and still has retries left, force retry
+      // that same task key even if TASKS.md was accidentally marked [x].
+      // This prevents silent advancement after a failed verification.
+      let pinnedRetryTask: AntonTask | undefined;
+      const seenTaskKeys = new Set<string>();
+      for (let i = attempts.length - 1; i >= 0; i--) {
+        const prev = attempts[i];
+        // Consider only the latest attempt per task key
+        if (seenTaskKeys.has(prev.taskKey)) continue;
+        seenTaskKeys.add(prev.taskKey);
+
+        const isRetryableFailure =
+          prev.status === 'failed' || prev.status === 'error' || prev.status === 'timeout';
+        if (!isRetryableFailure) continue;
+
+        const retries = taskRetryCount.get(prev.taskKey) || 0;
+        if (retries <= 0 || retries >= config.maxRetriesPerTask) continue;
+        if (skippedKeys.has(prev.taskKey)) continue;
+
+        const candidate = taskFile.allTasks.find((t) => t.key === prev.taskKey);
+        if (candidate) {
+          pinnedRetryTask = candidate;
+          break;
+        }
+      }
+
+      if (!pinnedRetryTask && runnableTasks.length === 0) break; // No more work
+
+      const currentTask = pinnedRetryTask ?? runnableTasks[0];
+      if (pinnedRetryTask && !runnableTasks.some((t) => t.key === pinnedRetryTask?.key)) {
+        console.error(
+          `[anton] retry-pin: forcing retry of task "${currentTask.text.slice(0, 60)}" despite checked/pending mismatch`
+        );
+      }
 
       // Build retry context from previous failed attempts on this task
       const prevAttempts = attempts.filter((a) => a.taskKey === currentTask.key);
