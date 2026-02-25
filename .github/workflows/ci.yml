@@ -8,9 +8,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      NPM_CONFIG_AUDIT: "false"
-      NPM_CONFIG_FUND: "false"
-      IDLEHANDS_QUIET_WARNINGS: "1"
+      NPM_CONFIG_AUDIT: 'false'
+      NPM_CONFIG_FUND: 'false'
+      IDLEHANDS_QUIET_WARNINGS: '1'
     steps:
       - uses: actions/checkout@v4
 
@@ -20,5 +20,6 @@ jobs:
           cache: npm
 
       - run: npm ci --include=dev --no-audit --no-fund
+      - run: npm run lint
       - run: npm run build
       - run: npm test --silent
