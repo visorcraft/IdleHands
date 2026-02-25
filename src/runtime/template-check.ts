@@ -17,6 +17,9 @@ export interface TemplateCheckResult {
   hfTemplate: string | null;
   hfRepoUrl: string | null;
   match: boolean | null; // null = couldn't compare
+  /** Whether the currently running llama-server is using a passed-in template file or the embedded one. */
+  runningTemplate: 'passed-in' | 'embedded' | 'not-running' | null;
+  runningTemplatePath?: string;
   error?: string;
 }
 
@@ -126,6 +129,32 @@ function normalizeTemplate(t: string): string {
 }
 
 /**
+ * Detect whether a running llama-server for this model is using a passed-in
+ * or embedded chat template by inspecting the process command line.
+ */
+async function detectRunningTemplate(
+  model: RuntimeModel,
+  host: RuntimesConfig['hosts'][number]
+): Promise<{ status: 'passed-in' | 'embedded' | 'not-running'; path?: string }> {
+  const port = model.runtime_defaults?.port ?? 8080;
+  const cmd = `ps aux | grep llama-server | grep -- '--port ${port}' | grep -v grep`;
+  try {
+    const result = await runOnHost(cmd, host, 10000);
+    if (result.exitCode !== 0 || !result.stdout.trim()) {
+      return { status: 'not-running' };
+    }
+    const line = result.stdout;
+    const fileMatch = line.match(/--chat-template-file\s+(\S+)/);
+    if (fileMatch) return { status: 'passed-in', path: fileMatch[1] };
+    const nameMatch = line.match(/--chat-template\s+(\S+)/);
+    if (nameMatch) return { status: 'passed-in', path: nameMatch[1] };
+    return { status: 'embedded' };
+  } catch {
+    return { status: 'not-running' };
+  }
+}
+
+/**
  * Check if a model's GGUF-embedded template matches the HuggingFace original.
  */
 export async function checkTemplate(
@@ -146,9 +175,13 @@ export async function checkTemplate(
       hfTemplate: null,
       hfRepoUrl: null,
       match: null,
+      runningTemplate: null,
       error: 'No enabled host found for this model',
     };
   }
+
+  // Detect running template status
+  const running = await detectRunningTemplate(model, host);
 
   // Extract GGUF template
   const gguf = await extractGgufTemplate(model, host);
@@ -160,6 +193,8 @@ export async function checkTemplate(
       hfTemplate: null,
       hfRepoUrl: gguf.repoUrl || null,
       match: null,
+      runningTemplate: running.status,
+      runningTemplatePath: running.path,
       error: `GGUF extraction failed: ${gguf.error}`,
     };
   }
@@ -172,6 +207,8 @@ export async function checkTemplate(
       hfTemplate: null,
       hfRepoUrl: null,
       match: null,
+      runningTemplate: running.status,
+      runningTemplatePath: running.path,
       error: 'No base_model repo URL found in GGUF metadata. Cannot auto-fetch HuggingFace template.',
     };
   }
@@ -186,6 +223,8 @@ export async function checkTemplate(
       hfTemplate: null,
       hfRepoUrl: gguf.repoUrl,
       match: null,
+      runningTemplate: running.status,
+      runningTemplatePath: running.path,
       error: `HuggingFace fetch failed: ${hf.error}`,
     };
   }
@@ -199,6 +238,8 @@ export async function checkTemplate(
     hfTemplate: hf.template,
     hfRepoUrl: gguf.repoUrl,
     match,
+    runningTemplate: running.status,
+    runningTemplatePath: running.path,
   };
 }
 
