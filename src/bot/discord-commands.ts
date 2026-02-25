@@ -548,7 +548,8 @@ export async function handleTextCommand(
 
       const rtConfig = await loadRuntimes();
       const active = await loadActiveRuntime();
-      const planResult = plan({ modelId, mode: 'live' }, rtConfig, active);
+      const forceRestart = active?.modelId === modelId;
+      const planResult = plan({ modelId, mode: 'live', forceRestart }, rtConfig, active);
 
       if (!planResult.ok) {
         await sendUserVisible(msg, `❌ Plan failed: ${planResult.reason}`).catch(() => {});

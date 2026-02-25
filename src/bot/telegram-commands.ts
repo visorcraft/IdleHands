@@ -231,7 +231,8 @@ export function registerRuntimeCommands(bot: Bot): void {
 
       const rtConfig = await loadRuntimes();
       const active = await loadActiveRuntime();
-      const result = plan({ modelId, mode: 'live' }, rtConfig, active);
+      const forceRestart = active?.modelId === modelId;
+      const result = plan({ modelId, mode: 'live', forceRestart }, rtConfig, active);
 
       if (!result.ok) {
         await ctx.reply(`❌ Plan failed: ${result.reason}`);
@@ -292,7 +293,8 @@ export async function handleModelSelectCallback(ctx: any): Promise<boolean> {
 
     const rtConfig = await loadRuntimes();
     const active = await loadActiveRuntime();
-    const result = plan({ modelId, mode: 'live' }, rtConfig, active);
+    const forceRestart = active?.modelId === modelId;
+    const result = plan({ modelId, mode: 'live', forceRestart }, rtConfig, active);
 
     if (!result.ok) {
       await ctx.editMessageText(`❌ Plan failed: ${result.reason}`).catch(() => {});
