@@ -262,6 +262,24 @@ export async function checkAndFixTemplate(
     return { ...result, fixed: false };
   }
 
+  // GGUF mismatches HF, but check if the existing chat_template override already has
+  // the correct content. If so, no need to re-save — the override is working.
+  if (model.chat_template && /\.jinja\b|[/\\]/.test(model.chat_template)) {
+    try {
+      const overridePath = path.isAbsolute(model.chat_template)
+        ? model.chat_template
+        : path.resolve(model.chat_template);
+      const overrideContent = await fs.readFile(overridePath, 'utf8');
+      // Strip attribution header (Jinja comment block at the top)
+      const stripped = overrideContent.replace(/^\{#-[\s\S]*?-#\}\n?/, '');
+      if (normalizeTemplate(stripped) === normalizeTemplate(result.hfTemplate)) {
+        return { ...result, fixed: false, templatePath: overridePath };
+      }
+    } catch {
+      // Override file missing or unreadable — fall through to save
+    }
+  }
+
   // Template mismatch — save the correct one to ~/.idlehands/templates/
   // This is the canonical location that syncTemplatesToHosts() reads from.
   const baseName = result.hfRepoUrl?.match(/huggingface\.co\/[^/]+\/([^/]+)/)?.[1] || model.id;
