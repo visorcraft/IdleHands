@@ -2677,7 +2677,7 @@ export async function createSession(opts: {
               top_p: topP,
               max_tokens: maxTokens,
               extra: {
-                cache_prompt: cfg.cache_prompt ?? true
+                cache_prompt: cfg.cache_prompt ?? true,
                 // Speculative decoding: draft model params for llama-server
                 ...(cfg.draft_model ? { draft_model: cfg.draft_model } : {}),
                 ...(cfg.draft_n ? { speculative: { n: cfg.draft_n, p_min: cfg.draft_p_min ?? 0.5 } } : {}),
