@@ -746,7 +746,11 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         }
 
         // Stage 2: requirements review (retry review only; keep same plan file).
-        if (config.preflightRequirementsReview) {
+        // NOTE: Discovery prompt now includes review instructions, producing a "reviewed" plan.
+        // Separate review stage is skipped by default to save an LLM round-trip.
+        // Set preflightRequirementsReview=true AND preflightSeparateReview=true to force separate review.
+        const skipSeparateReview = !config.preflightSeparateReview;
+        if (config.preflightRequirementsReview && !skipSeparateReview) {
           const reviewPlanFile = taskPlanByTaskKey.get(currentTask.key) ?? plannedFilePath;
           let reviewOk = false;
           // Default to 30 iterations for review (simpler than discovery, just refining existing plan)
