@@ -4,6 +4,8 @@
  * model-selection callback query.
  */
 
+import path from 'node:path';
+
 import type { Bot } from 'grammy';
 
 /**
@@ -131,6 +133,70 @@ export function registerRuntimeCommands(bot: Bot): void {
         .catch(() => {});
     } catch (e: any) {
       await ctx.reply(`❌ Upgrade failed: ${e?.message ?? String(e)}`);
+    }
+  });
+
+  bot.command('check_template', async (ctx) => {
+    try {
+      const modelId = ctx.match?.toString().trim();
+      const { loadRuntimes, saveRuntimes } = await import('../runtime/store.js');
+      const { checkTemplate, checkAndFixTemplate } = await import('../runtime/template-check.js');
+
+      const rtConfig = await loadRuntimes();
+
+      if (!modelId) {
+        // Check all enabled models
+        await ctx.reply('🔍 Checking templates for all models...');
+        const results: string[] = [];
+        for (const model of rtConfig.models.filter((m) => m.enabled)) {
+          const r = await checkTemplate(model, rtConfig);
+          if (r.error) {
+            results.push(`⚠️ *${model.id}*: ${r.error}`);
+          } else if (r.match === true) {
+            results.push(`✅ *${model.id}*: GGUF template matches HuggingFace`);
+          } else {
+            results.push(`❌ *${model.id}*: MISMATCH — GGUF template differs from HuggingFace (${r.hfRepoUrl})`);
+          }
+        }
+        await ctx.reply(results.join('\n'), { parse_mode: 'Markdown' });
+        return;
+      }
+
+      const model = rtConfig.models.find((m) => m.id === modelId);
+      if (!model) {
+        await ctx.reply(`❌ Model not found: ${modelId}`);
+        return;
+      }
+
+      await ctx.reply(`🔍 Checking template for *${modelId}*...`, { parse_mode: 'Markdown' });
+
+      const result = await checkAndFixTemplate(model, rtConfig);
+
+      const lines: string[] = [];
+      lines.push(`📋 *Template Check: ${modelId}*`);
+      lines.push(`Source: \`${path.basename(model.source)}\``);
+      lines.push(`HF Repo: ${result.hfRepoUrl || 'unknown'}`);
+      lines.push(`GGUF template: ${result.ggufTemplate ? `${result.ggufTemplate.length} chars` : 'not found'}`);
+      lines.push(`HF template: ${result.hfTemplate ? `${result.hfTemplate.length} chars` : 'not found'}`);
+
+      if (result.error) {
+        lines.push(`\n⚠️ ${result.error}`);
+      } else if (result.match === true) {
+        lines.push('\n✅ Templates match — no action needed');
+      } else if (result.fixed) {
+        lines.push(`\n❌ MISMATCH detected`);
+        lines.push(`✅ Fixed: saved correct template to \`${result.templatePath}\``);
+        lines.push(`Updated model config with \`chat_template: "${model.chat_template}"\``);
+        // Save the updated config
+        await saveRuntimes(rtConfig);
+        lines.push('💾 runtimes.json saved');
+      } else {
+        lines.push('\n❌ MISMATCH detected but could not auto-fix');
+      }
+
+      await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+    } catch (e: any) {
+      await ctx.reply(`❌ check_template error: ${e?.message ?? String(e)}`);
     }
   });
 
