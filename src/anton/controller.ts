@@ -536,6 +536,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         const preflightTotalTries = preflightMaxRetries + 1;
         let preflightMarkedComplete = false;
         let discoveryOk = false;
+        let discoveryUsedFallbackPlan = false;
 
         await ensureAgentsTasksDir(config.projectDir);
         const plannedFilePath =
@@ -663,6 +664,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               source: 'discovery',
             });
             if (discoveryPlanState === 'bootstrapped') {
+              discoveryUsedFallbackPlan = true;
               progress.onStage?.(
                 `⚠️ Discovery returned a filename but did not write it. Created fallback plan file: ${discovery.filename}`
               );
@@ -691,6 +693,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             // If discovery returns malformed/non-JSON output (or loops on source edits),
             // degrade immediately to fallback plan instead of burning retries.
             if (isRecoverablePreflightDiscoveryError(errMsg)) {
+              discoveryUsedFallbackPlan = true;
               const fallbackState = await ensurePlanFileExistsOrBootstrap({
                 absPath: plannedFilePath,
                 task: currentTask,
@@ -736,6 +739,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
 
             // Final discovery failure: degrade gracefully by bootstrapping a fallback plan file
             // so Anton can still proceed to implementation/review instead of hard-failing task 1.
+            discoveryUsedFallbackPlan = true;
             const fallbackState = await ensurePlanFileExistsOrBootstrap({
               absPath: plannedFilePath,
               task: currentTask,
@@ -771,7 +775,14 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         // Separate review stage is skipped by default to save an LLM round-trip.
         // Set preflightRequirementsReview=true AND preflightSeparateReview=true to force separate review.
         const skipSeparateReview = !config.preflightSeparateReview;
-        if (config.preflightRequirementsReview && !skipSeparateReview) {
+        const forceSeparateReview = config.preflightRequirementsReview && discoveryUsedFallbackPlan;
+        if (forceSeparateReview && skipSeparateReview) {
+          progress.onStage?.(
+            '⚠️ Discovery used a fallback plan; forcing separate requirements review before implementation...'
+          );
+        }
+
+        if (config.preflightRequirementsReview && (!skipSeparateReview || forceSeparateReview)) {
           const reviewPlanFile = taskPlanByTaskKey.get(currentTask.key) ?? plannedFilePath;
           let reviewOk = false;
           // Default to 30 iterations for review (simpler than discovery, just refining existing plan)
@@ -878,25 +889,33 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
 
               const short = errMsg.length > 180 ? `${errMsg.slice(0, 177)}...` : errMsg;
 
-              // If review returns malformed/non-JSON output, keep moving with existing plan.
+              // If review returns malformed/non-JSON output, keep moving with existing plan
+              // only when discovery already produced a real plan. If discovery used fallback,
+              // require a valid review result before proceeding to implementation.
               if (isRecoverablePreflightReviewError(errMsg)) {
-                const fallbackState = await ensurePlanFileExistsOrBootstrap({
-                  absPath: reviewPlanFile,
-                  task: currentTask,
-                  source: 'requirements-review',
-                });
-                if (fallbackState === 'bootstrapped') {
-                  progress.onStage?.(
-                    `⚠️ Requirements review returned invalid output (${short}). Bootstrapped fallback plan and continuing: ${reviewPlanFile}`
-                  );
-                } else {
-                  progress.onStage?.(
-                    `⚠️ Requirements review returned invalid output (${short}). Reusing existing plan and continuing: ${reviewPlanFile}`
-                  );
+                if (!forceSeparateReview) {
+                  const fallbackState = await ensurePlanFileExistsOrBootstrap({
+                    absPath: reviewPlanFile,
+                    task: currentTask,
+                    source: 'requirements-review',
+                  });
+                  if (fallbackState === 'bootstrapped') {
+                    progress.onStage?.(
+                      `⚠️ Requirements review returned invalid output (${short}). Bootstrapped fallback plan and continuing: ${reviewPlanFile}`
+                    );
+                  } else {
+                    progress.onStage?.(
+                      `⚠️ Requirements review returned invalid output (${short}). Reusing existing plan and continuing: ${reviewPlanFile}`
+                    );
+                  }
+                  taskPlanByTaskKey.set(currentTask.key, reviewPlanFile);
+                  reviewOk = true;
+                  break;
                 }
-                taskPlanByTaskKey.set(currentTask.key, reviewPlanFile);
-                reviewOk = true;
-                break;
+
+                progress.onStage?.(
+                  `⚠️ Requirements review returned invalid output (${short}). Discovery fallback plan requires a valid review, retrying...`
+                );
               }
 
               if (reviewTry < preflightMaxRetries) {
