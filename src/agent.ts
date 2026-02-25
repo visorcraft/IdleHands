@@ -53,6 +53,7 @@ import {
   stripMarkdownFences,
   parseJsonArgs,
 } from './agent/tool-calls.js';
+import { resolveToolAlias } from './agent/tool-name-alias.js';
 import { ToolLoopGuard } from './agent/tool-loop-guard.js';
 import { isLspTool, isMutationTool, isReadOnlyTool, planModeSummary } from './agent/tool-policy.js';
 import { buildToolsSchema } from './agent/tools-schema.js';
@@ -3256,7 +3257,13 @@ export async function createSession(opts: {
           }
 
           const runOne = async (tc: ToolCall) => {
-            const name = tc.function.name;
+            // Resolve tool name aliases (bash→exec, file_read→read_file, etc.)
+            const rawName = tc.function.name;
+            const { resolved: name, wasAliased } = resolveToolAlias(rawName);
+            if (wasAliased) {
+              // Patch the tool call in-place so downstream code (loop guard, etc.) sees the canonical name
+              tc.function.name = name;
+            }
             const rawArgs = tc.function.arguments ?? '{}';
             const callId = resolveCallId(tc);
             toolNameByCallId.set(callId, name);
