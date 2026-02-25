@@ -257,6 +257,8 @@ export interface AntonProgress {
   currentTurn?: number;
   /** Maximum turns allowed for this task. */
   maxTurns?: number;
+  /** Tokens consumed by the current task attempt so far. */
+  taskTokens?: number;
 }
 
 /** Callback interface for progress reporting. */
