@@ -676,23 +676,45 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             }
 
             if (discovery.status === 'complete') {
-              preflightRecords.push({
-                taskKey: currentTask.key,
-                stage: 'discovery',
-                durationMs: Date.now() - stageStart,
-                tokensUsed: discoveryTokens,
-                status: discovery.status,
-                filename: discovery.filename || undefined,
-              });
-              await markTaskChecked(config.taskFile, currentTask.key);
-              const ancestorsCompleted = await autoCompleteAncestors(config.taskFile, currentTask.key);
-              autoCompleted += 1 + ancestorsCompleted.length;
-              progress.onStage?.(`✅ Discovery confirmed already complete: ${currentTask.text}`);
-              preflightMarkedComplete = true;
-              discoveryOk = true;
-              // No review needed - close session now
-              await closePreflightSession();
-              break;
+              // If the model claims "complete" but never used any tools, it didn't
+              // actually verify anything — force it to re-examine with tools.
+              if (discoveryRes.toolCalls === 0) {
+                progress.onStage?.('⚠️ Discovery claims complete but made no tool calls — forcing verification...');
+                const verifyRes = await preflightSession.ask(
+                  'You claimed this task is already complete, but you did not use any tools to verify. ' +
+                  'Please use tools (read files, check code, run tests) to actually confirm the task is done. ' +
+                  'Then respond with your discovery JSON again.'
+                );
+                const verifyTokens = preflightSession.usage.prompt + preflightSession.usage.completion - discoveryTokens;
+                discoveryTokens += verifyTokens;
+                totalTokens += verifyTokens;
+                try {
+                  discovery = parseDiscoveryResult(verifyRes.text, config.projectDir);
+                } catch {
+                  // If it still can't produce valid output, fall through to incomplete handling
+                  discovery = { status: 'incomplete' as const, filename: '' };
+                }
+              }
+
+              if (discovery.status === 'complete') {
+                preflightRecords.push({
+                  taskKey: currentTask.key,
+                  stage: 'discovery',
+                  durationMs: Date.now() - stageStart,
+                  tokensUsed: discoveryTokens,
+                  status: discovery.status,
+                  filename: discovery.filename || undefined,
+                });
+                await markTaskChecked(config.taskFile, currentTask.key);
+                const ancestorsCompleted = await autoCompleteAncestors(config.taskFile, currentTask.key);
+                autoCompleted += 1 + ancestorsCompleted.length;
+                progress.onStage?.(`✅ Discovery confirmed already complete: ${currentTask.text}`);
+                preflightMarkedComplete = true;
+                discoveryOk = true;
+                // No review needed - close session now
+                await closePreflightSession();
+                break;
+              }
             }
 
             // If the model returned incomplete+filename without making any tool calls,

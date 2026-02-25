@@ -20,8 +20,9 @@ import type { AntonRunConfig, AntonProgressCallback } from '../dist/anton/types.
 import type { IdlehandsConfig } from '../dist/types.js';
 
 // Mock session factory — returns correct AgentResult shape
-function createMockSession(responses: string[]): AgentSession {
+function createMockSession(responses: string[], opts?: { toolCalls?: number }): AgentSession {
   let responseIndex = 0;
+  const defaultToolCalls = opts?.toolCalls ?? 0;
 
   return {
     model: 'test-model',
@@ -39,7 +40,7 @@ function createMockSession(responses: string[]): AgentSession {
       return {
         text: response,
         turns: 1,
-        toolCalls: 0,
+        toolCalls: defaultToolCalls,
       };
     },
 
@@ -799,7 +800,8 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     const createSession = async () => {
       calls++;
       if (calls === 1) {
-        return createMockSession(['{"status":"complete","filename":""}']);
+        // toolCalls: 1 so discovery "complete" is trusted (verified with tools)
+        return createMockSession(['{"status":"complete","filename":""}'], { toolCalls: 1 });
       }
       return createMockSession(['<anton-result>status: done</anton-result>']);
     };
@@ -815,6 +817,60 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.equal(result.completedAll, true);
     assert.equal(calls, 1, 'implementation should not run when discovery says complete');
 
+    const content = await readFile(taskFile, 'utf8');
+    assert.ok(content.includes('- [x] Task 1'));
+  });
+
+  test('17a2. Discovery "complete" with zero tool calls forces re-verification', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+
+    const config = createTestConfig({
+      taskFile,
+      projectDir: tmpDir,
+      preflightEnabled: true,
+    } as any);
+
+    const stages: string[] = [];
+    let calls = 0;
+    const createSession = async () => {
+      calls++;
+      if (calls === 1) {
+        // Discovery: claims complete with 0 tool calls, then after forced verification
+        // still claims complete (now with implicit tool use from second ask)
+        let askCount = 0;
+        const session = createMockSession([], { toolCalls: 0 });
+        session.ask = async (_prompt: string) => {
+          askCount++;
+          if (askCount === 1) {
+            // First ask: claims complete without tools
+            return { text: '{"status":"complete","filename":""}', turns: 1, toolCalls: 0 };
+          }
+          // Second ask (forced verification): claims complete again, now with tool use
+          return { text: '{"status":"complete","filename":""}', turns: 1, toolCalls: 3 };
+        };
+        return session;
+      }
+      return createMockSession(['<anton-result>status: done</anton-result>']);
+    };
+
+    const progress = createMockProgressCallback();
+    progress.onStage = (msg: string) => stages.push(msg);
+
+    const result = await runAnton({
+      config,
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress,
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.equal(result.completedAll, true);
+    assert.equal(calls, 1, 'should reuse same session for forced verification');
+    assert.ok(
+      stages.some((s) => s.includes('no tool calls')),
+      'should warn about zero tool calls'
+    );
     const content = await readFile(taskFile, 'utf8');
     assert.ok(content.includes('- [x] Task 1'));
   });
