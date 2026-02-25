@@ -268,6 +268,82 @@ describe('runtime planner', () => {
     assert.ok(!startStep.command.includes('--chat-template'));
   });
 
+  it('plan() for RPC-backed model pre-clears target and RPC helper hosts', () => {
+    const cfg: RuntimesConfig = {
+      schema_version: 1,
+      hosts: [
+        {
+          id: 'bee',
+          display_name: 'Bee',
+          enabled: true,
+          transport: 'ssh',
+          connection: { host: '192.168.68.119', user: 'thomas' },
+          capabilities: { gpu: ['gfx'], backends: ['rocm'] },
+          health: { check_cmd: 'true' },
+          model_control: { stop_cmd: 'pkill llama-server || true' },
+        },
+        {
+          id: 'evo-x2',
+          display_name: 'Evo',
+          enabled: true,
+          transport: 'ssh',
+          connection: { host: '10.10.25.1', user: 'thomas' },
+          capabilities: { gpu: ['gfx'], backends: ['rocm'] },
+          health: { check_cmd: 'true' },
+          model_control: { stop_cmd: 'pkill llama-server || true' },
+        },
+      ],
+      backends: [
+        {
+          id: 'rocm-rpc-evo',
+          display_name: 'ROCm + RPC',
+          enabled: true,
+          type: 'rocm',
+          host_filters: ['bee'],
+          args: ['-ngl', '99', '--rpc', '10.10.25.1:50052', '-ts', '1/1'],
+        },
+      ],
+      models: [
+        {
+          id: 'qwen-rpc',
+          display_name: 'Qwen RPC',
+          enabled: true,
+          source: '/models/qwen.gguf',
+          host_policy: ['bee'],
+          backend_policy: ['rocm-rpc-evo'],
+          launch: {
+            start_cmd: 'llama-server --model {source} --port {port} {backend_args}',
+            probe_cmd: 'curl -sf http://127.0.0.1:{port}/health',
+          },
+          runtime_defaults: { port: 8088 },
+        },
+      ],
+    };
+
+    const out = plan({ modelId: 'qwen-rpc', mode: 'live' }, cfg, null);
+    assert.equal(out.ok, true);
+    if (!out.ok) return;
+
+    // Plan hosts include target + RPC helper host so stop steps can execute on both.
+    assert.deepEqual(
+      out.hosts.map((h) => h.id),
+      ['bee', 'evo-x2']
+    );
+
+    const stopHosts = out.steps.filter((s) => s.kind === 'stop_model').map((s) => s.host_id);
+    assert.deepEqual(stopHosts.sort(), ['bee', 'evo-x2'].sort());
+
+    // Start/probe should still run only on target host.
+    assert.deepEqual(
+      out.steps.filter((s) => s.kind === 'start_model').map((s) => s.host_id),
+      ['bee']
+    );
+    assert.deepEqual(
+      out.steps.filter((s) => s.kind === 'probe_health').map((s) => s.host_id),
+      ['bee']
+    );
+  });
+
   it('planner has no I/O imports', async () => {
     const fs = await import('node:fs/promises');
     const src = await fs.readFile('src/runtime/planner.ts', 'utf8');

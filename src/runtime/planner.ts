@@ -27,6 +27,91 @@ function sameHostIds(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((id, i) => id === b[i]);
 }
 
+function parseRpcArgValues(args: string[] | undefined): string[] {
+  if (!args || args.length === 0) return [];
+  const out: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--rpc' || a === '-rpc') {
+      const next = args[i + 1];
+      if (next) out.push(next);
+      continue;
+    }
+    if (a.startsWith('--rpc=')) {
+      out.push(a.slice('--rpc='.length));
+      continue;
+    }
+    if (a.startsWith('-rpc=')) {
+      out.push(a.slice('-rpc='.length));
+      continue;
+    }
+  }
+
+  return out;
+}
+
+function extractHostFromEndpoint(endpoint: string): string | null {
+  const trimmed = endpoint.trim();
+  if (!trimmed) return null;
+
+  // URL form
+  if (trimmed.includes('://')) {
+    try {
+      return new URL(trimmed).hostname || null;
+    } catch {
+      // fallthrough
+    }
+  }
+
+  // Bracketed IPv6: [addr]:port
+  if (trimmed.startsWith('[')) {
+    const end = trimmed.indexOf(']');
+    if (end > 1) return trimmed.slice(1, end);
+  }
+
+  // host:port (IPv4/hostname)
+  const lastColon = trimmed.lastIndexOf(':');
+  if (lastColon > 0 && trimmed.indexOf(':') === lastColon) {
+    return trimmed.slice(0, lastColon);
+  }
+
+  // hostname or raw address
+  return trimmed;
+}
+
+function resolveRpcHelperHosts(
+  config: RuntimesConfig,
+  backendCfg: RuntimeBackend | null,
+  targetHosts: RuntimeHost[]
+): RuntimeHost[] {
+  if (!backendCfg) return [];
+  const rpcValues = parseRpcArgValues(backendCfg.args);
+  if (rpcValues.length === 0) return [];
+
+  const targetIds = new Set(targetHosts.map((h) => h.id));
+  const resolved: RuntimeHost[] = [];
+  const seen = new Set<string>();
+
+  for (const raw of rpcValues) {
+    for (const endpoint of raw.split(',')) {
+      const hostOrId = extractHostFromEndpoint(endpoint);
+      if (!hostOrId) continue;
+
+      const host = config.hosts.find(
+        (h) => h.enabled && (h.id === hostOrId || h.connection.host === hostOrId)
+      );
+      if (!host) continue;
+      if (targetIds.has(host.id)) continue;
+      if (seen.has(host.id)) continue;
+      seen.add(host.id);
+      resolved.push(host);
+    }
+  }
+
+  return resolved;
+}
+
 function buildVars(
   model: ResolvedModel,
   host: RuntimeHost,
@@ -131,6 +216,9 @@ export function plan(
     }
   }
 
+  const rpcHelperHosts = resolveRpcHelperHosts(config, backendCfg, targetHosts);
+  const allStepHosts: RuntimeHost[] = [...targetHosts, ...rpcHelperHosts];
+
   const resolvedModel: ResolvedModel = {
     id: modelCfg.id,
     display_name: modelCfg.display_name,
@@ -140,7 +228,7 @@ export function plan(
     chat_template: modelCfg.chat_template,
   };
 
-  const resolvedHosts: ResolvedHost[] = targetHosts.map((h) => ({
+  const resolvedHosts: ResolvedHost[] = allStepHosts.map((h) => ({
     id: h.id,
     display_name: h.display_name,
     transport: h.transport,
@@ -157,7 +245,7 @@ export function plan(
       }
     : null;
 
-  const targetHostIds = resolvedHosts.map((h) => h.id);
+  const planHostIds = resolvedHosts.map((h) => h.id);
   const targetBackendId = resolvedBackend?.id;
 
   if (
@@ -166,7 +254,7 @@ export function plan(
     activeState.healthy === true &&
     activeState.modelId === resolvedModel.id &&
     (activeState.backendId ?? undefined) === (targetBackendId ?? undefined) &&
-    sameHostIds(activeState.hostIds, targetHostIds)
+    sameHostIds(activeState.hostIds, planHostIds)
   ) {
     const probeSteps: PlanStep[] = targetHosts.map((host) => {
       const vars = buildVars(resolvedModel, host, resolvedBackend, backendCfg);
@@ -192,18 +280,36 @@ export function plan(
   }
 
   const steps: PlanStep[] = [];
+  const stopAdded = new Set<string>();
+
+  const addStopStep = (hostId: string, description: string) => {
+    if (stopAdded.has(hostId)) return;
+    const hostCfg = config.hosts.find((h) => h.id === hostId);
+    if (!hostCfg?.model_control?.stop_cmd) return;
+    steps.push({
+      kind: 'stop_model',
+      host_id: hostId,
+      command: hostCfg.model_control.stop_cmd,
+      timeout_sec: 30,
+      description,
+    });
+    stopAdded.add(hostId);
+  };
 
   if (activeState?.hostIds?.length) {
     for (const hostId of activeState.hostIds) {
-      const hostCfg = config.hosts.find((h) => h.id === hostId);
-      if (!hostCfg?.model_control?.stop_cmd) continue;
-      steps.push({
-        kind: 'stop_model',
-        host_id: hostId,
-        command: hostCfg.model_control.stop_cmd,
-        timeout_sec: 30,
-        description: `Stop active model on ${hostId}`,
-      });
+      addStopStep(hostId, `Stop active model on ${hostId}`);
+    }
+  }
+
+  // For RPC-backed models, proactively clear llama-server on BOTH affected hosts
+  // (target host + RPC helper hosts) to free memory before start.
+  if (rpcHelperHosts.length > 0) {
+    for (const host of targetHosts) {
+      addStopStep(host.id, `Pre-clear llama-server on target host ${host.id}`);
+    }
+    for (const host of rpcHelperHosts) {
+      addStopStep(host.id, `Pre-clear llama-server on RPC helper host ${host.id}`);
     }
   }
 
