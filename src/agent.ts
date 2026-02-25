@@ -62,11 +62,9 @@ import { loadGitContext, isGitDirty, stashWorkingTree } from './git.js';
 import { selectHarness } from './harnesses.js';
 import {
   enforceContextBudget,
-  enforceContextBudgetEnhanced,
   stripThinking,
   estimateTokensFromMessages,
   estimateToolSchemaTokens,
-  extractKeyFacts,
 } from './history.js';
 import { truncateToolResultContent } from './agent/context-budget.js';
 import { HookManager, loadHookPlugins } from './hooks/index.js';
