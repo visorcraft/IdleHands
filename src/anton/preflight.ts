@@ -3,6 +3,25 @@
  */
 
 import { createHash } from 'node:crypto';
+
+// Force-decision prompts for when the model doesn't return valid JSON in time
+export const FORCE_DISCOVERY_DECISION_PROMPT = `STOP. You must return your discovery result NOW.
+
+Return ONLY this JSON (no markdown, no explanation, no tool calls):
+{"status":"complete","filename":""}
+OR
+{"status":"incomplete","filename":"<absolute-path-to-plan-file-you-created>"}
+
+If you wrote a plan file, use that path. If task is already done, use "complete" with empty filename.
+JSON only. Nothing else.`;
+
+export const FORCE_REVIEW_DECISION_PROMPT = `STOP. You must return your review result NOW.
+
+Return ONLY this JSON (no markdown, no explanation, no tool calls):
+{"status":"ready","filename":"<absolute-path-to-plan-file>"}
+
+Use the plan file path you were reviewing.
+JSON only. Nothing else.`;
 import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
