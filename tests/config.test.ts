@@ -283,6 +283,29 @@ describe('config resolution: CLI > env > file > defaults', () => {
     }
   });
 
+  it('normalizes runtime-native routing aliases in config', async () => {
+    const cfgPath = path.join(tmpDir, 'routing-aliases.json');
+    await fs.writeFile(
+      cfgPath,
+      JSON.stringify({
+        routing: {
+          default_mode: 'auto',
+          fast_runtime_model: 'runtime-fast',
+          heavy_runtime_model: 'runtime-heavy',
+          fast_runtime_fallback_models: ['runtime-fast-fallback'],
+          heavy_runtime_fallback_models: ['runtime-heavy-fallback'],
+        },
+      }),
+      'utf8'
+    );
+
+    const { config } = await loadConfig({ configPath: cfgPath });
+    assert.equal((config as any).routing?.fastModel, 'runtime-fast');
+    assert.equal((config as any).routing?.heavyModel, 'runtime-heavy');
+    assert.deepEqual((config as any).routing?.fastFallbackModels, ['runtime-fast-fallback']);
+    assert.deepEqual((config as any).routing?.heavyFallbackModels, ['runtime-heavy-fallback']);
+  });
+
   it('endpoint trailing slashes are normalized', async () => {
     const { config } = await loadConfig({
       configPath: path.join(tmpDir, 'nonexistent.json'),
