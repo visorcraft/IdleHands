@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { classify, classifyWithDecision, defaultClassificationRules } from '../src/agent/query-classifier.js';
-import type { QueryClassificationConfig } from '../src/agent/query-classifier.js';
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { classify, classifyWithDecision, defaultClassificationRules } from '../dist/agent/query-classifier.js';
+import type { QueryClassificationConfig } from '../dist/agent/query-classifier.js';
 
 const config: QueryClassificationConfig = {
   enabled: true,
@@ -9,63 +10,63 @@ const config: QueryClassificationConfig = {
 
 describe('classify', () => {
   it('returns null when disabled', () => {
-    expect(classify({ enabled: false, rules: config.rules }, 'hello')).toBeNull();
+    assert.strictEqual(classify({ enabled: false, rules: config.rules }, 'hello'), null);
   });
 
   it('returns null with empty rules', () => {
-    expect(classify({ enabled: true, rules: [] }, 'hello')).toBeNull();
+    assert.strictEqual(classify({ enabled: true, rules: [] }, 'hello'), null);
   });
 
   it('matches short greetings as fast', () => {
-    expect(classify(config, 'hello')).toBe('fast');
-    expect(classify(config, 'hey')).toBe('fast');
-    expect(classify(config, 'thanks')).toBe('fast');
+    assert.strictEqual(classify(config, 'hello'), 'fast');
+    assert.strictEqual(classify(config, 'hey'), 'fast');
+    assert.strictEqual(classify(config, 'thanks'), 'fast');
   });
 
   it('matches code keywords as code', () => {
-    expect(classify(config, 'refactor the authentication module')).toBe('code');
-    expect(classify(config, 'debug this function')).toBe('code');
+    assert.strictEqual(classify(config, 'refactor the authentication module'), 'code');
+    assert.strictEqual(classify(config, 'debug this function'), 'code');
   });
 
   it('matches code patterns', () => {
-    expect(classify(config, 'fn main() { println!("hello"); }')).toBe('code');
-    expect(classify(config, 'class UserService { constructor() {} }')).toBe('code');
+    assert.strictEqual(classify(config, 'fn main() { println!("hello"); }'), 'code');
+    assert.strictEqual(classify(config, 'class UserService { constructor() {} }'), 'code');
   });
 
   it('matches reasoning for long analytical queries', () => {
-    expect(classify(config, 'Can you explain why this architecture decision was made and analyze the tradeoffs?')).toBe('reasoning');
+    assert.strictEqual(classify(config, 'Can you explain why this architecture decision was made and analyze the tradeoffs?'), 'reasoning');
   });
 
   it('does not match reasoning for short messages', () => {
-    expect(classify(config, 'explain')).not.toBe('reasoning');
+    assert.notStrictEqual(classify(config, 'explain'), 'reasoning');
   });
 
   it('returns null for unmatched messages', () => {
-    expect(classify(config, 'the purple elephant danced quietly')).toBeNull();
+    assert.strictEqual(classify(config, 'the purple elephant danced quietly'), null);
   });
 
   it('is case-insensitive for keywords', () => {
-    expect(classify(config, 'HELLO')).toBe('fast');
+    assert.strictEqual(classify(config, 'HELLO'), 'fast');
   });
 
   it('respects priority ordering', () => {
     // "code" has priority 5, "fast" has priority 1
     // A message matching both should pick "code"
     const result = classify(config, 'code');
-    expect(result).toBe('code');
+    assert.strictEqual(result, 'code');
   });
 });
 
 describe('classifyWithDecision', () => {
   it('returns hint and priority', () => {
     const decision = classifyWithDecision(config, 'debug this function please');
-    expect(decision).not.toBeNull();
-    expect(decision!.hint).toBe('code');
-    expect(decision!.priority).toBe(5);
+    assert.notStrictEqual(decision, null);
+    assert.strictEqual(decision!.hint, 'code');
+    assert.strictEqual(decision!.priority, 5);
   });
 
   it('returns null for no match', () => {
-    expect(classifyWithDecision(config, 'random unrelated stuff here maybe')).toBeNull();
+    assert.strictEqual(classifyWithDecision(config, 'random unrelated stuff here maybe'), null);
   });
 });
 
@@ -78,8 +79,8 @@ describe('custom rules', () => {
         { hint: 'long', keywords: ['test'], patterns: [], priority: 1, minLength: 20 },
       ],
     };
-    expect(classify(custom, 'test')).toBe('short');
-    expect(classify(custom, 'test this very long message here')).toBe('long');
+    assert.strictEqual(classify(custom, 'test'), 'short');
+    assert.strictEqual(classify(custom, 'test this very long message here'), 'long');
   });
 
   it('supports case-sensitive patterns', () => {
@@ -89,7 +90,7 @@ describe('custom rules', () => {
         { hint: 'rust', keywords: [], patterns: ['fn '], priority: 5 },
       ],
     };
-    expect(classify(custom, 'fn main()')).toBe('rust');
-    expect(classify(custom, 'FN MAIN()')).toBeNull();
+    assert.strictEqual(classify(custom, 'fn main()'), 'rust');
+    assert.strictEqual(classify(custom, 'FN MAIN()'), null);
   });
 });

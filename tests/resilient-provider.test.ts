@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 import {
   isNonRetryable,
   isRateLimited,
@@ -6,69 +7,69 @@ import {
   isNonRetryableRateLimit,
   parseRetryAfterMs,
   resilientCall,
-} from '../src/agent/resilient-provider.js';
+} from '../dist/agent/resilient-provider.js';
 
 describe('Error Classification', () => {
   it('detects 401 as non-retryable', () => {
-    expect(isNonRetryable(new Error('401 Unauthorized'))).toBe(true);
+    assert.strictEqual(isNonRetryable(new Error('401 Unauthorized')), true);
   });
 
   it('detects 403 as non-retryable', () => {
-    expect(isNonRetryable(new Error('403 Forbidden'))).toBe(true);
+    assert.strictEqual(isNonRetryable(new Error('403 Forbidden')), true);
   });
 
   it('detects 404 as non-retryable', () => {
-    expect(isNonRetryable(new Error('404 Not Found'))).toBe(true);
+    assert.strictEqual(isNonRetryable(new Error('404 Not Found')), true);
   });
 
   it('does not flag 429 as non-retryable', () => {
-    expect(isNonRetryable(new Error('429 Too Many Requests'))).toBe(false);
+    assert.strictEqual(isNonRetryable(new Error('429 Too Many Requests')), false);
   });
 
   it('does not flag 500 as non-retryable', () => {
-    expect(isNonRetryable(new Error('500 Internal Server Error'))).toBe(false);
+    assert.strictEqual(isNonRetryable(new Error('500 Internal Server Error')), false);
   });
 
   it('detects auth failure keywords', () => {
-    expect(isNonRetryable(new Error('invalid api key provided'))).toBe(true);
-    expect(isNonRetryable(new Error('authentication failed'))).toBe(true);
+    assert.strictEqual(isNonRetryable(new Error('invalid api key provided')), true);
+    assert.strictEqual(isNonRetryable(new Error('authentication failed')), true);
   });
 
   it('detects model not found', () => {
-    expect(isNonRetryable(new Error('model glm-4.7 not found'))).toBe(true);
-    expect(isNonRetryable(new Error('unsupported model: qwen'))).toBe(true);
+    assert.strictEqual(isNonRetryable(new Error('model glm-4.7 not found')), true);
+    assert.strictEqual(isNonRetryable(new Error('unsupported model: qwen')), true);
   });
 
   it('detects context window exceeded', () => {
-    expect(isContextWindowExceeded('Your input exceeds the context window of this model')).toBe(true);
-    expect(isContextWindowExceeded('maximum context length exceeded')).toBe(true);
-    expect(isContextWindowExceeded('normal error message')).toBe(false);
+    assert.strictEqual(isContextWindowExceeded('Your input exceeds the context window of this model'), true);
+    assert.strictEqual(isContextWindowExceeded('maximum context length exceeded'), true);
+    assert.strictEqual(isContextWindowExceeded('normal error message'), false);
   });
 
   it('detects rate limiting', () => {
-    expect(isRateLimited(new Error('429 Too Many Requests'))).toBe(true);
-    expect(isRateLimited(new Error('HTTP 429 rate limit exceeded'))).toBe(true);
-    expect(isRateLimited(new Error('401 Unauthorized'))).toBe(false);
+    assert.strictEqual(isRateLimited(new Error('429 Too Many Requests')), true);
+    assert.strictEqual(isRateLimited(new Error('HTTP 429 rate limit exceeded')), true);
+    assert.strictEqual(isRateLimited(new Error('401 Unauthorized')), false);
   });
 
   it('detects non-retryable rate limits (business errors)', () => {
-    expect(isNonRetryableRateLimit(new Error('429 Too Many Requests: plan does not include glm-5'))).toBe(true);
-    expect(isNonRetryableRateLimit(new Error('429 Too Many: insufficient balance'))).toBe(true);
-    expect(isNonRetryableRateLimit(new Error('429 Too Many Requests: rate limit exceeded'))).toBe(false);
+    assert.strictEqual(isNonRetryableRateLimit(new Error('429 Too Many Requests: plan does not include glm-5')), true);
+    assert.strictEqual(isNonRetryableRateLimit(new Error('429 Too Many: insufficient balance')), true);
+    assert.strictEqual(isNonRetryableRateLimit(new Error('429 Too Many Requests: rate limit exceeded')), false);
   });
 });
 
 describe('parseRetryAfterMs', () => {
   it('parses integer Retry-After', () => {
-    expect(parseRetryAfterMs(new Error('429, Retry-After: 5'))).toBe(5000);
+    assert.strictEqual(parseRetryAfterMs(new Error('429, Retry-After: 5')), 5000);
   });
 
   it('parses float Retry-After', () => {
-    expect(parseRetryAfterMs(new Error('Rate limited. retry_after: 2.5 seconds'))).toBe(2500);
+    assert.strictEqual(parseRetryAfterMs(new Error('Rate limited. retry_after: 2.5 seconds')), 2500);
   });
 
   it('returns null when not present', () => {
-    expect(parseRetryAfterMs(new Error('500 Internal Server Error'))).toBeNull();
+    assert.strictEqual(parseRetryAfterMs(new Error('500 Internal Server Error')), null);
   });
 });
 
@@ -78,7 +79,7 @@ describe('resilientCall', () => {
       [{ name: 'test', execute: async () => 'ok' }],
       'model-1'
     );
-    expect(result).toBe('ok');
+    assert.strictEqual(result, 'ok');
   });
 
   it('retries and recovers', async () => {
@@ -95,8 +96,8 @@ describe('resilientCall', () => {
       'model-1',
       { maxRetries: 2, baseBackoffMs: 1 }
     );
-    expect(result).toBe('recovered');
-    expect(attempt).toBe(2);
+    assert.strictEqual(result, 'recovered');
+    assert.strictEqual(attempt, 2);
   });
 
   it('falls back to second provider', async () => {
@@ -108,7 +109,7 @@ describe('resilientCall', () => {
       'model-1',
       { maxRetries: 0 }
     );
-    expect(result).toBe('from fallback');
+    assert.strictEqual(result, 'from fallback');
   });
 
   it('tries fallback models', async () => {
@@ -125,23 +126,24 @@ describe('resilientCall', () => {
       'opus',
       { maxRetries: 0, modelFallbacks: { opus: ['sonnet', 'haiku'] } }
     );
-    expect(result).toBe('ok from sonnet');
-    expect(modelsUsed).toEqual(['opus', 'sonnet']);
+    assert.strictEqual(result, 'ok from sonnet');
+    assert.deepStrictEqual(modelsUsed, ['opus', 'sonnet']);
   });
 
   it('throws aggregated error when all fail', async () => {
-    await expect(
+    await assert.rejects(
       resilientCall(
         [{ name: 'p1', execute: async () => { throw new Error('fail'); } }],
         'model-1',
         { maxRetries: 0 }
-      )
-    ).rejects.toThrow('All providers/models failed');
+      ),
+      (err: Error) => { assert.ok(err.message.includes('All providers/models failed')); return true; }
+    );
   });
 
   it('aborts immediately on context window exceeded', async () => {
     let attempts = 0;
-    await expect(
+    await assert.rejects(
       resilientCall(
         [{
           name: 'p1',
@@ -152,14 +154,15 @@ describe('resilientCall', () => {
         }],
         'model-1',
         { maxRetries: 5, modelFallbacks: { 'model-1': ['model-2'] } }
-      )
-    ).rejects.toThrow('context window');
-    expect(attempts).toBe(1);
+      ),
+      (err: Error) => { assert.ok(err.message.includes('context window')); return true; }
+    );
+    assert.strictEqual(attempts, 1);
   });
 
   it('skips retries on non-retryable errors', async () => {
     let attempts = 0;
-    await expect(
+    await assert.rejects(
       resilientCall(
         [{
           name: 'p1',
@@ -170,8 +173,9 @@ describe('resilientCall', () => {
         }],
         'model-1',
         { maxRetries: 5 }
-      )
-    ).rejects.toThrow('All providers/models failed');
-    expect(attempts).toBe(1);
+      ),
+      (err: Error) => { assert.ok(err.message.includes('All providers/models failed')); return true; }
+    );
+    assert.strictEqual(attempts, 1);
   });
 });

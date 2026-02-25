@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { ResponseCache } from '../src/agent/response-cache.js';
+import { describe, it, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { ResponseCache } from '../dist/agent/response-cache.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -18,27 +19,27 @@ afterEach(() => {
 
 describe('ResponseCache', () => {
   it('returns null on miss', () => {
-    expect(cache.get('model', 'system', 'user prompt')).toBeNull();
+    assert.strictEqual(cache.get('model', 'system', 'user prompt'), null);
   });
 
   it('stores and retrieves a response', () => {
     cache.set('model', 'system', 'user prompt', 'response text', 100);
     const result = cache.get('model', 'system', 'user prompt');
-    expect(result).toBe('response text');
+    assert.strictEqual(result, 'response text');
   });
 
   it('different prompts have different keys', () => {
     cache.set('model', 'system', 'prompt A', 'response A');
     cache.set('model', 'system', 'prompt B', 'response B');
-    expect(cache.get('model', 'system', 'prompt A')).toBe('response A');
-    expect(cache.get('model', 'system', 'prompt B')).toBe('response B');
+    assert.strictEqual(cache.get('model', 'system', 'prompt A'), 'response A');
+    assert.strictEqual(cache.get('model', 'system', 'prompt B'), 'response B');
   });
 
   it('different models have different keys', () => {
     cache.set('gpt-4', 'system', 'prompt', 'gpt4 response');
     cache.set('claude', 'system', 'prompt', 'claude response');
-    expect(cache.get('gpt-4', 'system', 'prompt')).toBe('gpt4 response');
-    expect(cache.get('claude', 'system', 'prompt')).toBe('claude response');
+    assert.strictEqual(cache.get('gpt-4', 'system', 'prompt'), 'gpt4 response');
+    assert.strictEqual(cache.get('claude', 'system', 'prompt'), 'claude response');
   });
 
   it('respects TTL (expired entries return null)', async () => {
@@ -47,7 +48,7 @@ describe('ResponseCache', () => {
     shortCache.set('model', 'sys', 'prompt', 'response');
     // Wait for the entry to expire (>6ms for 0.0001 minutes)
     await new Promise((r) => setTimeout(r, 20));
-    expect(shortCache.get('model', 'sys', 'prompt')).toBeNull();
+    assert.strictEqual(shortCache.get('model', 'sys', 'prompt'), null);
   });
 
   it('evicts oldest entries when over capacity', () => {
@@ -56,8 +57,8 @@ describe('ResponseCache', () => {
     smallCache.set('m', 's', 'p2', 'r2');
     smallCache.set('m', 's', 'p3', 'r3');
     smallCache.set('m', 's', 'p4', 'r4'); // Should evict p1
-    expect(smallCache.get('m', 's', 'p1')).toBeNull();
-    expect(smallCache.get('m', 's', 'p4')).toBe('r4');
+    assert.strictEqual(smallCache.get('m', 's', 'p1'), null);
+    assert.strictEqual(smallCache.get('m', 's', 'p4'), 'r4');
   });
 
   it('reports stats correctly', () => {
@@ -66,15 +67,15 @@ describe('ResponseCache', () => {
     cache.get('m', 's', 'p1'); // hit
     cache.get('m', 's', 'p1'); // hit again
     const stats = cache.stats();
-    expect(stats.entries).toBe(2);
-    expect(stats.totalHits).toBe(2);
+    assert.strictEqual(stats.entries, 2);
+    assert.strictEqual(stats.totalHits, 2);
   });
 
   it('clear removes all entries', () => {
     cache.set('m', 's', 'p1', 'r1');
     cache.set('m', 's', 'p2', 'r2');
     cache.clear();
-    expect(cache.stats().entries).toBe(0);
-    expect(cache.get('m', 's', 'p1')).toBeNull();
+    assert.strictEqual(cache.stats().entries, 0);
+    assert.strictEqual(cache.get('m', 's', 'p1'), null);
   });
 });
