@@ -84,7 +84,13 @@ export function formatTaskHeartbeat(progress: AntonProgress): string {
       ? ` · ETA ~${formatDuration(progress.estimatedRemainingMs)}`
       : '';
 
-  return `⏳ Still working: ${task} (attempt ${attempt})\n${bar}\nElapsed: ${elapsed}${eta}`;
+  // Show turn progress if available
+  const turn = progress.currentTurn ?? 0;
+  const maxTurns = progress.maxTurns ?? 0;
+  const turnInfo = maxTurns > 0 ? ` · Turn ${turn}/${maxTurns}` : '';
+  const urgency = maxTurns > 0 && turn >= maxTurns - 5 ? ' ⚠️' : '';
+
+  return `⏳ Still working: ${task} (attempt ${attempt}${turnInfo}${urgency})\n${bar}\nElapsed: ${elapsed}${eta}`;
 }
 
 /**
