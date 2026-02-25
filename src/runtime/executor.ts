@@ -403,56 +403,104 @@ async function teardownPartialStart(plan: PlanResult, outcomes: StepOutcome[]): 
  * Execute a runtime plan.
  */
 /**
+ * Build SSH args common to sync operations (BatchMode, key, port).
+ */
+function buildSshArgs(
+  host: PlanResult['hosts'][number],
+  keyPath?: string
+): string[] {
+  const args = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10'];
+  if (keyPath) args.push('-i', keyPath);
+  if (host.connection.port && host.connection.port !== 22)
+    args.push('-p', String(host.connection.port));
+  return args;
+}
+
+/**
+ * Resolve the SSH key path for a host, handling secret refs.
+ */
+async function resolveHostKeyPath(host: PlanResult['hosts'][number]): Promise<string | undefined> {
+  if (!host.connection.key_path) return undefined;
+  try {
+    const store = new SecretsStore(process.env.IDLEHANDS_SECRETS_PASSPHRASE || null);
+    await store.load();
+    return resolveSecretRef(host.connection.key_path, store);
+  } catch {
+    return host.connection.key_path;
+  }
+}
+
+/**
+ * Get the remote user's home directory via SSH.
+ */
+async function getRemoteHomeDir(
+  host: PlanResult['hosts'][number],
+  keyPath?: string
+): Promise<string> {
+  const target = host.connection.user
+    ? `${host.connection.user}@${host.connection.host}`
+    : host.connection.host!;
+  const args = buildSshArgs(host, keyPath);
+  args.push(target, 'echo', '$HOME');
+
+  return new Promise((resolve) => {
+    const child = spawn('ssh', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
+    child.on('close', (code) => {
+      const home = stdout.trim();
+      resolve(home || `/home/${host.connection.user ?? 'root'}`);
+    });
+    child.on('error', () => resolve(`/home/${host.connection.user ?? 'root'}`));
+    setTimeout(() => { try { child.kill(); } catch {} }, 10000);
+  });
+}
+
+/**
  * Sync chat template files to remote hosts before starting a model.
- * Copies from the local project repo to ~/.idlehands/templates/ on each remote host.
+ * Copies from the local project repo to <home>/.idlehands/templates/ on each remote host.
+ * Returns a map of host_id → absolute remote template path for command rewriting.
  */
 async function syncTemplatesToHosts(
-  plan: PlanResult,
-  onStep?: ExecuteOpts['onStep']
-): Promise<void> {
+  plan: PlanResult
+): Promise<Map<string, string>> {
+  const remoteTemplatePaths = new Map<string, string>();
   const chatTemplate = plan.model.chat_template;
-  if (!chatTemplate) return;
+  if (!chatTemplate) return remoteTemplatePaths;
   // Only sync file paths (not built-in names like "chatml")
-  if (!/\.jinja\b|[/\\]/.test(chatTemplate)) return;
+  if (!/\.jinja\b|[/\\]/.test(chatTemplate)) return remoteTemplatePaths;
 
   // Resolve local path: try absolute, then relative to cwd
   const localPath = path.isAbsolute(chatTemplate) ? chatTemplate : path.resolve(chatTemplate);
   if (!existsSync(localPath)) {
     console.error(`[runtime] chat_template file not found locally: ${localPath}`);
-    return;
+    return remoteTemplatePaths;
   }
 
-  const remoteDir = '.idlehands/templates';
   const remoteFilename = path.basename(localPath);
-  const remotePath = `${remoteDir}/${remoteFilename}`;
 
   for (const host of plan.hosts) {
-    if (host.transport === 'local') continue; // local hosts don't need SCP
+    if (host.transport === 'local') {
+      // Local: use absolute path directly
+      remoteTemplatePaths.set(host.id, localPath);
+      continue;
+    }
 
     const targetHost = host.connection.host;
     if (!targetHost) continue;
 
     const target = host.connection.user ? `${host.connection.user}@${targetHost}` : targetHost;
-
-    // Resolve key path
-    let keyPath = host.connection.key_path;
-    if (keyPath) {
-      try {
-        const store = new SecretsStore(process.env.IDLEHANDS_SECRETS_PASSPHRASE || null);
-        await store.load();
-        keyPath = resolveSecretRef(keyPath, store);
-      } catch {
-        // keep original
-      }
-    }
+    const keyPath = await resolveHostKeyPath(host);
 
     try {
+      // Resolve actual home directory
+      const homeDir = await getRemoteHomeDir(host, keyPath);
+      const remoteDir = `${homeDir}/.idlehands/templates`;
+      const remotePath = `${remoteDir}/${remoteFilename}`;
+
       // Create remote directory
-      const mkdirArgs = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10'];
-      if (keyPath) mkdirArgs.push('-i', keyPath);
-      if (host.connection.port && host.connection.port !== 22)
-        mkdirArgs.push('-p', String(host.connection.port));
-      mkdirArgs.push(target, `mkdir -p ~/${remoteDir}`);
+      const mkdirArgs = buildSshArgs(host, keyPath);
+      mkdirArgs.push(target, `mkdir -p ${remoteDir}`);
 
       await new Promise<void>((resolve, reject) => {
         const child = spawn('ssh', mkdirArgs, { stdio: 'ignore' });
@@ -465,7 +513,7 @@ async function syncTemplatesToHosts(
       if (keyPath) scpArgs.push('-i', keyPath);
       if (host.connection.port && host.connection.port !== 22)
         scpArgs.push('-P', String(host.connection.port));
-      scpArgs.push(localPath, `${target}:~/${remotePath}`);
+      scpArgs.push(localPath, `${target}:${remotePath}`);
 
       await new Promise<void>((resolve, reject) => {
         const child = spawn('scp', scpArgs, { stdio: 'ignore' });
@@ -473,11 +521,14 @@ async function syncTemplatesToHosts(
         child.on('error', reject);
       });
 
-      console.error(`[runtime] synced template ${remoteFilename} → ${host.id}:~/${remotePath}`);
+      remoteTemplatePaths.set(host.id, remotePath);
+      console.error(`[runtime] synced template ${remoteFilename} → ${host.id}:${remotePath}`);
     } catch (e: any) {
       console.error(`[runtime] failed to sync template to ${host.id}: ${e?.message ?? e}`);
     }
   }
+
+  return remoteTemplatePaths;
 }
 
 export async function execute(plan: PlanResult, opts: ExecuteOpts = {}): Promise<ExecuteResult> {
@@ -558,8 +609,8 @@ export async function execute(plan: PlanResult, opts: ExecuteOpts = {}): Promise
       return { ok: true, reused: true, steps: outcomes };
     }
 
-    // Sync template files to remote hosts before starting
-    await syncTemplatesToHosts(plan, opts.onStep);
+    // Sync template files to remote hosts before starting, get resolved remote paths
+    const remoteTemplatePaths = await syncTemplatesToHosts(plan);
 
     for (const step of plan.steps) {
       if (opts.signal?.aborted) {
@@ -569,6 +620,19 @@ export async function execute(plan: PlanResult, opts: ExecuteOpts = {}): Promise
       }
 
       const host = plan.hosts.find((h) => h.id === step.host_id);
+
+      // Rewrite start_model command to use resolved remote template path
+      let activeStep = step;
+      if (step.kind === 'start_model' && remoteTemplatePaths.size > 0) {
+        const remotePath = remoteTemplatePaths.get(step.host_id);
+        if (remotePath) {
+          activeStep = { ...step, command: step.command.replace(
+            /--chat-template-file\s+'[^']*'/,
+            `--chat-template-file '${remotePath}'`
+          )};
+        }
+      }
+
       if (!host) {
         const failed: StepOutcome = {
           step,
@@ -586,7 +650,7 @@ export async function execute(plan: PlanResult, opts: ExecuteOpts = {}): Promise
 
       opts.onStep?.(step, 'start');
       const stepStarted = Date.now();
-      const result = await runStepWithRetry(step, host);
+      const result = await runStepWithRetry(activeStep, host);
       const duration = Date.now() - stepStarted;
 
       if (result.exitCode === 0) {
