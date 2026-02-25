@@ -55,6 +55,7 @@ interface ParsedAntonFlags {
   skipOnFail?: boolean;
   skipOnBlocked?: boolean;
   rollbackOnFail?: boolean;
+  scopeGuard?: 'off' | 'lax' | 'strict';
   approval?: string;
   verbose?: boolean;
   dryRun?: boolean;
@@ -119,6 +120,7 @@ function parseAntonArgs(args: string): ParsedAntonFlags | null {
     skipOnFail: bool('skip-on-fail'),
     skipOnBlocked: bool('skip-on-blocked'),
     rollbackOnFail: bool('rollback-on-fail'),
+    scopeGuard: flags['scope-guard'] as 'off' | 'lax' | 'strict' | undefined,
     approval: flags['approval'],
     verbose: bool('verbose'),
     dryRun: bool('dry-run'),
@@ -266,6 +268,7 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
     skipOnFail: parsed.skipOnFail ?? defaults.skip_on_fail ?? false,
     skipOnBlocked: parsed.skipOnBlocked ?? defaults.skip_on_blocked ?? true,
     rollbackOnFail: parsed.rollbackOnFail ?? defaults.rollback_on_fail ?? false,
+    scopeGuard: parsed.scopeGuard ?? defaults.scope_guard ?? 'lax',
     maxIdenticalFailures: defaults.max_identical_failures ?? 3,
     approvalMode: (parsed.approval ??
       defaults.approval_mode ??
@@ -420,6 +423,7 @@ function showUsage(): void {
       '  --skip-on-fail          Skip failed tasks (default: false)',
       '  --skip-on-blocked       Skip tasks that return blocked (default: true)',
       '  --rollback-on-fail      Revert task on failure (default: false)',
+      '  --scope-guard MODE      Scope guard: off|lax|strict (default: lax)',
       '  --dry-run               Show plan without executing',
       '  --verbose               Stream agent tokens',
     ].join('\n')

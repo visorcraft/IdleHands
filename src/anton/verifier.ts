@@ -23,7 +23,7 @@ import type {
   AntonRunConfig,
 } from './types.js';
 import {
-  checkTaskScopeGuard,
+  checkTaskScopeGuard, ScopeGuardMode,
   isCommandAvailable,
   makeTargetExists,
   truncateOutput,
@@ -152,7 +152,8 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
   }
 
   // Scope guard: if task text names explicit files, reject out-of-scope edits.
-  const scopeGuard = checkTaskScopeGuard(opts.task.text, opts.projectDir);
+  const scopeGuardMode = (opts.config.scopeGuard ?? 'lax') as ScopeGuardMode;
+  const scopeGuard = checkTaskScopeGuard(opts.task.text, opts.projectDir, scopeGuardMode);
   if (!scopeGuard.ok) {
     result.passed = false;
     result.l1_build = false;

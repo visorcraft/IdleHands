@@ -116,6 +116,8 @@ export interface AntonRunConfig {
   skipOnBlocked: boolean;
   /** Roll back changes on task failure. */
   rollbackOnFail: boolean;
+  /** Scope guard mode: 'off' (disabled), 'lax' (allow related files like tests), 'strict' (exact match only). Default: 'lax' */
+  scopeGuard?: 'off' | 'lax' | 'strict';
   /** Approval mode for agent sessions. */
   approvalMode: ApprovalMode;
   /** Stream agent tokens to stderr. */
