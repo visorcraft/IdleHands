@@ -660,6 +660,28 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               break;
             }
 
+            // If the model returned incomplete+filename without making any tool calls,
+            // it almost certainly hallucinated the file write. Immediately ask it to
+            // actually write the file before we even check the filesystem.
+            if (discoveryRes.toolCalls === 0) {
+              progress.onStage?.('⚠️ Discovery returned filename but made no tool calls — forcing write...');
+              const writeRes = await preflightSession.ask(
+                buildDiscoveryRewritePrompt(discovery.filename, 'file was never written (no tool calls)')
+              );
+              const writeTokens =
+                preflightSession.usage.prompt + preflightSession.usage.completion - discoveryTokens;
+              discoveryTokens += writeTokens;
+              totalTokens += writeTokens;
+              try {
+                const rewritten = parseDiscoveryResult(writeRes.text, config.projectDir);
+                if (rewritten.status === 'incomplete' && rewritten.filename) {
+                  discovery = rewritten;
+                }
+              } catch {
+                // keep original discovery.filename; validation below will handle it
+              }
+            }
+
             // Discovery claims a plan filename; verify it truly exists and has content.
             // If missing/empty, explicitly ask model to retry writing before accepting success.
             let planPath = discovery.filename;

@@ -1031,7 +1031,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
             return {
               text: `{"status":"incomplete","filename":"${planFile}"}`,
               turns: 1,
-              toolCalls: 0,
+              toolCalls: 1,
             } as any;
           }
           if (prompt.includes('Please review this plan file')) {
@@ -1040,7 +1040,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
             return {
               text: `{"status":"ready","filename":"${planFile}"}`,
               turns: 1,
-              toolCalls: 0,
+              toolCalls: 1,
             } as any;
           }
 
@@ -1048,7 +1048,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
           return {
             text: '<anton-result>status: done</anton-result>',
             turns: 1,
-            toolCalls: 0,
+            toolCalls: 1,
           } as any;
         },
       }) as any;
@@ -1574,5 +1574,72 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     });
 
     assert.equal(result.stopReason, 'max_tasks_exceeded');
+  });
+
+  test('17o. Discovery with zero toolCalls forces rewrite before file validation', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+    const planDir = join(tmpDir, '.agents', 'tasks');
+    await mkdir(planDir, { recursive: true });
+
+    const config = createTestConfig({
+      taskFile,
+      projectDir: tmpDir,
+      preflightEnabled: true,
+    } as any);
+
+    const stageMessages: string[] = [];
+    const progress = {
+      ...createMockProgressCallback(),
+      onStage: (m: string) => stageMessages.push(m),
+    } as any;
+
+    let askCalls: string[] = [];
+    const planFile = join(planDir, 'hallucinated-plan.md');
+
+    const createSession = async () =>
+      ({
+        ...createMockSession(['<anton-result>status: done</anton-result>']),
+        async ask(prompt: string) {
+          askCalls.push(prompt.slice(0, 80));
+          // First call: discovery returns filename with 0 toolCalls (hallucinated write)
+          if (prompt.includes('PRE-FLIGHT')) {
+            return {
+              text: `{"status":"incomplete","filename":"${planFile}"}`,
+              turns: 1,
+              toolCalls: 0,
+            } as any;
+          }
+          // Rewrite prompt: actually create the file this time
+          if (prompt.includes('file was never written')) {
+            await writeFile(planFile, '# Plan for Task 1\n\nDo the thing.');
+            return {
+              text: `{"status":"incomplete","filename":"${planFile}"}`,
+              turns: 1,
+              toolCalls: 1,
+            } as any;
+          }
+          // Implementation
+          return {
+            text: '<anton-result>status: done</anton-result>',
+            turns: 1,
+            toolCalls: 1,
+          } as any;
+        },
+      }) as any;
+
+    const result = await runAnton({
+      config,
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress,
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.equal(result.completedAll, true);
+    assert.ok(
+      stageMessages.some((m) => m.includes('no tool calls')),
+      'should warn about zero tool calls'
+    );
   });
 });
