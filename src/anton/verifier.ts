@@ -161,6 +161,23 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
     return result;
   }
 
+  // Kill any orphaned build/test processes from previous exec calls that might
+  // still be holding file locks in the project directory (EACCES on dist/ files).
+  try {
+    const staleProcs = spawnSync('sh', ['-c',
+      `lsof +D "${opts.projectDir}/dist" 2>/dev/null | awk 'NR>1 && $2 != ${process.pid} {print $2}' | sort -u`
+    ], { encoding: 'utf8', timeout: 5000 });
+    const stalePids = (staleProcs.stdout || '').trim().split('\n').filter(Boolean).map(Number).filter(Number.isFinite);
+    for (const pid of stalePids) {
+      try { process.kill(pid, 'SIGKILL'); } catch { /* already dead */ }
+    }
+    if (stalePids.length > 0) {
+      console.error(`[verifier] Killed ${stalePids.length} stale process(es) holding locks in dist/: ${stalePids.join(', ')}`);
+    }
+  } catch {
+    // lsof not available or failed — best effort
+  }
+
   // L1: Run build/test/lint commands
   let l1_all = true;
   const failedCommands: string[] = [];
