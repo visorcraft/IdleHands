@@ -54,6 +54,8 @@ import {
   parseJsonArgs,
 } from './agent/tool-calls.js';
 import { resolveToolAlias } from './agent/tool-name-alias.js';
+import { buildDefaultSystemPrompt, SystemPromptBuilder, VaultContextSection } from './agent/prompt-builder.js';
+import type { PromptContext } from './agent/prompt-builder.js';
 import { ToolLoopGuard } from './agent/tool-loop-guard.js';
 import { isLspTool, isMutationTool, isReadOnlyTool, planModeSummary } from './agent/tool-policy.js';
 import { buildToolsSchema } from './agent/tools-schema.js';
@@ -131,32 +133,10 @@ type CompactionStats = CompactionOutcome & {
   updatedAt?: string;
 };
 
-const SYSTEM_PROMPT = `You are a coding agent with filesystem and shell access. Execute the user's request using the provided tools.
-
-Rules:
-- Work in the current directory. Use relative paths for all file operations.
-- Do the work directly. Do NOT use spawn_task to delegate the user's primary request — only use it for genuinely independent subtasks that benefit from parallel execution.
-- Never use spawn_task to bypass confirmation/safety restrictions (for example blocked package installs). If a command is blocked, adapt the plan or ask the user for approval mode changes.
-- Read the target file before editing. You need the exact text for search/replace.
-- Use read_file with search=... to jump to relevant code; avoid reading whole files.
-- Never call read_file/read_files/list_dir twice in a row with identical arguments (same path/options). Reuse the previous result instead.
-- Prefer apply_patch or edit_range for code edits (token-efficient). Use edit_file only when exact old_text replacement is necessary.
-- Tool-call arguments MUST be strict JSON (double-quoted keys/strings, no comments, no trailing commas).
-- edit_range example: {"path":"src/foo.ts","start_line":10,"end_line":14,"replacement":"line A\nline B"}
-- apply_patch example: {"patch":"--- a/src/foo.ts\n+++ b/src/foo.ts\n@@ -10,2 +10,2 @@\n-old\n+new","files":["src/foo.ts"]}
-- write_file is for new files or explicit full rewrites only. Existing non-empty files require overwrite=true/force=true.
-- Use insert_file for insertions (prepend/append/line).
-- Use exec to run commands, tests, builds; check results before reporting success.
-- When running commands in a subdirectory, use exec's cwd parameter — NOT "cd /path && cmd". Each exec call is a fresh shell; cd does not persist.
-- Batch work: read all files you need, then apply all edits, then verify.
-- Be concise. Report what you changed and why.
-- Do NOT read every file in a directory. Use search_files or exec with grep to locate relevant code first, then read only the files that match.
-- If search_files returns 0 matches, try a broader pattern or use: exec grep -rn "keyword" path/
-- Anton (the autonomous task runner) is ONLY activated when the user explicitly invokes /anton. Never self-activate as Anton or start processing task files on your own.
-
-Tool call format:
-- Use tool_calls. Do not write JSON tool invocations in your message text.
-`;
+// System prompt is now built dynamically by the modular prompt builder.
+// See src/agent/prompt-builder.ts for section definitions.
+// The old monolithic SYSTEM_PROMPT is replaced by buildDefaultSystemPrompt().
+const SYSTEM_PROMPT = buildDefaultSystemPrompt();
 
 export type AgentRuntime = {
   client?: OpenAIClient;
@@ -1935,6 +1915,42 @@ export async function createSession(opts: {
       }
       sessionMetaPending = null;
     }
+
+    // ── Auto vault context injection ─────────────────────────────────
+    // Search the vault for entries relevant to the user's instruction and
+    // prepend them to the user message so the model has context without
+    // needing to call vault_search. Inspired by ZeroClaw's build_context().
+    if (vault && vaultEnabled) {
+      try {
+        const queryText =
+          typeof instruction === 'string'
+            ? instruction
+            : instruction
+                .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+                .map((p) => p.text)
+                .join(' ');
+        const vaultQuery = queryText.trim().slice(0, 200);
+        if (vaultQuery.length >= 10) {
+          const vaultHits = await vault.search(vaultQuery, 4);
+          if (vaultHits.length > 0) {
+            const vaultLines = vaultHits.map((r) => {
+              const title = r.kind === 'note' ? `note:${r.key}` : `tool:${r.tool || r.key || 'unknown'}`;
+              const body = (r.value ?? r.snippet ?? r.content ?? '').replace(/\s+/g, ' ').slice(0, 160);
+              return `- ${title}: ${body}`;
+            });
+            const vaultBlock = `[Vault context]\n${vaultLines.join('\n')}\n`;
+            if (typeof userContent === 'string') {
+              userContent = `${vaultBlock}\n${userContent}`;
+            } else {
+              userContent = [{ type: 'text', text: vaultBlock }, ...userContent];
+            }
+          }
+        }
+      } catch {
+        // Vault search is best-effort; don't fail the turn
+      }
+    }
+
     messages.push({ role: 'user', content: userContent });
 
     const hookObj: AgentHooks = typeof hooks === 'function' ? { onToken: hooks } : (hooks ?? {});
