@@ -262,11 +262,13 @@ export async function checkAndFixTemplate(
     return { ...result, fixed: false };
   }
 
-  // Template mismatch — save the correct one
+  // Template mismatch — save the correct one to ~/.idlehands/templates/
+  // This is the canonical location that syncTemplatesToHosts() reads from.
   const baseName = result.hfRepoUrl?.match(/huggingface\.co\/[^/]+\/([^/]+)/)?.[1] || model.id;
   const safeName = baseName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-');
   const filename = `${safeName}.jinja`;
-  const templateDir = path.resolve('templates');
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '.';
+  const templateDir = path.join(homeDir, '.idlehands', 'templates');
   const templatePath = path.join(templateDir, filename);
 
   try {
@@ -280,8 +282,8 @@ export async function checkAndFixTemplate(
 
     await fs.writeFile(templatePath, header + result.hfTemplate);
 
-    // Update model config
-    model.chat_template = `templates/${filename}`;
+    // Update model config — store absolute path so syncTemplatesToHosts() can find it
+    model.chat_template = templatePath;
     if (!model.launch.start_cmd.includes('{chat_template_args}')) {
       model.launch.start_cmd = model.launch.start_cmd.replace(
         '--jinja',
@@ -289,7 +291,7 @@ export async function checkAndFixTemplate(
       );
     }
 
-    return { ...result, fixed: true, templatePath: `templates/${filename}` };
+    return { ...result, fixed: true, templatePath };
   } catch (e: any) {
     return { ...result, fixed: false, error: `Failed to save template: ${e?.message ?? e}` };
   }
