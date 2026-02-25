@@ -52,6 +52,11 @@ import {
 } from './discord-routing.js';
 import { DiscordStreamingMessage } from './discord-streaming.js';
 import {
+  DISCORD_MODELS_PER_PAGE,
+  buildRuntimeModelPickerPage,
+  formatRuntimeModelPickerText,
+} from './runtime-model-picker.js';
+import {
   beginTurn,
   isTurnActive,
   markProgress,
@@ -1052,7 +1057,7 @@ When you escalate, your request will be re-run on a more capable model.`;
     }
   });
 
-  // Handle button interactions (model selection, etc.)
+  // Handle button interactions (model selection pagination + switching).
   client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isButton()) return;
     if (!allowedUsers.has(interaction.user.id)) {
@@ -1061,15 +1066,91 @@ When you escalate, your request will be re-run on a more capable model.`;
     }
 
     const customId = interaction.customId;
-    if (!customId.startsWith('model_switch:')) return;
+    const isModelSwitch = customId.startsWith('model_switch:');
+    const isModelPage = customId.startsWith('model_page:');
+    if (!isModelSwitch && !isModelPage && customId !== 'model_page_noop') return;
 
-    const modelId = customId.slice('model_switch:'.length);
     await interaction.deferUpdate();
 
+    if (customId === 'model_page_noop' || customId.startsWith('model_page_status:')) {
+      return;
+    }
+
     try {
-      const { plan } = await import('../runtime/planner.js');
-      const { execute, loadActiveRuntime } = await import('../runtime/executor.js');
       const { loadRuntimes } = await import('../runtime/store.js');
+      const { loadActiveRuntime } = await import('../runtime/executor.js');
+
+      if (isModelPage) {
+        const pageRaw = customId.slice('model_page:'.length);
+        const page = Number.parseInt(pageRaw, 10);
+
+        const rtConfig = await loadRuntimes();
+        const enabledModels = rtConfig.models.filter((mod) => mod.enabled);
+        const active = await loadActiveRuntime().catch(() => null);
+
+        const modelPage = buildRuntimeModelPickerPage(enabledModels as any, {
+          page: Number.isFinite(page) ? page : 0,
+          perPage: DISCORD_MODELS_PER_PAGE,
+          activeModelId: active?.modelId,
+        });
+
+        const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
+        const rows: any[] = [];
+        let row = new ActionRowBuilder<any>();
+
+        for (const item of modelPage.items) {
+          const btn = new ButtonBuilder()
+            .setCustomId(`model_switch:${item.id}`)
+            .setLabel(item.isActive ? `★${item.ordinal}` : String(item.ordinal))
+            .setStyle(item.isActive ? ButtonStyle.Success : ButtonStyle.Primary);
+
+          row.addComponents(btn);
+          if (row.components.length >= 5) {
+            rows.push(row);
+            row = new ActionRowBuilder<any>();
+          }
+        }
+        if (row.components.length > 0) rows.push(row);
+
+        if (modelPage.totalPages > 1) {
+          const navRow = new ActionRowBuilder<any>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(modelPage.hasPrev ? `model_page:${modelPage.page - 1}` : 'model_page_noop')
+              .setLabel('⬅ Prev')
+              .setStyle(ButtonStyle.Secondary)
+              .setDisabled(!modelPage.hasPrev),
+            new ButtonBuilder()
+              .setCustomId(`model_page_status:${modelPage.page + 1}`)
+              .setLabel(`${modelPage.page + 1}/${modelPage.totalPages}`)
+              .setStyle(ButtonStyle.Secondary)
+              .setDisabled(true),
+            new ButtonBuilder()
+              .setCustomId(modelPage.hasNext ? `model_page:${modelPage.page + 1}` : 'model_page_noop')
+              .setLabel('Next ➜')
+              .setStyle(ButtonStyle.Secondary)
+              .setDisabled(!modelPage.hasNext)
+          );
+          rows.push(navRow);
+        }
+
+        const contentText = formatRuntimeModelPickerText(modelPage, {
+          header: '📋 Select a model to switch to',
+          maxDisplayName: 68,
+          maxModelId: 72,
+        });
+
+        await interaction
+          .editReply({
+            content: contentText,
+            components: rows.slice(0, 5),
+          })
+          .catch(() => {});
+        return;
+      }
+
+      const modelId = customId.slice('model_switch:'.length);
+      const { plan } = await import('../runtime/planner.js');
+      const { execute } = await import('../runtime/executor.js');
 
       const rtConfig = await loadRuntimes();
       const active = await loadActiveRuntime();

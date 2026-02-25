@@ -8,6 +8,13 @@ import path from 'node:path';
 
 import type { Bot } from 'grammy';
 
+import {
+  TELEGRAM_MODELS_PER_PAGE,
+  buildRuntimeModelPickerPage,
+  formatRuntimeModelPickerText,
+  truncateLabel,
+} from './runtime-model-picker.js';
+
 /**
  * Register runtime-related command handlers on the bot instance.
  */
@@ -49,37 +56,74 @@ export function registerRuntimeCommands(bot: Bot): void {
     }
   });
 
-  const handleRuntimeModels = async (ctx: any) => {
-    try {
-      const { loadRuntimes } = await import('../runtime/store.js');
-      const config = await loadRuntimes();
-      if (!config.models.length) {
-        await ctx.reply('No runtime models configured.');
-        return;
-      }
+  const buildTelegramModelPage = async (page: number) => {
+    const { loadRuntimes } = await import('../runtime/store.js');
+    const { loadActiveRuntime } = await import('../runtime/executor.js');
 
-      const enabledModels = config.models.filter((m: any) => m.enabled);
-      if (!enabledModels.length) {
-        await ctx.reply('No enabled runtime models. Use `idlehands models enable <id>` in CLI.');
-        return;
-      }
+    const config = await loadRuntimes();
+    const active = await loadActiveRuntime().catch(() => null);
+    if (!config.models.length) {
+      return { empty: 'No runtime models configured.' } as const;
+    }
 
-      const buttons = enabledModels.map((m: any) => [
+    const enabledModels = config.models.filter((m: any) => m.enabled);
+    if (!enabledModels.length) {
+      return {
+        empty: 'No enabled runtime models. Use `idlehands models enable <id>` in CLI.',
+      } as const;
+    }
+
+    const modelPage = buildRuntimeModelPickerPage(enabledModels as any, {
+      page,
+      perPage: TELEGRAM_MODELS_PER_PAGE,
+      activeModelId: active?.modelId,
+    });
+
+    const rows: any[][] = [];
+    for (let i = 0; i < modelPage.items.length; i += 2) {
+      const row = modelPage.items.slice(i, i + 2).map((item) => ({
+        text: `${item.isActive ? '★' : ''}${item.ordinal}`,
+        callback_data: `model_select:${item.id}`,
+      }));
+      rows.push(row);
+    }
+
+    if (modelPage.totalPages > 1) {
+      rows.push([
         {
-          text: `🟢 ${m.display_name}`,
-          callback_data: `model_select:${m.id}`,
+          text: modelPage.hasPrev ? '⬅️ Prev' : '·',
+          callback_data: modelPage.hasPrev ? `model_page:${modelPage.page - 1}` : 'model_page_noop',
+        },
+        {
+          text: `${modelPage.page + 1}/${modelPage.totalPages}`,
+          callback_data: 'model_page_noop',
+        },
+        {
+          text: modelPage.hasNext ? 'Next ➡️' : '·',
+          callback_data: modelPage.hasNext ? `model_page:${modelPage.page + 1}` : 'model_page_noop',
         },
       ]);
+    }
 
-      const keyboard: any[][] = [];
-      for (let i = 0; i < buttons.length; i += 2) {
-        const row = buttons.slice(i, i + 2).flat();
-        keyboard.push(row);
+    const text = formatRuntimeModelPickerText(modelPage, {
+      header: '📋 Select a model to switch to',
+      maxDisplayName: 64,
+      maxModelId: 72,
+    });
+
+    return { text, keyboard: rows } as const;
+  };
+
+  const handleRuntimeModels = async (ctx: any) => {
+    try {
+      const page = await buildTelegramModelPage(0);
+      if ('empty' in page) {
+        await ctx.reply(page.empty);
+        return;
       }
 
-      await ctx.reply('📋 *Select a model to switch to:*', {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: keyboard },
+      await ctx.reply(page.text, {
+        reply_markup: { inline_keyboard: page.keyboard },
       });
     } catch (e: any) {
       await ctx.reply(`❌ Failed to load runtime models: ${e?.message ?? String(e)}`);
@@ -281,10 +325,88 @@ export function registerRuntimeCommands(bot: Bot): void {
  */
 export async function handleModelSelectCallback(ctx: any): Promise<boolean> {
   const data = ctx.callbackQuery.data;
-  if (!data.startsWith('model_select:')) return false;
+  if (
+    !data.startsWith('model_select:') &&
+    !data.startsWith('model_page:') &&
+    data !== 'model_page_noop'
+  ) {
+    return false;
+  }
+
+  if (data === 'model_page_noop') {
+    await ctx.answerCallbackQuery().catch(() => {});
+    return true;
+  }
+
+  const buildTelegramModelPage = async (page: number) => {
+    const { loadRuntimes } = await import('../runtime/store.js');
+    const { loadActiveRuntime } = await import('../runtime/executor.js');
+
+    const config = await loadRuntimes();
+    const active = await loadActiveRuntime().catch(() => null);
+    const enabledModels = config.models.filter((m: any) => m.enabled);
+
+    const modelPage = buildRuntimeModelPickerPage(enabledModels as any, {
+      page,
+      perPage: TELEGRAM_MODELS_PER_PAGE,
+      activeModelId: active?.modelId,
+    });
+
+    const rows: any[][] = [];
+    for (let i = 0; i < modelPage.items.length; i += 2) {
+      rows.push(
+        modelPage.items.slice(i, i + 2).map((item) => ({
+          text: `${item.isActive ? '★' : ''}${item.ordinal}`,
+          callback_data: `model_select:${item.id}`,
+        }))
+      );
+    }
+
+    if (modelPage.totalPages > 1) {
+      rows.push([
+        {
+          text: modelPage.hasPrev ? '⬅️ Prev' : '·',
+          callback_data: modelPage.hasPrev ? `model_page:${modelPage.page - 1}` : 'model_page_noop',
+        },
+        {
+          text: `${modelPage.page + 1}/${modelPage.totalPages}`,
+          callback_data: 'model_page_noop',
+        },
+        {
+          text: modelPage.hasNext ? 'Next ➡️' : '·',
+          callback_data: modelPage.hasNext ? `model_page:${modelPage.page + 1}` : 'model_page_noop',
+        },
+      ]);
+    }
+
+    const text = formatRuntimeModelPickerText(modelPage, {
+      header: '📋 Select a model to switch to',
+      maxDisplayName: 64,
+      maxModelId: 72,
+    });
+
+    return { text, keyboard: rows };
+  };
+
+  if (data.startsWith('model_page:')) {
+    const page = Number.parseInt(data.slice('model_page:'.length), 10);
+    await ctx.answerCallbackQuery().catch(() => {});
+
+    try {
+      const payload = await buildTelegramModelPage(Number.isFinite(page) ? page : 0);
+      await ctx
+        .editMessageText(payload.text, {
+          reply_markup: { inline_keyboard: payload.keyboard },
+        })
+        .catch(() => {});
+    } catch (e: any) {
+      await ctx.editMessageText(`❌ Failed to load model page: ${e?.message ?? String(e)}`).catch(() => {});
+    }
+    return true;
+  }
 
   const modelId = data.slice('model_select:'.length);
-  await ctx.answerCallbackQuery({ text: `Switching to ${modelId}...` }).catch(() => {});
+  await ctx.answerCallbackQuery({ text: `Switching to ${truncateLabel(modelId, 48)}...` }).catch(() => {});
 
   try {
     const { plan } = await import('../runtime/planner.js');
@@ -302,11 +424,7 @@ export async function handleModelSelectCallback(ctx: any): Promise<boolean> {
     }
 
     if (result.reuse) {
-      await ctx
-        .editMessageText(`✅ Already using *${result.model.display_name}*`, {
-          parse_mode: 'Markdown',
-        })
-        .catch(() => {});
+      await ctx.editMessageText(`✅ Already using ${result.model.display_name}`).catch(() => {});
       return true;
     }
 
@@ -323,11 +441,7 @@ export async function handleModelSelectCallback(ctx: any): Promise<boolean> {
     });
 
     if (execResult.ok) {
-      await ctx
-        .editMessageText(`✅ Switched to *${result.model.display_name}*`, {
-          parse_mode: 'Markdown',
-        })
-        .catch(() => {});
+      await ctx.editMessageText(`✅ Switched to ${result.model.display_name}`).catch(() => {});
     } else {
       await ctx
         .editMessageText(`❌ Switch failed: ${execResult.error || 'unknown error'}`)

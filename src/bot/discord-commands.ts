@@ -11,6 +11,11 @@ import type { Message } from 'discord.js';
 
 import type { BotDiscordConfig, IdlehandsConfig } from '../types.js';
 import { PKG_VERSION } from '../utils.js';
+import {
+  DISCORD_MODELS_PER_PAGE,
+  buildRuntimeModelPickerPage,
+  formatRuntimeModelPickerText,
+} from './runtime-model-picker.js';
 
 import {
   startCommand,
@@ -511,6 +516,9 @@ export async function handleTextCommand(
   if (content === '/models' || content === '/rtmodels') {
     try {
       const { loadRuntimes } = await import('../runtime/store.js');
+      const { loadActiveRuntime } = await import('../runtime/executor.js');
+      const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
+
       const rtConfig = await loadRuntimes();
       if (!rtConfig.models.length) {
         await sendUserVisible(msg, 'No runtime models configured.').catch(() => {});
@@ -526,30 +534,59 @@ export async function handleTextCommand(
         return true;
       }
 
-      const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
+      const active = await loadActiveRuntime().catch(() => null);
+      const modelPage = buildRuntimeModelPickerPage(enabledModels as any, {
+        page: 0,
+        perPage: DISCORD_MODELS_PER_PAGE,
+        activeModelId: active?.modelId,
+      });
+
       const rows: any[] = [];
-      let currentRow = new ActionRowBuilder<any>();
-
-      for (const mod of enabledModels) {
+      let row = new ActionRowBuilder<any>();
+      for (const item of modelPage.items) {
         const btn = new ButtonBuilder()
-          .setCustomId(`model_switch:${mod.id}`)
-          .setLabel(mod.display_name.slice(0, 80))
-          .setStyle(ButtonStyle.Primary);
+          .setCustomId(`model_switch:${item.id}`)
+          .setLabel(item.isActive ? `★${item.ordinal}` : String(item.ordinal))
+          .setStyle(item.isActive ? ButtonStyle.Success : ButtonStyle.Primary);
 
-        currentRow.addComponents(btn);
-
-        if (currentRow.components.length >= 5) {
-          rows.push(currentRow);
-          currentRow = new ActionRowBuilder<any>();
+        row.addComponents(btn);
+        if (row.components.length >= 5) {
+          rows.push(row);
+          row = new ActionRowBuilder<any>();
         }
       }
-      if (currentRow.components.length > 0) {
-        rows.push(currentRow);
+      if (row.components.length > 0) rows.push(row);
+
+      if (modelPage.totalPages > 1) {
+        const navRow = new ActionRowBuilder<any>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(modelPage.hasPrev ? `model_page:${modelPage.page - 1}` : 'model_page_noop')
+            .setLabel('⬅ Prev')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!modelPage.hasPrev),
+          new ButtonBuilder()
+            .setCustomId(`model_page_status:${modelPage.page + 1}`)
+            .setLabel(`${modelPage.page + 1}/${modelPage.totalPages}`)
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(true),
+          new ButtonBuilder()
+            .setCustomId(modelPage.hasNext ? `model_page:${modelPage.page + 1}` : 'model_page_noop')
+            .setLabel('Next ➜')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!modelPage.hasNext)
+        );
+        rows.push(navRow);
       }
+
+      const contentText = formatRuntimeModelPickerText(modelPage, {
+        header: '📋 Select a model to switch to',
+        maxDisplayName: 68,
+        maxModelId: 72,
+      });
 
       await (msg.channel as any)
         .send({
-          content: '📋 **Select a model to switch to:**',
+          content: contentText,
           components: rows.slice(0, 5),
         })
         .catch(() => {});
