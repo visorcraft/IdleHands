@@ -253,6 +253,10 @@ export interface AntonProgress {
   currentTask?: string;
   /** Attempt number for the currently active task */
   currentAttempt?: number;
+  /** Current turn within this attempt (1-indexed). */
+  currentTurn?: number;
+  /** Maximum turns allowed for this task. */
+  maxTurns?: number;
 }
 
 /** Callback interface for progress reporting. */

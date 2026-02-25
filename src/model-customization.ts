@@ -64,8 +64,10 @@ export function deriveGenerationParams(opts: {
   configuredMaxTokens?: number;
   configuredTemperature?: number;
   configuredTopP?: number;
+  configuredFrequencyPenalty?: number;
+  configuredPresencePenalty?: number;
   baseMaxTokens?: number;
-}): { maxTokens: number; temperature: number; topP: number } {
+}): { maxTokens: number; temperature: number; topP: number; frequencyPenalty: number; presencePenalty: number } {
   const base = opts.baseMaxTokens ?? BASE_MAX_TOKENS;
 
   let maxTokens = opts.configuredMaxTokens ?? base;
@@ -79,6 +81,8 @@ export function deriveGenerationParams(opts: {
 
   const temperature = opts.configuredTemperature ?? opts.harness.defaults?.temperature ?? 0.2;
   const topP = opts.configuredTopP ?? opts.harness.defaults?.top_p ?? 0.95;
+  const frequencyPenalty = opts.configuredFrequencyPenalty ?? opts.harness.defaults?.frequency_penalty ?? 0;
+  const presencePenalty = opts.configuredPresencePenalty ?? opts.harness.defaults?.presence_penalty ?? 0;
 
-  return { maxTokens, temperature, topP };
+  return { maxTokens, temperature, topP, frequencyPenalty, presencePenalty };
 }
