@@ -535,19 +535,14 @@ export async function handleTextCommand(
     return true;
   }
 
-  if (
-    content === '/models' ||
-    content.startsWith('/models ') ||
-    content === '/rtmodels' ||
-    content.startsWith('/rtmodels ')
-  ) {
+  if (content === '/models' || content.startsWith('/models ')) {
     try {
       const { loadRuntimes } = await import('../runtime/store.js');
       const { loadActiveRuntime } = await import('../runtime/executor.js');
       const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
 
       const query = content
-        .replace(/^\/(?:rt)?models\s*/i, '')
+        .replace(/^\/models\s*/i, '')
         .trim();
       const queryKey = registerModelQuery(query);
 
