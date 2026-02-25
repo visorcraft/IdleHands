@@ -665,3 +665,67 @@ export async function handleGitStatus({ ctx, sessions }: CommandContext): Promis
 
   await reply(ctx, await gitStatusCommand(cwd));
 }
+
+export async function handleRetryFast({ ctx, sessions }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const managed = sessions.get(chatId);
+
+  if (!managed) {
+    await ctx.reply('No active session. Send a message to start one.');
+    return;
+  }
+
+  // Set routing mode to fast
+  await reply(ctx, modeSetCommand(managed as unknown as ManagedLike, 'fast'));
+  
+  // Re-run the last task
+  const lastInstruction = managed.session.lastAskInstructionText || '';
+  if (!lastInstruction.trim()) {
+    await ctx.reply('❌ No previous task to retry.');
+    return;
+  }
+
+  // Add to queue for re-processing with new routing mode
+  const newMessage = {
+    text: lastInstruction,
+    from: ctx.message?.from,
+    chat: ctx.message?.chat,
+    date: Date.now(),
+  } as any;
+
+  managed.pendingQueue.push(newMessage);
+  await ctx.reply('🔄 Added to queue with routing mode set to `fast`.');
+}
+
+export async function handleRetryHeavy({ ctx, sessions }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const managed = sessions.get(chatId);
+
+  if (!managed) {
+    await ctx.reply('No active session. Send a message to start one.');
+    return;
+  }
+
+  // Set routing mode to heavy
+  await reply(ctx, modeSetCommand(managed as unknown as ManagedLike, 'heavy'));
+  
+  // Re-run the last task
+  const lastInstruction = managed.session.lastAskInstructionText || '';
+  if (!lastInstruction.trim()) {
+    await ctx.reply('❌ No previous task to retry.');
+    return;
+  }
+
+  // Add to queue for re-processing with new routing mode
+  const newMessage = {
+    text: lastInstruction,
+    from: ctx.message?.from,
+    chat: ctx.message?.chat,
+    date: Date.now(),
+  } as any;
+
+  managed.pendingQueue.push(newMessage);
+  await ctx.reply('🔄 Added to queue with routing mode set to `heavy`.');
+}

@@ -286,6 +286,50 @@ export async function handleTextCommand(
     return true;
   }
 
+  if (content === '/retry_fast') {
+    // Set routing mode to fast
+    await send(modeSetCommand(m, 'fast'));
+    
+    // Re-run the last task
+    const lastInstruction = managed.session.lastAskInstructionText || '';
+    if (!lastInstruction.trim()) {
+      await send({ error: '❌ No previous task to retry.' });
+      return true;
+    }
+
+    // Add to queue for re-processing with new routing mode
+    const newMessage = {
+      ...msg,
+      content: lastInstruction,
+    } as Message;
+
+    managed.pendingQueue.push(newMessage);
+    await sendUserVisible(msg, '🔄 Added to queue with routing mode set to `fast`.');
+    return true;
+  }
+
+  if (content === '/retry_heavy') {
+    // Set routing mode to heavy
+    await send(modeSetCommand(m, 'heavy'));
+    
+    // Re-run the last task
+    const lastInstruction = managed.session.lastAskInstructionText || '';
+    if (!lastInstruction.trim()) {
+      await send({ error: '❌ No previous task to retry.' });
+      return true;
+    }
+
+    // Add to queue for re-processing with new routing mode
+    const newMessage = {
+      ...msg,
+      content: lastInstruction,
+    } as Message;
+
+    managed.pendingQueue.push(newMessage);
+    await sendUserVisible(msg, '🔄 Added to queue with routing mode set to `heavy`.');
+    return true;
+  }
+
   if (content === '/subagents' || content.startsWith('/subagents ')) {
     const arg = content.slice('/subagents'.length).trim().toLowerCase();
     if (!arg) {

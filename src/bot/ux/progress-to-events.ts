@@ -7,7 +7,8 @@
  */
 
 import type { UXEventPROGRESS, UXEventACK, UXEventRESULT, UXEventERROR } from './events.js';
-
+import type { UXAction } from './actions.js';
+import { createRetryFastAction, createRetryHeavyAction } from './actions.js';
 /**
  * Convert a TurnProgressSnapshot to a PROGRESS event.
  */
@@ -49,7 +50,6 @@ export function createAckEvent(
     message: message || 'Session initialized',
   };
 }
-
 /**
  * Create a RESULT event for turn completion.
  */
@@ -60,6 +60,11 @@ export function createResultEvent(
   summary: string,
   success?: boolean
 ): UXEventRESULT {
+  const actions: UXAction[] = [
+    createRetryFastAction('Retry (fast)'),
+    createRetryHeavyAction('Retry (heavy)'),
+  ];
+
   return {
     category: 'RESULT',
     id: `result-${sequence}`,
@@ -69,9 +74,9 @@ export function createResultEvent(
     sequence,
     summary,
     success,
+    actions,
   };
 }
-
 /**
  * Create an ERROR event for turn failures.
  */
@@ -82,6 +87,11 @@ export function createErrorEvent(
   message: string,
   code?: string
 ): UXEventERROR {
+  const actions: UXAction[] = [
+    createRetryFastAction('Retry (fast)'),
+    createRetryHeavyAction('Retry (heavy)'),
+  ];
+
   return {
     category: 'ERROR',
     id: `error-${sequence}`,
@@ -91,5 +101,6 @@ export function createErrorEvent(
     sequence,
     message,
     code,
+    actions,
   };
 }
