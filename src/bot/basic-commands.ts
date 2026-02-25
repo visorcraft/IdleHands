@@ -50,7 +50,7 @@ export function helpCommand(surface: 'telegram' | 'discord'): CmdResult {
     '/unpin — Unpin working directory',
     '/model — Show current model',
     '/approval [mode] — Get/set approval mode',
-    '/mode [code|sys|fast|heavy|auto|status] — Get/set mode/routing',
+    '/mode [code|sys|status] — Get/set mode',
     '/compact — Trigger context compaction',
     '/changes — Show files modified this session',
     '/undo — Undo last edit',
