@@ -31,9 +31,10 @@ function formatTokens(tokens: number): string {
  * Format final run summary.
  */
 export function formatRunSummary(result: AntonRunResult): string {
+  const genuineCompleted = Math.max(0, result.completed - (result.autoCompleted ?? 0));
   const lines = [
     '🤖 Anton Complete',
-    `  ✅ ${result.completed} tasks completed`,
+    `  ✅ ${genuineCompleted} tasks completed`,
     `  🧠 ${result.autoCompleted ?? 0} tasks already complete (preflight)`,
     `  ⏭️  ${result.skipped} tasks skipped`,
     `  ❌ ${result.failed} tasks failed`,
@@ -51,12 +52,14 @@ export function formatRunSummary(result: AntonRunResult): string {
  * [████████░░░░░░░░░░░░] 5/20 (25%)
  */
 export function formatProgressBar(progress: AntonProgress): string {
+  // Use genuine completions (excluding auto-completed/preflight) for accurate progress
   const completed = progress.completedSoFar;
   const total = progress.totalPending;
   const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
 
-  const filled = Math.round((completed / total) * 20);
-  const empty = 20 - filled;
+  const barWidth = 20;
+  const filled = total > 0 ? Math.round((completed / total) * barWidth) : 0;
+  const empty = barWidth - filled;
   const bar = '█'.repeat(filled) + '░'.repeat(empty);
 
   return `[${bar}] ${completed}/${total} (${percent}%)`;
