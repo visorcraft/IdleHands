@@ -150,12 +150,16 @@ export function registerRuntimeCommands(bot: Bot): void {
         const results: string[] = [];
         for (const model of rtConfig.models.filter((m) => m.enabled)) {
           const r = await checkTemplate(model, rtConfig);
+          const runIcon = r.runningTemplate === 'passed-in' ? '🟢' :
+            r.runningTemplate === 'embedded' ? '🔴' : '⚫';
+          const runLabel = r.runningTemplate === 'passed-in' ? 'passed-in' :
+            r.runningTemplate === 'embedded' ? 'embedded' : 'not running';
           if (r.error) {
-            results.push(`⚠️ *${model.id}*: ${r.error}`);
+            results.push(`⚠️ *${model.id}* [${runIcon} ${runLabel}]: ${r.error}`);
           } else if (r.match === true) {
-            results.push(`✅ *${model.id}*: GGUF template matches HuggingFace`);
+            results.push(`✅ *${model.id}* [${runIcon} ${runLabel}]: GGUF matches HF`);
           } else {
-            results.push(`❌ *${model.id}*: MISMATCH — GGUF template differs from HuggingFace (${r.hfRepoUrl})`);
+            results.push(`❌ *${model.id}* [${runIcon} ${runLabel}]: MISMATCH`);
           }
         }
         await ctx.reply(results.join('\n'), { parse_mode: 'Markdown' });
@@ -178,6 +182,16 @@ export function registerRuntimeCommands(bot: Bot): void {
       lines.push(`HF Repo: ${result.hfRepoUrl || 'unknown'}`);
       lines.push(`GGUF template: ${result.ggufTemplate ? `${result.ggufTemplate.length} chars` : 'not found'}`);
       lines.push(`HF template: ${result.hfTemplate ? `${result.hfTemplate.length} chars` : 'not found'}`);
+
+      const runIcon = result.runningTemplate === 'passed-in' ? '🟢' :
+        result.runningTemplate === 'embedded' ? '🔴' : '⚫';
+      if (result.runningTemplate === 'passed-in') {
+        lines.push(`Running: ${runIcon} Using passed-in template: \`${result.runningTemplatePath}\``);
+      } else if (result.runningTemplate === 'embedded') {
+        lines.push(`Running: ${runIcon} Using embedded GGUF template (may be incorrect)`);
+      } else if (result.runningTemplate === 'not-running') {
+        lines.push(`Running: ${runIcon} Not running`);
+      }
 
       if (result.error) {
         lines.push(`\n⚠️ ${result.error}`);
