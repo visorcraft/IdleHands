@@ -1235,6 +1235,64 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.ok(stageMessages.some((m) => m.includes('Increasing preflight cap to 6')));
   });
 
+  test('17j2. Fallback discovery forces separate requirements review before implementation', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+    const planFile = join(tmpDir, '.agents', 'tasks', 'missing-plan.md');
+
+    const stageMessages: string[] = [];
+    const progress = {
+      ...createMockProgressCallback(),
+      onStage: (m: string) => stageMessages.push(m),
+    } as any;
+
+    let reviewCalls = 0;
+
+    const result = await runAnton({
+      config: createTestConfig({
+        taskFile,
+        projectDir: tmpDir,
+        preflightEnabled: true,
+        preflightRequirementsReview: true,
+        preflightSeparateReview: false,
+        preflightMaxRetries: 1,
+      } as any),
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress,
+      abortSignal: { aborted: false },
+      createSession: async () =>
+        ({
+          ...createMockSession(['<anton-result>status: done</anton-result>']),
+          async ask(prompt: string) {
+            if (prompt.includes('PRE-FLIGHT')) {
+              return {
+                text: `{"status":"incomplete","filename":"${planFile}"}`,
+                turns: 1,
+                toolCalls: 0,
+              } as any;
+            }
+            if (prompt.includes('Please review this plan file')) {
+              reviewCalls++;
+              return {
+                text: `{"status":"ready","filename":"${planFile}"}`,
+                turns: 1,
+                toolCalls: 0,
+              } as any;
+            }
+            return {
+              text: '<anton-result>status: done</anton-result>',
+              turns: 1,
+              toolCalls: 0,
+            } as any;
+          },
+        }) as any,
+    });
+
+    assert.equal(result.completedAll, true);
+    assert.ok(reviewCalls >= 1);
+    assert.ok(stageMessages.some((m) => m.includes('forcing separate requirements review')));
+  });
+
   test('17k. Discovery final failure degrades to fallback plan and continues', async () => {
     const tmpDir = await createTempGitRepo();
     const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
