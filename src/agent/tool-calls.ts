@@ -1,4 +1,5 @@
 import type { ToolCall } from '../types.js';
+import { resolveToolAlias, defaultParamForTool } from './tool-name-alias.js';
 
 export type ArgValidationIssue = {
   field: string;
@@ -8,8 +9,40 @@ export type ArgValidationIssue = {
 
 /** @internal Exported for testing. Parses tool calls from model content when tool_calls array is empty. */
 export function parseToolCallsFromContent(content: string): ToolCall[] | null {
+  const result = parseToolCallsFromContentRaw(content);
+  return result ? applyAliasesToToolCalls(result) : null;
+}
+
+/**
+ * Apply tool name aliasing to parsed tool calls.
+ * Resolves common model hallucinations (bash→exec, file_read→read_file, etc.).
+ */
+function applyAliasesToToolCalls(calls: ToolCall[]): ToolCall[] {
+  return calls.map((tc) => {
+    const alias = resolveToolAlias(tc.function.name);
+    if (!alias.wasAliased) return tc;
+    return {
+      ...tc,
+      function: {
+        ...tc.function,
+        name: alias.resolved,
+      },
+    };
+  });
+}
+
+/** Raw parser (no aliasing applied). */
+function parseToolCallsFromContentRaw(content: string): ToolCall[] | null {
   // Fallback parser: if model printed JSON tool_calls in content.
-  const trimmed = stripMarkdownFences(content.trim()).trim();
+  //
+  // Run markdown tool-block parsers on raw content BEFORE stripping
+  // fences, because stripMarkdownFences will destroy the ```tool <name>
+  // structure that we need to identify the tool name.
+  const rawTrimmed = content.trim();
+  const mdToolCalls = parseMarkdownToolCallBlocks(rawTrimmed);
+  if (mdToolCalls?.length) return mdToolCalls;
+
+  const trimmed = stripMarkdownFences(rawTrimmed).trim();
 
   const tryParse = (s: string) => {
     try {
@@ -177,6 +210,19 @@ export function parseToolCallsFromContent(content: string): ToolCall[] | null {
   // or single-line <function=tool_name>{...}</function>
   const fnTagCalls = parseFunctionTagToolCalls(trimmed);
   if (fnTagCalls?.length) return fnTagCalls;
+
+  // Case 6: MiniMax-style XML invoke tags
+  // <invoke name="shell"><parameter name="command">ls</parameter></invoke>
+  // optionally wrapped in <minimax:toolcall>...</minimax:toolcall>
+  const invokeTagCalls = parseInvokeTagToolCalls(trimmed);
+  if (invokeTagCalls?.length) return invokeTagCalls;
+
+  // Case 7: GLM-style shortened format
+  // shell/command>ls -la
+  // file_read/path>src/main.ts
+  // shell>uname -a  (uses default param for tool)
+  const glmCalls = parseGlmStyleToolCalls(trimmed);
+  if (glmCalls?.length) return glmCalls;
 
   return null;
 }
@@ -620,3 +666,233 @@ export function parseJsonArgs(raw: string): any {
     }
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Additional format parsers (inspired by ZeroClaw's multi-format recovery)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Parse markdown code-block tool calls.
+ *
+ * Format 1 — tool_call language:
+ * ```tool_call
+ * {"name": "shell", "arguments": {"command": "ls"}}
+ * ```
+ *
+ * Format 2 — tool <name> language:
+ * ```tool shell
+ * {"command": "ls"}
+ * ```
+ */
+function parseMarkdownToolCallBlocks(content: string): ToolCall[] | null {
+  const calls: ToolCall[] = [];
+
+  // Format 1: ```tool_call or ```toolcall or ```tool-call
+  const tcBlockRe = /```(?:tool[_-]?call|invoke)\s*\n([\s\S]*?)(?:```|<\/tool[_-]?call>|<\/toolcall>|<\/invoke>)/gi;
+  for (const match of content.matchAll(tcBlockRe)) {
+    const inner = match[1].trim();
+    try {
+      const parsed = JSON.parse(inner);
+      if (parsed?.name) {
+        const alias = resolveToolAlias(String(parsed.name));
+        calls.push({
+          id: `call_md_${calls.length}`,
+          type: 'function',
+          function: {
+            name: alias.resolved,
+            arguments:
+              typeof parsed.arguments === 'string'
+                ? parsed.arguments
+                : JSON.stringify(parsed.arguments ?? {}),
+          },
+        });
+      }
+    } catch {
+      // Not parseable — skip
+    }
+  }
+
+  // Format 2: ```tool <name>\n{...json args...}\n```
+  const toolNameBlockRe = /```tool\s+(\w+)\s*\n([\s\S]*?)(?:```|$)/gi;
+  for (const match of content.matchAll(toolNameBlockRe)) {
+    const rawToolName = match[1];
+    const inner = match[2].trim();
+    const alias = resolveToolAlias(rawToolName);
+    try {
+      const args = JSON.parse(inner);
+      if (args && typeof args === 'object' && !Array.isArray(args)) {
+        calls.push({
+          id: `call_md_${calls.length}`,
+          type: 'function',
+          function: {
+            name: alias.resolved,
+            arguments: JSON.stringify(args),
+          },
+        });
+      }
+    } catch {
+      // Not parseable — skip
+    }
+  }
+
+  return calls.length > 0 ? calls : null;
+}
+
+/**
+ * Parse MiniMax/DeepSeek-style XML invoke tags.
+ *
+ * Format:
+ * <invoke name="shell">
+ *   <parameter name="command">ls -la</parameter>
+ * </invoke>
+ *
+ * Optionally wrapped in <minimax:toolcall>...</minimax:toolcall> or
+ * <minimax:tool_call>...</minimax:tool_call>.
+ */
+function parseInvokeTagToolCalls(content: string): ToolCall[] | null {
+  // Quick bailout
+  if (!content.includes('<invoke')) return null;
+
+  const calls: ToolCall[] = [];
+  const invokeRe = /<invoke\b[^>]*\bname\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*>([\s\S]*?)<\/invoke>/gi;
+
+  for (const match of content.matchAll(invokeRe)) {
+    const rawToolName = (match[1] ?? match[2] ?? '').trim();
+    if (!rawToolName) continue;
+    const body = (match[3] ?? '').trim();
+    const alias = resolveToolAlias(rawToolName);
+
+    const args: Record<string, string> = {};
+    const paramRe = /<parameter\b[^>]*\bname\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*>([\s\S]*?)<\/parameter>/gi;
+    for (const pmatch of body.matchAll(paramRe)) {
+      const paramName = (pmatch[1] ?? pmatch[2] ?? '').trim();
+      const paramValue = (pmatch[3] ?? '').trim();
+      if (paramName && paramValue) {
+        args[paramName] = paramValue;
+      }
+    }
+
+    // If no <parameter> tags, try parsing body as JSON
+    if (Object.keys(args).length === 0) {
+      try {
+        const jsonArgs = JSON.parse(body);
+        if (jsonArgs && typeof jsonArgs === 'object' && !Array.isArray(jsonArgs)) {
+          calls.push({
+            id: `call_invoke_${calls.length}`,
+            type: 'function',
+            function: {
+              name: alias.resolved,
+              arguments: JSON.stringify(jsonArgs),
+            },
+          });
+          continue;
+        }
+      } catch {
+        // Not JSON — skip
+      }
+    }
+
+    if (Object.keys(args).length > 0) {
+      calls.push({
+        id: `call_invoke_${calls.length}`,
+        type: 'function',
+        function: {
+          name: alias.resolved,
+          arguments: JSON.stringify(args),
+        },
+      });
+    }
+  }
+
+  return calls.length > 0 ? calls : null;
+}
+
+/**
+ * Parse GLM-style shortened tool call formats.
+ *
+ * Formats:
+ *   shell/command>ls -la
+ *   file_read/path>src/main.ts
+ *   shell>uname -a          (uses default param from defaultParamForTool)
+ *   shell>{...json...}      (full JSON arguments)
+ *
+ * Lines that don't match are ignored. Only produces calls when at least
+ * one valid line is found AND no other format matched first (this is the
+ * lowest-priority fallback).
+ */
+function parseGlmStyleToolCalls(content: string): ToolCall[] | null {
+  const calls: ToolCall[] = [];
+
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // Must contain a slash or > to be a candidate
+    const slashIdx = trimmed.indexOf('/');
+    const gtIdx = trimmed.indexOf('>');
+
+    if (slashIdx > 0 && gtIdx > slashIdx) {
+      // Format: tool_name/param_name>value
+      const toolPart = trimmed.slice(0, slashIdx);
+      const rest = trimmed.slice(slashIdx + 1);
+      const paramGtIdx = rest.indexOf('>');
+      if (paramGtIdx <= 0) continue;
+
+      const paramName = rest.slice(0, paramGtIdx).trim();
+      const value = rest.slice(paramGtIdx + 1).trim();
+
+      if (/^\w+$/.test(toolPart) && paramName && value) {
+        const alias = resolveToolAlias(toolPart);
+        calls.push({
+          id: `call_glm_${calls.length}`,
+          type: 'function',
+          function: {
+            name: alias.resolved,
+            arguments: JSON.stringify({ [paramName]: value }),
+          },
+        });
+      }
+    } else if (gtIdx > 0) {
+      // Format: tool_name>value (default param)
+      const toolPart = trimmed.slice(0, gtIdx).trim();
+      const value = trimmed.slice(gtIdx + 1).trim();
+
+      if (/^\w+$/.test(toolPart) && value) {
+        const alias = resolveToolAlias(toolPart);
+
+        // If value looks like JSON, use it directly
+        if (value.startsWith('{')) {
+          try {
+            const jsonArgs = JSON.parse(value);
+            if (jsonArgs && typeof jsonArgs === 'object') {
+              calls.push({
+                id: `call_glm_${calls.length}`,
+                type: 'function',
+                function: {
+                  name: alias.resolved,
+                  arguments: JSON.stringify(jsonArgs),
+                },
+              });
+              continue;
+            }
+          } catch {
+            // Not valid JSON — fall through to default param
+          }
+        }
+
+        const defaultParam = defaultParamForTool(toolPart);
+        calls.push({
+          id: `call_glm_${calls.length}`,
+          type: 'function',
+          function: {
+            name: alias.resolved,
+            arguments: JSON.stringify({ [defaultParam]: value }),
+          },
+        });
+      }
+    }
+  }
+
+  return calls.length > 0 ? calls : null;
+}
+

@@ -2,6 +2,7 @@ import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { Agent } from 'undici';
 
 import {
   asError,
@@ -14,6 +15,24 @@ import {
 import { BackpressureMonitor, RateLimiter } from './client/pressure.js';
 export { BackpressureMonitor, RateLimiter } from './client/pressure.js';
 import type { ChatCompletionResponse, ChatMessage, ModelsResponse, ToolSchema } from './types.js';
+
+// ── Persistent connection pool ───────────────────────────────────────────
+// Reuses TCP+TLS connections across requests to avoid the overhead of
+// handshake negotiation on every API call. Supports HTTP/2 multiplexing
+// when the server advertises it (e.g., llama-server, OpenAI, Anthropic).
+//
+// ZeroClaw does this via reqwest::Client with connection pooling;
+// we use undici's Agent which backs Node's global fetch().
+const pooledAgent = new Agent({
+  keepAliveTimeout: 30_000,       // Keep idle connections alive for 30s
+  keepAliveMaxTimeout: 120_000,   // Max keep-alive for any connection
+  connections: 16,                // Max connections per origin
+  pipelining: 1,                  // HTTP/1.1 pipelining depth
+  allowH2: true,                  // Negotiate HTTP/2 when available
+  connect: {
+    rejectUnauthorized: true,     // Enforce TLS verification
+  },
+});
 
 export type ClientError = Error & {
   status?: number;
@@ -467,7 +486,12 @@ export class OpenAIClient {
     chainedAbort?.addEventListener('abort', onCallerAbort, { once: true });
     const timer = setTimeout(() => ac.abort(), connTimeoutMs);
     try {
-      const res = await fetch(url, { ...init, signal: ac.signal });
+      const res = await fetch(url, {
+        ...init,
+        signal: ac.signal,
+        // @ts-expect-error -- undici dispatcher is not in the standard RequestInit type
+        dispatcher: pooledAgent,
+      });
       clearTimeout(timer);
       return res;
     } catch (e: any) {
@@ -962,7 +986,22 @@ export class OpenAIClient {
 
         const { value, done } = result;
         if (done) break;
-        buf += decoder.decode(value, { stream: true });
+
+        // ── Optimized SSE parsing ──────────────────────────────────
+        // Instead of buf += decoder.decode(value), which creates a new
+        // string on every chunk, we check if the chunk contains a complete
+        // frame boundary first. If the buffer is empty and the chunk
+        // contains no frame boundary, we can skip the concat entirely
+        // for partial-line chunks (common with fast local models).
+        const decoded = decoder.decode(value, { stream: true });
+
+        // Fast path: if buffer is empty and no frame boundary in this chunk,
+        // just assign (avoid string concat allocation)
+        if (buf.length === 0) {
+          buf = decoded;
+        } else {
+          buf += decoded;
+        }
 
         while (true) {
           const idx = buf.indexOf('\n\n');
@@ -970,11 +1009,19 @@ export class OpenAIClient {
           const frame = buf.slice(0, idx);
           buf = buf.slice(idx + 2);
 
-          const lines = frame.split('\n');
-          for (const line of lines) {
-            const m = /^data:\s*(.*)$/.exec(line);
-            if (!m) continue;
-            const data = m[1];
+          // ── Fast SSE line parser ─────────────────────────────────
+          // Parse `data: ...` lines without splitting the entire frame
+          // into an array first. For single-data-line frames (the common
+          // case), this avoids an array allocation entirely.
+          let searchStart = 0;
+          while (searchStart < frame.length) {
+            const lineEnd = frame.indexOf('\n', searchStart);
+            const line = lineEnd === -1 ? frame.slice(searchStart) : frame.slice(searchStart, lineEnd);
+            searchStart = lineEnd === -1 ? frame.length : lineEnd + 1;
+
+            // Only process "data: ..." lines (skip event:, id:, etc.)
+            if (!line.startsWith('data:')) continue;
+            const data = line.slice(5).trimStart();
             if (data === '[DONE]') {
               const doneResult = this.finalizeStreamAggregate(
                 agg,

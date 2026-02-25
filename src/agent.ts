@@ -53,6 +53,12 @@ import {
   stripMarkdownFences,
   parseJsonArgs,
 } from './agent/tool-calls.js';
+import { resolveToolAlias } from './agent/tool-name-alias.js';
+import { buildDefaultSystemPrompt, SystemPromptBuilder, VaultContextSection } from './agent/prompt-builder.js';
+import type { PromptContext } from './agent/prompt-builder.js';
+import { LeakDetector } from './security/leak-detector.js';
+import { PromptGuard } from './security/prompt-guard.js';
+import { ResponseCache } from './agent/response-cache.js';
 import { ToolLoopGuard } from './agent/tool-loop-guard.js';
 import { isLspTool, isMutationTool, isReadOnlyTool, planModeSummary } from './agent/tool-policy.js';
 import { buildToolsSchema } from './agent/tools-schema.js';
@@ -130,32 +136,10 @@ type CompactionStats = CompactionOutcome & {
   updatedAt?: string;
 };
 
-const SYSTEM_PROMPT = `You are a coding agent with filesystem and shell access. Execute the user's request using the provided tools.
-
-Rules:
-- Work in the current directory. Use relative paths for all file operations.
-- Do the work directly. Do NOT use spawn_task to delegate the user's primary request — only use it for genuinely independent subtasks that benefit from parallel execution.
-- Never use spawn_task to bypass confirmation/safety restrictions (for example blocked package installs). If a command is blocked, adapt the plan or ask the user for approval mode changes.
-- Read the target file before editing. You need the exact text for search/replace.
-- Use read_file with search=... to jump to relevant code; avoid reading whole files.
-- Never call read_file/read_files/list_dir twice in a row with identical arguments (same path/options). Reuse the previous result instead.
-- Prefer apply_patch or edit_range for code edits (token-efficient). Use edit_file only when exact old_text replacement is necessary.
-- Tool-call arguments MUST be strict JSON (double-quoted keys/strings, no comments, no trailing commas).
-- edit_range example: {"path":"src/foo.ts","start_line":10,"end_line":14,"replacement":"line A\nline B"}
-- apply_patch example: {"patch":"--- a/src/foo.ts\n+++ b/src/foo.ts\n@@ -10,2 +10,2 @@\n-old\n+new","files":["src/foo.ts"]}
-- write_file is for new files or explicit full rewrites only. Existing non-empty files require overwrite=true/force=true.
-- Use insert_file for insertions (prepend/append/line).
-- Use exec to run commands, tests, builds; check results before reporting success.
-- When running commands in a subdirectory, use exec's cwd parameter — NOT "cd /path && cmd". Each exec call is a fresh shell; cd does not persist.
-- Batch work: read all files you need, then apply all edits, then verify.
-- Be concise. Report what you changed and why.
-- Do NOT read every file in a directory. Use search_files or exec with grep to locate relevant code first, then read only the files that match.
-- If search_files returns 0 matches, try a broader pattern or use: exec grep -rn "keyword" path/
-- Anton (the autonomous task runner) is ONLY activated when the user explicitly invokes /anton. Never self-activate as Anton or start processing task files on your own.
-
-Tool call format:
-- Use tool_calls. Do not write JSON tool invocations in your message text.
-`;
+// System prompt is now built dynamically by the modular prompt builder.
+// See src/agent/prompt-builder.ts for section definitions.
+// The old monolithic SYSTEM_PROMPT is replaced by buildDefaultSystemPrompt().
+const SYSTEM_PROMPT = buildDefaultSystemPrompt();
 
 export type AgentRuntime = {
   client?: OpenAIClient;
@@ -1938,6 +1922,42 @@ export async function createSession(opts: {
       }
       sessionMetaPending = null;
     }
+
+    // ── Auto vault context injection ─────────────────────────────────
+    // Search the vault for entries relevant to the user's instruction and
+    // prepend them to the user message so the model has context without
+    // needing to call vault_search. Inspired by ZeroClaw's build_context().
+    if (vault && vaultEnabled) {
+      try {
+        const queryText =
+          typeof instruction === 'string'
+            ? instruction
+            : instruction
+                .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+                .map((p) => p.text)
+                .join(' ');
+        const vaultQuery = queryText.trim().slice(0, 200);
+        if (vaultQuery.length >= 10) {
+          const vaultHits = await vault.search(vaultQuery, 4);
+          if (vaultHits.length > 0) {
+            const vaultLines = vaultHits.map((r) => {
+              const title = r.kind === 'note' ? `note:${r.key}` : `tool:${r.tool || r.key || 'unknown'}`;
+              const body = (r.value ?? r.snippet ?? r.content ?? '').replace(/\s+/g, ' ').slice(0, 160);
+              return `- ${title}: ${body}`;
+            });
+            const vaultBlock = `[Vault context]\n${vaultLines.join('\n')}\n`;
+            if (typeof userContent === 'string') {
+              userContent = `${vaultBlock}\n${userContent}`;
+            } else {
+              userContent = [{ type: 'text', text: vaultBlock }, ...userContent];
+            }
+          }
+        }
+      } catch {
+        // Vault search is best-effort; don't fail the turn
+      }
+    }
+
     messages.push({ role: 'user', content: userContent });
 
     const hookObj: AgentHooks = typeof hooks === 'function' ? { onToken: hooks } : (hooks ?? {});
@@ -2276,6 +2296,22 @@ export async function createSession(opts: {
     const toolLoopWarningKeys = new Set<string>();
     let forceToollessRecoveryTurn = false;
     let toollessRecoveryUsed = false;
+
+    // ── Security: credential leak detection + prompt injection guard ──
+    const leakDetector = new LeakDetector();
+    const promptGuard = new PromptGuard('warn');
+
+    // ── Performance: response cache for repeated identical prompts ──
+    let responseCache: ResponseCache | undefined;
+    try {
+      responseCache = new ResponseCache({
+        cacheDir: path.join(projectDir, '.idlehands', 'cache'),
+        ttlMinutes: 60,
+        maxEntries: 200,
+      });
+    } catch {
+      // Cache init failure is non-fatal — proceed without caching
+    }
     // Prevent repeating the same "stop rerunning" reminder every turn.
     const readOnlyExecHintedSigs = new Set<string>();
     // Tool loop recovery: poisoned results and selective tool suppression.
@@ -2607,7 +2643,32 @@ export async function createSession(opts: {
                 ? []
                 : getToolsSchema().filter((t) => !suppressedTools.has(t.function.name));
             const toolChoiceForTurn = cfg.no_tools || forceToollessRecoveryTurn ? 'none' : 'auto';
-            resp = await client.chatStream({
+
+            // ── Response cache: check for cached response ──────────────
+            // Only cache tool-less turns (final answers, explanations) since
+            // tool-calling turns have side effects that shouldn't be replayed.
+            const cacheableRequest = toolsForTurn.length === 0 && !!responseCache;
+            const lastUserMsg = messages.filter((m) => m.role === 'user').pop();
+            const userPromptForCache = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
+            const systemPromptForCache = messages.find((m) => m.role === 'system')?.content ?? '';
+
+            if (cacheableRequest && userPromptForCache.length >= 10) {
+              const cached = responseCache!.get(model, systemPromptForCache, userPromptForCache);
+              if (cached) {
+                resp = {
+                  id: 'cache-hit',
+                  choices: [{
+                    index: 0,
+                    message: { role: 'assistant' as const, content: cached },
+                    finish_reason: 'stop',
+                  }],
+                } as any;
+                if (cfg.verbose) console.log('[response-cache] cache hit, skipping API call');
+              }
+            }
+
+            if (!resp) {
+              resp = await client.chatStream({
               model,
               messages,
               tools: toolsForTurn,
@@ -2616,7 +2677,10 @@ export async function createSession(opts: {
               top_p: topP,
               max_tokens: maxTokens,
               extra: {
-                cache_prompt: cfg.cache_prompt ?? true,
+                cache_prompt: cfg.cache_prompt ?? true
+                // Speculative decoding: draft model params for llama-server
+                ...(cfg.draft_model ? { draft_model: cfg.draft_model } : {}),
+                ...(cfg.draft_n ? { speculative: { n: cfg.draft_n, p_min: cfg.draft_p_min ?? 0.5 } } : {}),
                 ...(frequencyPenalty && { frequency_penalty: frequencyPenalty }),
                 ...(presencePenalty && { presence_penalty: presencePenalty }),
               },
@@ -2625,8 +2689,28 @@ export async function createSession(opts: {
               onToken: hookObj.onToken,
               onFirstDelta,
             });
+            } // end if (!resp) — cache miss path
+
             // Successful response resets overflow recovery budget.
             overflowCompactionAttempts = 0;
+
+            // ── Response cache: store cacheable responses ─────────────
+            if (cacheableRequest && userPromptForCache.length >= 10 && resp.id !== 'cache-hit') {
+              const respContent = resp.choices?.[0]?.message?.content;
+              if (respContent && typeof respContent === 'string') {
+                try {
+                  responseCache!.set(
+                    model,
+                    systemPromptForCache,
+                    userPromptForCache,
+                    respContent,
+                    resp.usage?.completion_tokens ?? 0
+                  );
+                } catch {
+                  // Cache write failure is non-fatal
+                }
+              }
+            }
           } catch (e) {
             if (
               isContextWindowExceededError(e) &&
@@ -2747,7 +2831,7 @@ export async function createSession(opts: {
           console.warn(`[thinking] ${st.thinking}`);
         }
 
-        let toolCallsArr = msg?.tool_calls;
+        let toolCallsArr: import('./types.js').ToolCall[] | undefined = msg?.tool_calls;
 
         // For models with unreliable tool_calls arrays, validate entries and
         // fall through to content parsing if they look malformed (§4i).
@@ -3264,7 +3348,13 @@ export async function createSession(opts: {
           }
 
           const runOne = async (tc: ToolCall) => {
-            const name = tc.function.name;
+            // Resolve tool name aliases (bash→exec, file_read→read_file, etc.)
+            const rawName = tc.function.name;
+            const { resolved: name, wasAliased } = resolveToolAlias(rawName);
+            if (wasAliased) {
+              // Patch the tool call in-place so downstream code (loop guard, etc.) sees the canonical name
+              tc.function.name = name;
+            }
             const rawArgs = tc.function.arguments ?? '{}';
             const callId = resolveCallId(tc);
             toolNameByCallId.set(callId, name);
@@ -3652,6 +3742,20 @@ export async function createSession(opts: {
               }
             }
 
+            // ── Early truncation pass ──────────────────────────────────
+            // Cap extremely large tool output (>50KB) early to avoid
+            // running leak detection, loop guard, and other processing
+            // on megabytes of npm install / build output. The final
+            // precise truncation still happens before return.
+            const EARLY_TRUNCATION_LIMIT = 50_000;
+            if (content.length > EARLY_TRUNCATION_LIMIT) {
+              const headLen = Math.floor(EARLY_TRUNCATION_LIMIT * 0.8);
+              const tailLen = EARLY_TRUNCATION_LIMIT - headLen - 100;
+              content = content.slice(0, headLen) +
+                `\n\n[...${content.length - headLen - tailLen} chars truncated for processing efficiency...]\n\n` +
+                content.slice(-tailLen);
+            }
+
             // Hook: onToolResult (Phase 8.5 + Phase 7 rich display)
             let toolSuccess = true;
             let summary = reusedCachedReadOnlyExec
@@ -3796,6 +3900,11 @@ export async function createSession(opts: {
                 }
               }
             }
+
+            // ── Credential leak scrubbing ─────────────────────────────
+            // Scan tool output for credential leaks before passing back
+            // to the model (and potentially to a chat channel).
+            content = leakDetector.redactIfNeeded(content);
 
             // Context-aware truncation: cap oversized tool results before returning
             // to prevent blowing out the context window on subsequent LLM calls.

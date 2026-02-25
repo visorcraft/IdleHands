@@ -224,6 +224,12 @@ export type IdlehandsConfig = {
   // local-server / perf
   context_window?: number;
   cache_prompt?: boolean;
+  /** Draft model for speculative decoding (llama-server --model-draft). Boosts tg/s 2-4x. */
+  draft_model?: string;
+  /** Number of speculative tokens to propose per step (default: 5). */
+  draft_n?: number;
+  /** Minimum probability for draft acceptance (default: 0.5). */
+  draft_p_min?: number;
   i_know_what_im_doing?: boolean;
 
   // appearance
