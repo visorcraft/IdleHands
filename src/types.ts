@@ -148,6 +148,37 @@ export type HookSystemConfig = {
   >;
 };
 
+/**
+ * Routing policy configuration for fast/heavy model selection.
+ * Phase 2 - Fast/Heavy/Auto Routing (Latency UX Breakthrough).
+ */
+export type RoutingConfig = {
+  /** Default routing mode when not specified */
+  defaultMode: 'auto' | 'fast' | 'heavy';
+  /** Model identifier for fast mode */
+  fastModel: string;
+  /** Model identifier for heavy mode */
+  heavyModel: string;
+  /** Thresholds for auto-selection */
+  thresholds: {
+    /** Maximum prompt length (chars) to use fast model in auto mode */
+    maxPromptLength: number;
+    /** Maximum estimated tokens to use fast model in auto mode */
+    maxTokens: number;
+    /** Maximum word count for fast model in auto mode */
+    maxWords: number;
+  };
+  /** Auto-escalation rules */
+  autoEscalationRules: {
+    /** Escalate to heavy if code blocks detected */
+    codeBlocksThreshold: number;
+    /** Escalate to heavy if file references detected */
+    fileReferencesThreshold: number;
+    /** Escalate to heavy if complex instructions detected */
+    complexInstructionsThreshold: number;
+  };
+};
+
 export type ToolLoopPolicyConfig = {
   warning_threshold?: number;
   critical_threshold?: number;
@@ -272,6 +303,9 @@ export type IdlehandsConfig = {
   // Hook/plugin extension system
   hooks?: HookSystemConfig;
 
+
+  // Routing configuration (Phase 2 - Fast/Heavy/Auto Routing)
+  routing?: RoutingConfig;
   // LSP integration (Phase 17)
   lsp?: LspConfig;
 

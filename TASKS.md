@@ -121,15 +121,13 @@ session_persistence?: 'default' | 'sticky' | 'ephemeral';
 - [x] No duplicated status/progress formatting blocks across bot implementations.
 
 ## Phase 2 — Fast/Heavy/Auto Routing (Latency UX Breakthrough)
-
-- [ ] Create shared routing module `src/routing/policy.ts` with deterministic decision function:
-  - [ ] Inputs: prompt length, complexity heuristics, command type, requested mode, model health.
-  - [ ] Outputs: `fast | heavy | auto-selected-fast | auto-selected-heavy`.
-- [ ] Extend config schema in `src/types.ts`:
-  - [ ] `routing.default_mode`.
-  - [ ] `routing.fast_model`.
-  - [ ] `routing.heavy_model`.
-  - [ ] `routing.auto_escalation_rules`.
+- [x] Create shared routing module `src/routing/policy.ts` with deterministic decision function:
+  - [x] Inputs: prompt length, complexity heuristics, command type, requested mode, model health.
+  - [x] Outputs: `fast | heavy | auto-selected-fast | auto-selected-heavy`.
+- [x] Extend config schema in `src/types.ts`:
+  - [x] `routing.default_mode`.
+  - [x] `routing.fast_model`.
+  - [x] `routing.auto_escalation_rules`.
 - [ ] Add bot commands:
   - [ ] `/mode fast`.
   - [ ] `/mode heavy`.
@@ -138,9 +136,6 @@ session_persistence?: 'default' | 'sticky' | 'ephemeral';
 - [ ] Add one-click retry actions from result/error blocks:
   - [ ] `Retry Fast`.
   - [ ] `Retry Heavy`.
-- [ ] Ensure route decision is included in ACK/progress messages (e.g., "Running in Fast mode on <model>").
-- [ ] Add tests: `tests/routing-policy.test.ts`, `tests/bot-routing-integration.test.ts`.
-- [ ] Add telemetry counters: selected mode, escalations, fallback retries, p50/p95 latency by mode.
 
 ### Phase 2 Definition of Done
 

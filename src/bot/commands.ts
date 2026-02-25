@@ -27,6 +27,7 @@ import {
   approvalSetCommand,
   modeShowCommand,
   modeSetCommand,
+  modeStatusCommand,
   subagentsShowCommand,
   subagentsSetCommand,
   changesCommand,
@@ -322,6 +323,12 @@ export async function handleMode({ ctx, sessions }: CommandContext): Promise<voi
 
   if (!arg) {
     await reply(ctx, modeShowCommand(managed as unknown as ManagedLike));
+    return;
+  }
+
+  // Handle status command
+  if (arg === 'status') {
+    await reply(ctx, modeStatusCommand(managed as unknown as ManagedLike));
     return;
   }
 
