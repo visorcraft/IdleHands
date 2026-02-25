@@ -955,6 +955,18 @@ export async function loadConfig(opts: {
     if (routing.hint_mode_map != null && routing.hintModeMap == null) {
       routing.hintModeMap = routing.hint_mode_map;
     }
+    if (routing.fast_lane_toolless != null && routing.fastLaneToolless == null) {
+      routing.fastLaneToolless = routing.fast_lane_toolless;
+    }
+    if (routing.fast_compact_prelude != null && routing.fastCompactPrelude == null) {
+      routing.fastCompactPrelude = routing.fast_compact_prelude;
+    }
+    if (
+      routing.fast_compact_prelude_max_chars != null &&
+      routing.fastCompactPreludeMaxChars == null
+    ) {
+      routing.fastCompactPreludeMaxChars = routing.fast_compact_prelude_max_chars;
+    }
 
     if (!routing.defaultMode || !validRoutingModes.includes(String(routing.defaultMode))) {
       routing.defaultMode = 'auto';
@@ -965,6 +977,21 @@ export async function loadConfig(opts: {
     if (typeof routing.fastProvider === 'string') routing.fastProvider = routing.fastProvider.trim();
     if (typeof routing.heavyProvider === 'string') {
       routing.heavyProvider = routing.heavyProvider.trim();
+    }
+
+    if (routing.fastLaneToolless == null) routing.fastLaneToolless = true;
+    else routing.fastLaneToolless = Boolean(routing.fastLaneToolless);
+
+    if (routing.fastCompactPrelude == null) routing.fastCompactPrelude = true;
+    else routing.fastCompactPrelude = Boolean(routing.fastCompactPrelude);
+
+    if (routing.fastCompactPreludeMaxChars == null) {
+      routing.fastCompactPreludeMaxChars = 320;
+    } else {
+      const parsed = Number(routing.fastCompactPreludeMaxChars);
+      routing.fastCompactPreludeMaxChars = Number.isFinite(parsed)
+        ? Math.max(120, Math.min(2000, Math.floor(parsed)))
+        : 320;
     }
 
     if (!Array.isArray(routing.fallbackProviders)) routing.fallbackProviders = [];

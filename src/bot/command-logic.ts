@@ -45,6 +45,7 @@ export {
   versionCommand,
   watchdogCommand,
 } from './basic-commands.js';
+export { captureSetCommand, captureShowCommand } from './capture-commands.js';
 export {
   antonCommand,
   antonHelpCommand,
@@ -83,6 +84,25 @@ export interface SessionLike {
   vault?: { search(q: string, n: number): Promise<any[]> };
   lens?: any;
   lastEditedPath?: string;
+  lastTurnDebug?: {
+    requestedMode: string;
+    selectedMode: string;
+    selectedModeSource: string;
+    classificationHint: string | null;
+    provider: string;
+    model: string;
+    runtimeRoute: boolean;
+    compactPrelude: boolean;
+    fastLaneToolless: boolean;
+    promptBytes?: number;
+    toolSchemaBytes?: number;
+    toolSchemaTokens?: number;
+    toolCount?: number;
+  };
+  captureOn?: (filePath?: string) => Promise<string>;
+  captureOff?: () => void;
+  captureLast?: (filePath?: string) => Promise<string>;
+  capturePath?: string;
   reset(): void;
 }
 

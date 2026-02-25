@@ -36,6 +36,7 @@ import {
   handleUnpin,
   handleModel,
   handleCompact,
+  handleCapture,
   handleApproval,
   handleMode,
   handleRoutingMode,
@@ -412,6 +413,7 @@ export async function startTelegramBot(
   bot.command('unpin', (ctx) => handleUnpin(cmdCtx(ctx)));
   bot.command('model', (ctx) => handleModel(cmdCtx(ctx)));
   bot.command('compact', (ctx) => handleCompact(cmdCtx(ctx)));
+  bot.command('capture', (ctx) => handleCapture(cmdCtx(ctx)));
   bot.command('approval', (ctx) => handleApproval(cmdCtx(ctx)));
   bot.command('mode', (ctx) => handleMode(cmdCtx(ctx)));
   bot.command('routing_mode', (ctx) => handleRoutingMode(cmdCtx(ctx)));
@@ -598,6 +600,7 @@ export async function startTelegramBot(
     { command: 'dir', description: 'Get/set working directory' },
     { command: 'model', description: 'Show current model' },
     { command: 'compact', description: 'Compact context' },
+    { command: 'capture', description: 'Capture model req/resp payloads' },
     { command: 'approval', description: 'Get/set approval mode' },
     { command: 'mode', description: 'Get/set mode (code/sys)' },
     { command: 'routing_mode', description: 'Get/set routing mode (auto/fast/heavy)' },
