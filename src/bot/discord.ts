@@ -1073,7 +1073,8 @@ When you escalate, your request will be re-run on a more capable model.`;
 
       const rtConfig = await loadRuntimes();
       const active = await loadActiveRuntime();
-      const result = plan({ modelId, mode: 'live' }, rtConfig, active);
+      const forceRestart = active?.modelId === modelId;
+      const result = plan({ modelId, mode: 'live', forceRestart }, rtConfig, active);
 
       if (!result.ok) {
         await interaction.editReply({
