@@ -41,6 +41,9 @@ import {
   buildRequirementsReviewPrompt,
   parseRequirementsReviewResult,
   ensurePlanFileExistsOrBootstrap,
+  assertPlanFileExistsAndNonEmpty,
+  buildDiscoveryRewritePrompt,
+  buildReviewRewritePrompt,
   FORCE_DISCOVERY_DECISION_PROMPT,
   FORCE_REVIEW_DECISION_PROMPT,
 } from './preflight.js';
@@ -118,14 +121,14 @@ function isL2MissingImplementation(reason: string): boolean {
 
 function isRecoverablePreflightDiscoveryError(errMsg: string): boolean {
   return (
-    /preflight-json-missing-object|preflight-discovery-invalid-status|preflight-discovery-invalid-filename|preflight-discovery-filename/i.test(
+    /preflight-json-missing-object|preflight-discovery-invalid-status|preflight-discovery-invalid-filename|preflight-discovery-filename|preflight-plan-empty|preflight-plan-not-a-file/i.test(
       errMsg
     ) || /identical call repeated|breaking loop|tool\s+edit_range/i.test(errMsg)
   );
 }
 
 function isRecoverablePreflightReviewError(errMsg: string): boolean {
-  return /preflight-json-missing-object|preflight-review-invalid-status|preflight-review-invalid-filename|preflight-review-filename/i.test(
+  return /preflight-json-missing-object|preflight-review-invalid-status|preflight-review-invalid-filename|preflight-review-filename|preflight-plan-empty|preflight-plan-not-a-file/i.test(
     errMsg
   );
 }
@@ -628,7 +631,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                   totalTokens += forceTokens;
                   discovery = parseDiscoveryResult(forceRes.text, config.projectDir);
                   progress.onStage?.('✅ Forced decision succeeded');
-                } catch (forceError) {
+                } catch {
                   // Force-decision also failed, throw original error
                   throw parseError;
                 }
@@ -637,16 +640,15 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               }
             }
 
-            preflightRecords.push({
-              taskKey: currentTask.key,
-              stage: 'discovery',
-              durationMs: Date.now() - stageStart,
-              tokensUsed: discoveryTokens,
-              status: discovery.status,
-              filename: discovery.filename || undefined,
-            });
-
             if (discovery.status === 'complete') {
+              preflightRecords.push({
+                taskKey: currentTask.key,
+                stage: 'discovery',
+                durationMs: Date.now() - stageStart,
+                tokensUsed: discoveryTokens,
+                status: discovery.status,
+                filename: discovery.filename || undefined,
+              });
               await markTaskChecked(config.taskFile, currentTask.key);
               await autoCompleteAncestors(config.taskFile, currentTask.key);
               autoCompleted += 1;
@@ -658,20 +660,71 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               break;
             }
 
-            const discoveryPlanState = await ensurePlanFileExistsOrBootstrap({
-              absPath: discovery.filename,
-              task: currentTask,
-              source: 'discovery',
-            });
-            if (discoveryPlanState === 'bootstrapped') {
-              discoveryUsedFallbackPlan = true;
-              progress.onStage?.(
-                `⚠️ Discovery returned a filename but did not write it. Created fallback plan file: ${discovery.filename}`
-              );
+            // Discovery claims a plan filename; verify it truly exists and has content.
+            // If missing/empty, explicitly ask model to retry writing before accepting success.
+            let planPath = discovery.filename;
+            for (let writeFixTry = 0; writeFixTry < 2; writeFixTry++) {
+              try {
+                await assertPlanFileExistsAndNonEmpty(planPath);
+                break;
+              } catch (planErr) {
+                const planMsg = planErr instanceof Error ? planErr.message : String(planErr);
+                const reason = /preflight-plan-empty/i.test(planMsg)
+                  ? 'empty file'
+                  : /preflight-plan-not-a-file/i.test(planMsg)
+                    ? 'not a regular file'
+                    : /ENOENT/i.test(planMsg)
+                      ? 'missing file'
+                      : planMsg;
+
+                if (writeFixTry === 0) {
+                  progress.onStage?.(
+                    `⚠️ Discovery returned filename but file is invalid (${reason}). Asking model to rewrite plan file...`
+                  );
+                  const rewriteRes = await preflightSession.ask(
+                    buildDiscoveryRewritePrompt(planPath, reason)
+                  );
+                  const rewriteTokens =
+                    preflightSession.usage.prompt + preflightSession.usage.completion - discoveryTokens;
+                  discoveryTokens += rewriteTokens;
+                  totalTokens += rewriteTokens;
+
+                  try {
+                    const rewritten = parseDiscoveryResult(rewriteRes.text, config.projectDir);
+                    if (rewritten.status === 'incomplete') {
+                      planPath = rewritten.filename;
+                    }
+                  } catch {
+                    // Keep original planPath; second validation pass will fail and route to fallback.
+                  }
+                  continue;
+                }
+
+                const discoveryPlanState = await ensurePlanFileExistsOrBootstrap({
+                  absPath: planPath,
+                  task: currentTask,
+                  source: 'discovery',
+                });
+                if (discoveryPlanState === 'bootstrapped') {
+                  discoveryUsedFallbackPlan = true;
+                  progress.onStage?.(
+                    `⚠️ Discovery returned a filename but did not write valid contents. Created fallback plan file: ${planPath}`
+                  );
+                }
+              }
             }
 
-            taskPlanByTaskKey.set(currentTask.key, discovery.filename);
-            progress.onStage?.(`📝 Discovery plan file: ${discovery.filename}`);
+            preflightRecords.push({
+              taskKey: currentTask.key,
+              stage: 'discovery',
+              durationMs: Date.now() - stageStart,
+              tokensUsed: discoveryTokens,
+              status: discovery.status,
+              filename: planPath || undefined,
+            });
+
+            taskPlanByTaskKey.set(currentTask.key, planPath);
+            progress.onStage?.(`📝 Discovery plan file: ${planPath}`);
             discoveryOk = true;
             break;
           } catch (error) {
@@ -850,15 +903,55 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                 }
               }
 
-              const reviewPlanState = await ensurePlanFileExistsOrBootstrap({
-                absPath: review.filename,
-                task: currentTask,
-                source: 'requirements-review',
-              });
-              if (reviewPlanState === 'bootstrapped') {
-                progress.onStage?.(
-                  `⚠️ Requirements review returned a filename but did not write it. Created fallback plan file: ${review.filename}`
-                );
+              let reviewedPlanPath = review.filename;
+              for (let writeFixTry = 0; writeFixTry < 2; writeFixTry++) {
+                try {
+                  await assertPlanFileExistsAndNonEmpty(reviewedPlanPath);
+                  break;
+                } catch (planErr) {
+                  const planMsg = planErr instanceof Error ? planErr.message : String(planErr);
+                  const reason = /preflight-plan-empty/i.test(planMsg)
+                    ? 'empty file'
+                    : /preflight-plan-not-a-file/i.test(planMsg)
+                      ? 'not a regular file'
+                      : /ENOENT/i.test(planMsg)
+                        ? 'missing file'
+                        : planMsg;
+
+                  if (writeFixTry === 0) {
+                    progress.onStage?.(
+                      `⚠️ Requirements review returned filename but file is invalid (${reason}). Asking model to rewrite plan file...`
+                    );
+                    const rewriteRes = await preflightSession.ask(
+                      buildReviewRewritePrompt(reviewedPlanPath, reason)
+                    );
+                    const rewriteTokens =
+                      preflightSession.usage.prompt + preflightSession.usage.completion - reviewTokens;
+                    reviewTokens += rewriteTokens;
+                    totalTokens += rewriteTokens;
+
+                    try {
+                      const rewritten = parseRequirementsReviewResult(rewriteRes.text, config.projectDir);
+                      if (rewritten.status === 'ready') {
+                        reviewedPlanPath = rewritten.filename;
+                      }
+                    } catch {
+                      // Keep existing path; second validation pass decides fallback.
+                    }
+                    continue;
+                  }
+
+                  const reviewPlanState = await ensurePlanFileExistsOrBootstrap({
+                    absPath: reviewedPlanPath,
+                    task: currentTask,
+                    source: 'requirements-review',
+                  });
+                  if (reviewPlanState === 'bootstrapped') {
+                    progress.onStage?.(
+                      `⚠️ Requirements review returned a filename but did not write valid contents. Created fallback plan file: ${reviewedPlanPath}`
+                    );
+                  }
+                }
               }
 
               preflightRecords.push({
@@ -867,11 +960,11 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                 durationMs: Date.now() - stageStart,
                 tokensUsed: reviewTokens,
                 status: 'ready',
-                filename: review.filename,
+                filename: reviewedPlanPath,
               });
 
-              taskPlanByTaskKey.set(currentTask.key, review.filename);
-              progress.onStage?.(`✅ Requirements review ready: ${review.filename}`);
+              taskPlanByTaskKey.set(currentTask.key, reviewedPlanPath);
+              progress.onStage?.(`✅ Requirements review ready: ${reviewedPlanPath}`);
               reviewOk = true;
               break;
             } catch (error) {

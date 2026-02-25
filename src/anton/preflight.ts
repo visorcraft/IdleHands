@@ -3,6 +3,10 @@
  */
 
 import { createHash } from 'node:crypto';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
+import type { AntonTask } from './types.js';
 
 // Force-decision prompts for when the model doesn't return valid JSON in time
 export const FORCE_DISCOVERY_DECISION_PROMPT = `STOP. You must return your discovery result NOW.
@@ -22,10 +26,6 @@ Return ONLY this JSON (no markdown, no explanation, no tool calls):
 
 Use the plan file path you were reviewing.
 JSON only. Nothing else.`;
-import { mkdir, stat, writeFile } from 'node:fs/promises';
-import path from 'node:path';
-
-import type { AntonTask } from './types.js';
 
 export type AntonDiscoveryResult = {
   status: 'complete' | 'incomplete';
@@ -114,6 +114,38 @@ export function parseRequirementsReviewResult(
 export async function assertPlanFileExists(absPath: string): Promise<void> {
   const s = await stat(absPath);
   if (!s.isFile()) throw new Error(`preflight-plan-not-a-file:${absPath}`);
+}
+
+export async function assertPlanFileExistsAndNonEmpty(absPath: string): Promise<void> {
+  const s = await stat(absPath);
+  if (!s.isFile()) throw new Error(`preflight-plan-not-a-file:${absPath}`);
+  if (s.size <= 0) throw new Error(`preflight-plan-empty:${absPath}`);
+}
+
+export function buildDiscoveryRewritePrompt(planFilePath: string, reason: string): string {
+  return `The plan file you returned is invalid (${reason}).
+
+You must now write a NON-EMPTY markdown plan file at EXACTLY this path:
+${planFilePath}
+
+Do NOT edit source files. Only write this plan file.
+After writing it, return EXACT JSON only:
+{"status":"incomplete","filename":"${planFilePath}"}
+
+Return JSON only. No markdown fences. No commentary.`;
+}
+
+export function buildReviewRewritePrompt(planFilePath: string, reason: string): string {
+  return `The reviewed plan file is invalid (${reason}).
+
+You must now write/update a NON-EMPTY markdown file at EXACTLY this path:
+${planFilePath}
+
+Do NOT edit source files. Only write this plan file.
+After writing it, return EXACT JSON only:
+{"status":"ready","filename":"${planFilePath}"}
+
+Return JSON only. No markdown fences. No commentary.`;
 }
 
 /**
