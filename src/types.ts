@@ -183,6 +183,8 @@ export type IdlehandsConfig = {
   max_tokens: number;
   temperature: number;
   top_p: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
 
   // loop
   timeout: number;

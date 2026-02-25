@@ -407,11 +407,13 @@ export async function createSession(opts: {
   // whether the harness wants a higher value — harness.defaults.max_tokens wins
   // when it's larger than the base default (16384), unless the user explicitly
   // configured a value in their config file or CLI.
-  let { maxTokens, temperature, topP } = deriveGenerationParams({
+  let { maxTokens, temperature, topP, frequencyPenalty, presencePenalty } = deriveGenerationParams({
     harness,
     configuredMaxTokens: cfg.max_tokens,
     configuredTemperature: cfg.temperature,
     configuredTopP: cfg.top_p,
+    configuredFrequencyPenalty: cfg.frequency_penalty,
+    configuredPresencePenalty: cfg.presence_penalty,
     baseMaxTokens: BASE_MAX_TOKENS,
   });
 
@@ -1687,11 +1689,13 @@ export async function createSession(opts: {
       modelMeta: nextMeta,
     });
 
-    ({ maxTokens, temperature, topP } = deriveGenerationParams({
+    ({ maxTokens, temperature, topP, frequencyPenalty, presencePenalty } = deriveGenerationParams({
       harness,
       configuredMaxTokens: cfg.max_tokens,
       configuredTemperature: cfg.temperature,
       configuredTopP: cfg.top_p,
+      configuredFrequencyPenalty: cfg.frequency_penalty,
+      configuredPresencePenalty: cfg.presence_penalty,
       baseMaxTokens: BASE_MAX_TOKENS,
     }));
 
@@ -2673,10 +2677,12 @@ export async function createSession(opts: {
               top_p: topP,
               max_tokens: maxTokens,
               extra: {
-                cache_prompt: cfg.cache_prompt ?? true,
+                cache_prompt: cfg.cache_prompt ?? true
                 // Speculative decoding: draft model params for llama-server
                 ...(cfg.draft_model ? { draft_model: cfg.draft_model } : {}),
                 ...(cfg.draft_n ? { speculative: { n: cfg.draft_n, p_min: cfg.draft_p_min ?? 0.5 } } : {}),
+                ...(frequencyPenalty && { frequency_penalty: frequencyPenalty }),
+                ...(presencePenalty && { presence_penalty: presencePenalty }),
               },
               signal: ac.signal,
               requestId: `r${reqCounter}`,
