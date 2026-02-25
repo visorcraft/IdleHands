@@ -81,6 +81,25 @@ function bucket(ms: number, bucketMs: number): number {
   return Math.max(0, Math.floor(ms / bucketMs) * bucketMs);
 }
 
+function sanitizeToolResultSummary(name: string, summary: string): string {
+  const normalized = String(summary ?? '').replace(/\s+/g, ' ').trim();
+  const lower = normalized.toLowerCase();
+
+  if (
+    name === 'write_file' &&
+    lower.includes('internal: write_file: refusing to overwrite existing non-empty file')
+  ) {
+    return 'overwrite blocked (existing file; use edit_range/apply_patch or overwrite=true)';
+  }
+
+  if (lower.startsWith('internal:')) {
+    const compact = normalized.slice('internal:'.length).trim();
+    return `internal: ${truncate(compact, 120)}`;
+  }
+
+  return truncate(normalized, 120);
+}
+
 export function formatStatusLine(
   snap: Pick<TurnProgressSnapshot, 'phase' | 'elapsedBucketMs' | 'activeTool'>
 ): string {
@@ -199,7 +218,17 @@ export class TurnProgressController {
 
   start(): void {
     if (this.timer) return;
-    this.lastHeartbeatAt = this.now();
+    const now = this.now();
+    this.startedAt = now;
+    this.lastActivityMs = now;
+    this.lastHeartbeatAt = now;
+    this.lastStatusLine = '';
+    this.statusLine = formatStatusLine({
+      phase: this.phase,
+      elapsedBucketMs: 0,
+      activeTool: undefined,
+    });
+    this.emit('init', true);
     this.timer = setInterval(() => this.heartbeat(), this.heartbeatMs);
   }
 
@@ -315,17 +344,26 @@ export class TurnProgressController {
     this.phase = 'verifying';
 
     const icon = ev.success ? '✓' : '✗';
-    this.replaceLastToolLine(`${icon} ${ev.name}: ${ev.summary}`);
+    const summary = sanitizeToolResultSummary(ev.name, ev.summary);
+    this.appendToolLine(`${icon} ${ev.name}: ${summary}`);
 
     this.emit('tool_result', true);
   }
 
-  private replaceLastToolLine(line: string): void {
+  private appendToolLine(line: string): void {
     if (this.toolLines.length > 0) {
-      this.toolLines[this.toolLines.length - 1] = line;
-    } else {
-      this.toolLines.push(line);
+      const lastIdx = this.toolLines.length - 1;
+      const last = this.toolLines[lastIdx];
+      const baseLast = last.replace(/\s*\(x\d+\)$/, '');
+      if (baseLast === line) {
+        const m = last.match(/\(x(\d+)\)$/);
+        const next = (m ? Number.parseInt(m[1], 10) : 1) + 1;
+        this.toolLines[lastIdx] = `${line} (x${next})`;
+        return;
+      }
     }
+
+    this.toolLines.push(line);
     if (this.toolLines.length > this.maxToolLines) {
       this.toolLines.shift();
     }
