@@ -119,6 +119,7 @@ const DEFAULTS: IdlehandsConfig = {
     skip_on_fail: false,
     skip_on_blocked: true,
     rollback_on_fail: false,
+    scope_guard: 'lax',
     max_identical_failures: 3,
     approval_mode: 'yolo',
     verbose: false,
@@ -340,6 +341,7 @@ export async function loadConfig(opts: {
       skip_on_fail: parseBool(process.env.IDLEHANDS_ANTON_SKIP_ON_FAIL),
       skip_on_blocked: parseBool(process.env.IDLEHANDS_ANTON_SKIP_ON_BLOCKED),
       rollback_on_fail: parseBool(process.env.IDLEHANDS_ANTON_ROLLBACK_ON_FAIL),
+      scope_guard: process.env.IDLEHANDS_ANTON_SCOPE_GUARD as 'off' | 'lax' | 'strict' | undefined,
     },
     trifecta: {
       enabled: (() => {
