@@ -21,6 +21,10 @@ export interface AntonPromptOpts {
   vault: VaultStore | undefined;
   lens: LensStore | undefined;
   maxContextTokens: number;
+  /** Current turn number (1-indexed). */
+  currentTurn?: number;
+  /** Maximum iterations allowed for this task. */
+  maxIterations?: number;
 }
 
 /**
@@ -31,6 +35,11 @@ export async function buildAntonPrompt(opts: AntonPromptOpts): Promise<string> {
 
   // 1. Preamble - rules and instructions
   sections.push(buildPreamble(opts.config));
+
+  // 1a. Iteration budget - tell model how many turns it has
+  if (opts.maxIterations && opts.maxIterations > 0) {
+    sections.push(buildIterationBudget(opts.currentTurn ?? 1, opts.maxIterations));
+  }
 
   // 1b. Decomposition nudge for complex tasks
   if (opts.config.decompose && classifyTaskComplexity(opts.task.text) === 'complex') {
@@ -149,6 +158,26 @@ export function classifyTaskComplexity(taskText: string): 'simple' | 'complex' {
     /\bconvert\b.*\b(all|every)\b/i,
   ];
   return complexPatterns.some((p) => p.test(taskText)) ? 'complex' : 'simple';
+}
+
+function buildIterationBudget(currentTurn: number, maxIterations: number): string {
+  const remaining = Math.max(0, maxIterations - currentTurn);
+  const urgency = remaining <= 5 ? '🚨 ' : remaining <= 10 ? '⚠️ ' : '';
+  
+  let section = `## Iteration Budget
+
+${urgency}**Turn ${currentTurn} of ${maxIterations}** (${remaining} remaining)
+
+You have a LIMITED number of turns to complete this task. Plan accordingly:
+- Do NOT explore endlessly — identify what you need, make changes, verify, done.
+- If you're past turn ${Math.floor(maxIterations * 0.6)}, start wrapping up.
+- If you cannot complete the task in time, emit \`status: failed\` with a reason.`;
+
+  if (remaining <= 5) {
+    section += `\n\n**URGENT:** You are almost out of turns. Finish NOW or report failure.`;
+  }
+
+  return section;
 }
 
 function buildPreamble(config: AntonRunConfig): string {
