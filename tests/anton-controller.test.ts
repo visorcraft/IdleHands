@@ -1385,6 +1385,38 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.equal(result.attempts[0]?.status, 'passed');
   });
 
+  test('17n. Injects Anton result contract into session system prompt', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+
+    let capturedSystemPrompt = 'base system prompt';
+
+    const createSession = async () => {
+      const base = createMockSession(['<anton-result>status: done</anton-result>']) as any;
+      base.getSystemPrompt = () => capturedSystemPrompt;
+      base.setSystemPrompt = (p: string) => {
+        capturedSystemPrompt = p;
+      };
+      return base;
+    };
+
+    const result = await runAnton({
+      config: createTestConfig({
+        taskFile,
+        projectDir: tmpDir,
+        preflightEnabled: false,
+      } as any),
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress: createMockProgressCallback(),
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    assert.equal(result.completedAll, true);
+    assert.match(capturedSystemPrompt, /\[Anton output contract\]/);
+    assert.match(capturedSystemPrompt, /<anton-result>/);
+  });
+
   test("17. maxTotalTasks exceeded → stopReason='max_tasks_exceeded'", async () => {
     const tmpDir = await createTempGitRepo();
     const taskFile = await createTaskFile(

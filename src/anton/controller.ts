@@ -222,6 +222,16 @@ export interface RunAntonOpts {
   createSession?: (config: IdlehandsConfig, apiKey?: string) => Promise<AgentSession>;
 }
 
+const ANTON_RESULT_SYSTEM_CONTRACT = `[Anton output contract]
+Every final implementation/decompose answer MUST contain exactly one structured block:
+<anton-result>
+status: done|failed|blocked|decompose
+reason: <optional>
+subtasks:
+- <only when status=decompose>
+</anton-result>
+Do not omit this block.`;
+
 const STRUCTURED_RESULT_RECOVERY_PROMPT = `Your previous reply did not include a valid <anton-result> block.
 Do NOT call tools.
 Return ONLY this block shape and nothing else:
@@ -239,6 +249,17 @@ function isStructuredResultParseFailure(reason?: string): boolean {
     reason === 'No status line found in result block' ||
     reason.startsWith('Unknown status:')
   );
+}
+
+function injectAntonResultContract(session: AgentSession): void {
+  try {
+    const current = String(session.getSystemPrompt?.() ?? '').trim();
+    if (!current) return;
+    if (current.includes('<anton-result>') || current.includes('[Anton output contract]')) return;
+    session.setSystemPrompt(`${current}\n\n${ANTON_RESULT_SYSTEM_CONTRACT}`);
+  } catch {
+    // best effort
+  }
 }
 
 export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
@@ -949,6 +970,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           `[anton:debug] task="${currentTask.text}" depth=${currentTask.depth} complexity=${taskComplexity} isComplexDecompose=${isComplexDecompose} no_tools=${!!sessionConfig.no_tools} max_iterations=${sessionConfig.max_iterations}`
         );
         session = await createSessionFn(sessionConfig, apiKey);
+        injectAntonResultContract(session);
 
         // Set up timeout + stop propagation for the currently running attempt.
         // /anton stop flips abortSignal.aborted; we poll that and cancel session.ask immediately
