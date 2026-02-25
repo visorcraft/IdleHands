@@ -28,6 +28,7 @@ describe('config resolution: CLI > env > file > defaults', () => {
     'IDLEHANDS_CONTEXT_WINDOW',
     'IDLEHANDS_DIR',
     'IDLEHANDS_MODE',
+    'IDLEHANDS_ROUTING_MODE',
     'IDLEHANDS_OUTPUT_FORMAT',
     'IDLEHANDS_FAIL_ON_ERROR',
     'IDLEHANDS_DIFF_ONLY',
@@ -78,6 +79,7 @@ describe('config resolution: CLI > env > file > defaults', () => {
     assert.equal(config.temperature, 0.2);
     assert.equal(config.approval_mode, 'auto-edit');
     assert.equal(config.mode, 'code');
+    assert.equal(config.routing_mode, 'auto');
     assert.equal(config.no_confirm, false);
     assert.equal(config.verbose, false);
     assert.equal(config.response_timeout, 600);
@@ -268,6 +270,16 @@ describe('config resolution: CLI > env > file > defaults', () => {
       assert.equal(config.approval_mode, 'default');
     } finally {
       delete process.env.IDLEHANDS_MODE;
+    }
+  });
+
+  it('env routing mode is parsed from IDLEHANDS_ROUTING_MODE', async () => {
+    process.env.IDLEHANDS_ROUTING_MODE = 'heavy';
+    try {
+      const { config } = await loadConfig({ configPath: path.join(tmpDir, 'nonexistent.json') });
+      assert.equal(config.routing_mode, 'heavy');
+    } finally {
+      delete process.env.IDLEHANDS_ROUTING_MODE;
     }
   });
 

@@ -7,6 +7,7 @@ import { estimateTokensFromMessages } from '../../history.js';
 import { setSafetyLogging } from '../../safety.js';
 import { makeStyler, err as errFmt } from '../../term.js';
 import { resolveTheme, listThemes } from '../../themes.js';
+import { getEffectiveRoutingMode, normalizeRoutingMode, routingModeStatusLines } from '../../routing/mode.js';
 import { projectDir } from '../../utils.js';
 import { runAgentTurnWithSpinner } from '../agent-turn.js';
 import type { SlashCommand } from '../command-registry.js';
@@ -75,6 +76,33 @@ export const editingCommands: SlashCommand[] = [
       } else {
         console.log('Invalid mode. Options: code, sys');
       }
+      return true;
+    },
+  },
+  {
+    name: '/routing_mode',
+    description: 'Set per-turn routing override (auto/fast/heavy)',
+    async execute(ctx, args) {
+      const arg = args.toLowerCase();
+      if (!arg) {
+        console.log(`Routing mode: ${ctx.S.bold(getEffectiveRoutingMode(ctx.config))}`);
+        return true;
+      }
+      if (arg === 'status') {
+        for (const line of routingModeStatusLines(ctx.config)) {
+          console.log(line);
+        }
+        return true;
+      }
+
+      const next = normalizeRoutingMode(arg);
+      if (!next) {
+        console.log('Invalid routing mode. Options: auto, fast, heavy');
+        return true;
+      }
+
+      ctx.config.routing_mode = next;
+      console.log(`Routing mode: ${ctx.S.bold(next)}`);
       return true;
     },
   },

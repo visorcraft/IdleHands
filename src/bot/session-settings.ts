@@ -1,3 +1,9 @@
+import {
+  ROUTING_MODES,
+  getEffectiveRoutingMode,
+  normalizeRoutingMode,
+  routingModeStatusLines,
+} from '../routing/mode.js';
 import type { CmdResult, KV, ManagedLike } from './command-logic.js';
 
 const APPROVAL_MODES = ['plan', 'default', 'auto-edit', 'yolo'] as const;
@@ -101,6 +107,33 @@ export function modeStatusCommand(managed: ManagedLike): CmdResult {
       `Current mode: ${mode}`,
       'Use /plan and /approval for planning/approval behavior.',
     ],
+  };
+}
+
+export function routingModeShowCommand(managed: ManagedLike): CmdResult {
+  const mode = getEffectiveRoutingMode(managed.config);
+  return {
+    kv: [['Routing mode', mode, true]],
+    lines: [`Options: ${ROUTING_MODES.join(', ')}`],
+  };
+}
+
+export function routingModeSetCommand(managed: ManagedLike, arg: string): CmdResult {
+  const mode = normalizeRoutingMode(arg);
+  if (!mode) {
+    return {
+      error: `Invalid routing mode. Options: ${ROUTING_MODES.join(', ')}`,
+    };
+  }
+
+  managed.config.routing_mode = mode;
+  return { success: `✅ Routing mode set to ${mode}` };
+}
+
+export function routingModeStatusCommand(managed: ManagedLike): CmdResult {
+  return {
+    title: 'Routing Mode Status',
+    lines: routingModeStatusLines(managed.config),
   };
 }
 

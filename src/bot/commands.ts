@@ -28,6 +28,9 @@ import {
   modeShowCommand,
   modeSetCommand,
   modeStatusCommand,
+  routingModeShowCommand,
+  routingModeSetCommand,
+  routingModeStatusCommand,
   subagentsShowCommand,
   subagentsSetCommand,
   changesCommand,
@@ -351,17 +354,16 @@ export async function handleRoutingMode({ ctx, sessions }: CommandContext): Prom
   }
 
   if (!arg) {
-    await reply(ctx, modeShowCommand(managed as unknown as ManagedLike));
+    await reply(ctx, routingModeShowCommand(managed as unknown as ManagedLike));
     return;
   }
 
-  // Handle status command
   if (arg === 'status') {
-    await reply(ctx, modeStatusCommand(managed as unknown as ManagedLike));
+    await reply(ctx, routingModeStatusCommand(managed as unknown as ManagedLike));
     return;
   }
 
-  await reply(ctx, modeSetCommand(managed as unknown as ManagedLike, arg));
+  await reply(ctx, routingModeSetCommand(managed as unknown as ManagedLike, arg));
 }
 
 export async function handleSubAgents({ ctx, sessions }: CommandContext): Promise<void> {
@@ -677,7 +679,7 @@ export async function handleRetryFast({ ctx, sessions }: CommandContext): Promis
   }
 
   // Set routing mode to fast
-  await reply(ctx, modeSetCommand(managed as unknown as ManagedLike, 'fast'));
+  await reply(ctx, routingModeSetCommand(managed as unknown as ManagedLike, 'fast'));
   
   // Re-run the last task
   const lastInstruction = managed.session.lastAskInstructionText || '';
@@ -709,7 +711,7 @@ export async function handleRetryHeavy({ ctx, sessions }: CommandContext): Promi
   }
 
   // Set routing mode to heavy
-  await reply(ctx, modeSetCommand(managed as unknown as ManagedLike, 'heavy'));
+  await reply(ctx, routingModeSetCommand(managed as unknown as ManagedLike, 'heavy'));
   
   // Re-run the last task
   const lastInstruction = managed.session.lastAskInstructionText || '';
