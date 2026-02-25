@@ -1,5 +1,3 @@
-import path from 'node:path';
-
 import { shellEscape } from '../utils.js';
 
 import type {
@@ -54,11 +52,7 @@ function buildVars(
     backend_id: shellEscape(backend?.id ?? backendCfg?.id ?? ''),
     chat_template_args: model.chat_template
       ? /\.jinja\b|[/\\]/.test(model.chat_template)
-        ? `--chat-template-file ${shellEscape(
-            host.transport === 'local'
-              ? path.resolve(model.chat_template)
-              : `/home/${host.connection.user ?? 'root'}/.idlehands/templates/${model.chat_template.replace(/^.*[/\\]/, '')}`
-          )}`
+        ? `--chat-template-file '${model.chat_template.replace(/^.*[/\\]/, '')}'`
         : `--chat-template ${shellEscape(model.chat_template)}`
       : '',
   };
