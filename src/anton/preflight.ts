@@ -201,15 +201,13 @@ export function buildDiscoveryPrompt(opts: {
 }): string {
   return `You are running PRE-FLIGHT for an autonomous coding orchestrator.
 
-## SPEED PRIORITY
-Return your JSON decision IMMEDIATELY if possible.
-- Most new tasks are obviously incomplete — don't waste time verifying.
-- Only read files if you CANNOT determine status from the task description alone.
-- If in doubt, assume INCOMPLETE and write the plan.
+## PRIORITY
+Be fast, but NEVER claim a file was written unless it truly exists and has content.
 
 ## RULES
 - DO NOT implement code changes. DO NOT modify source files.
 - You may ONLY write to: ${path.resolve(opts.projectDir, '.agents', 'tasks')}
+- Never call edit_range/apply_patch on source files during discovery.
 
 ## TASK
 File: ${opts.taskFilePath} (line ${opts.task.line})
@@ -229,7 +227,11 @@ ${opts.task.text}
    - What needs to be done
    - Implementation approach (reviewed for correctness, edge cases, code reuse)
    - Files to modify/create
-3. Return: {"status":"incomplete","filename":"${opts.planFilePath}"}
+3. Verify the file exists and is NON-EMPTY (check file content/size).
+4. ONLY after verification, return:
+   {"status":"incomplete","filename":"${opts.planFilePath}"}
+
+CRITICAL: Do NOT return status=incomplete with filename unless the file is truly written and non-empty.
 
 Note: Write a REVIEWED plan — thorough enough that implementation can proceed without further planning.
 ${
@@ -237,7 +239,7 @@ ${
     ? `
 ## RETRY CONTEXT
 ${opts.retryHint}
-Keep output minimal. Write the plan file and return JSON immediately.`
+Keep output minimal. Write/verify the plan file, then return JSON.`
     : ''
 }
 
@@ -253,8 +255,15 @@ Treat it as written by an entry-level developer who may miss edge cases and fail
 Be thorough and precise. Update the SAME file in-place to improve correctness, reuse, and clarity.
 Remove ambiguity and tighten implementation steps.
 
+Before returning status=ready:
+1) Ensure the file exists
+2) Ensure the file is NON-EMPTY
+3) Ensure your reviewed content is persisted to that same path
+
 After review, return EXACT JSON only:
 {"status":"ready","filename":"${planFilePath}"}
+
+CRITICAL: Do not return status=ready unless that file truly exists and has non-empty content.
 
 Return JSON only. No markdown fences. No commentary.`;
 }
