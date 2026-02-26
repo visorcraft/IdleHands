@@ -568,6 +568,7 @@ export async function createSession(opts: {
       lspTools: lspManager?.hasServers() === true,
       mcpTools: mcpToolsLoaded ? (mcpManager?.getEnabledToolSchemas() ?? []) : [],
       allowSpawnTask: spawnTaskEnabled,
+      maxReadLines: cfg.max_read_lines,
       slimFast,
     });
 
