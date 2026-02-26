@@ -2490,6 +2490,7 @@ export async function createSession(opts: {
             toolCalls,
             promptTokens: cumulativeUsage.prompt,
             completionTokens: cumulativeUsage.completion,
+            final: true,
           });
           return await finalizeAsk(blocked);
         }
@@ -2503,6 +2504,7 @@ export async function createSession(opts: {
           toolCalls,
           promptTokens: cumulativeUsage.prompt,
           completionTokens: cumulativeUsage.completion,
+          final: true,
         });
         return await finalizeAsk(text);
       }
@@ -2516,6 +2518,7 @@ export async function createSession(opts: {
         toolCalls,
         promptTokens: cumulativeUsage.prompt,
         completionTokens: cumulativeUsage.completion,
+        final: true,
       });
       return await finalizeAsk(miss);
     }
@@ -5058,6 +5061,7 @@ export async function createSession(opts: {
           ttcMs,
           ppTps,
           tgTps,
+          final: true,
         });
         return await finalizeAsk(assistantOutput);
       }

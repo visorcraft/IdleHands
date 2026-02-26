@@ -74,4 +74,35 @@ describe('TurnProgressController', () => {
     assert.ok(!line.includes('refusing to overwrite existing non-empty file'));
     c.stop();
   });
+
+  it('marks done only on final turn_end events', () => {
+    const c = new TurnProgressController();
+    c.start();
+
+    c.hooks.onTurnEnd?.({
+      turn: 1,
+      toolCalls: 1,
+      promptTokens: 100,
+      completionTokens: 50,
+      final: false,
+    } as any);
+
+    const mid = c.snapshot('manual');
+    assert.equal(mid.phase, 'verifying');
+    assert.ok(!mid.statusLine.includes('Done'));
+
+    c.hooks.onTurnEnd?.({
+      turn: 2,
+      toolCalls: 2,
+      promptTokens: 180,
+      completionTokens: 90,
+      final: true,
+    } as any);
+
+    const done = c.snapshot('manual');
+    assert.equal(done.phase, 'complete');
+    assert.ok(done.statusLine.includes('Done'));
+
+    c.stop();
+  });
 });
