@@ -333,6 +333,77 @@ describe('apply_patch', () => {
     assert.ok(out.includes('applied patch'));
     assert.equal(content, 'hola\nworld\n');
   });
+
+  it('accepts fenced diff payloads (```diff ... ```)', async () => {
+    const hasPatch = spawnSync('bash', ['-lc', 'command -v patch >/dev/null 2>&1']).status === 0;
+    if (!hasPatch) return;
+
+    await fs.writeFile(path.join(tmpDir, 'patch-fenced.txt'), 'hello\nworld\n', 'utf8');
+    const patch = [
+      '```diff',
+      '--- patch-fenced.txt',
+      '+++ patch-fenced.txt',
+      '@@ -1,2 +1,2 @@',
+      '-hello',
+      '+hola',
+      ' world',
+      '```',
+      '',
+    ].join('\n');
+
+    await apply_patch(ctx, {
+      patch,
+      files: ['patch-fenced.txt'],
+      strip: 0,
+    });
+
+    const content = await fs.readFile(path.join(tmpDir, 'patch-fenced.txt'), 'utf8');
+    assert.equal(content, 'hola\nworld\n');
+  });
+
+  it('accepts double-escaped newline patch payloads', async () => {
+    const hasPatch = spawnSync('bash', ['-lc', 'command -v patch >/dev/null 2>&1']).status === 0;
+    if (!hasPatch) return;
+
+    await fs.writeFile(path.join(tmpDir, 'patch-escaped.txt'), 'hello\nworld\n', 'utf8');
+    const patch =
+      '--- patch-escaped.txt\\n+++ patch-escaped.txt\\n@@ -1,2 +1,2 @@\\n-hello\\n+hola\\n world\\n';
+
+    await apply_patch(ctx, {
+      patch,
+      files: ['patch-escaped.txt'],
+      strip: 0,
+    });
+
+    const content = await fs.readFile(path.join(tmpDir, 'patch-escaped.txt'), 'utf8');
+    assert.equal(content, 'hola\nworld\n');
+  });
+
+  it('returns enhanced diagnostics for corrupt patches', async () => {
+    const hasPatch = spawnSync('bash', ['-lc', 'command -v patch >/dev/null 2>&1']).status === 0;
+    if (!hasPatch) return;
+
+    await fs.writeFile(path.join(tmpDir, 'patch-bad.txt'), 'hello\nworld\n', 'utf8');
+    const patch = [
+      '--- patch-bad.txt',
+      '+++ patch-bad.txt',
+      '@@ this-is-not-a-valid-hunk-header @@',
+      '-hello',
+      '+hola',
+      ' world',
+      '',
+    ].join('\n');
+
+    await assert.rejects(
+      () =>
+        apply_patch(ctx, {
+          patch,
+          files: ['patch-bad.txt'],
+          strip: 0,
+        }),
+      /Patch snippet around line|corrupt patch|No valid patches in input|Tip:/i
+    );
+  });
 });
 
 describe('insert_file', () => {
