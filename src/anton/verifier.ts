@@ -29,6 +29,7 @@ import {
   truncateOutput,
   combineOutput,
   parseVerifierResponse,
+  extractExplicitTaskFiles,
 } from './verifier-utils.js';
 
 export interface VerifyOpts {
@@ -279,17 +280,83 @@ export async function runVerification(opts: VerifyOpts): Promise<AntonVerificati
   }
 
   // L2: AI verification (only if enabled and conditions met)
-  if (opts.config.verifyAi && opts.diff.trim() && opts.createVerifySession) {
+  // Enhanced: Include L1 results and file existence checks for better context
+  if (opts.config.verifyAi && opts.createVerifySession) {
     let session: { ask: (prompt: string) => Promise<string>; close: () => Promise<void> } | null =
       null;
     try {
       session = await opts.createVerifySession();
-      const prompt = `You are a code review verifier. Task: "${opts.task.text}"
+      
+      // Build L1 summary for context
+      const l1Summary: string[] = [];
+      if (result.l1_build !== undefined) {
+        l1Summary.push(`Build: ${result.l1_build ? 'PASSED' : 'FAILED'}`);
+      }
+      if (result.l1_test !== undefined) {
+        l1Summary.push(`Tests: ${result.l1_test ? 'PASSED' : 'FAILED'}`);
+      }
+      if (result.l1_lint !== undefined) {
+        l1Summary.push(`Lint: ${result.l1_lint ? 'PASSED' : 'FAILED'}`);
+      }
+      
+      // Check for test-related tasks and look for test files
+      const taskLower = opts.task.text.toLowerCase();
+      const isTestTask = taskLower.includes('test') || taskLower.includes('spec');
+      
+      // Extract potential target files from task
+      const targetFiles = extractExplicitTaskFiles(opts.task.text);
+      let testFileInfo = '';
+      
+      if (isTestTask && targetFiles.length > 0) {
+        const testFileChecks: string[] = [];
+        for (const file of targetFiles) {
+          const baseName = file.replace(/\.[^.]+$/, '');
+          const ext = file.match(/\.[^.]+$/)?.[0] || '';
+          
+          // Common test file patterns to check
+          const testPatterns = [
+            `${baseName}Test${ext}`,
+            `${baseName}.test${ext}`,
+            `${baseName}_test${ext}`,
+            `${baseName}.spec${ext}`,
+            `tests/${baseName}Test${ext}`,
+            `test/${baseName}Test${ext}`,
+            `tests/Unit/${baseName}Test${ext}`,
+            `tests/Feature/${baseName}Test${ext}`,
+          ];
+          
+          for (const pattern of testPatterns) {
+            const testPath = join(opts.projectDir, pattern);
+            if (existsSync(testPath)) {
+              testFileChecks.push(`✓ ${pattern} EXISTS`);
+              break;
+            }
+          }
+        }
+        if (testFileChecks.length > 0) {
+          testFileInfo = `\nTest files found:\n${testFileChecks.join('\n')}`;
+        }
+      }
+      
+      // Build the prompt with more context
+      const diffSection = opts.diff.trim() 
+        ? `\nGit Diff:\n\`\`\`diff\n${opts.diff}\n\`\`\`` 
+        : '\nGit Diff: (no changes in diff - files may have been created/modified outside of tracked changes)';
+      
+      const prompt = `You are a code review verifier for an autonomous coding agent.
 
-Diff:
-\`\`\`diff
-${opts.diff}
-\`\`\`
+Task: "${opts.task.text}"
+
+L1 Verification Results:
+${l1Summary.length > 0 ? l1Summary.join('\n') : 'No L1 checks configured'}
+${testFileInfo}
+${diffSection}
+
+IMPORTANT: Consider the FULL context when verifying:
+1. If L1 tests PASSED, the task likely succeeded even if the diff is minimal or empty
+2. For test creation tasks, check if test files now exist (shown above)
+3. The diff may not show all changes (e.g., if files were committed earlier in the session)
+4. Cache/temporary files in the diff should be ignored
 
 Reply with exactly one JSON object:
 {"pass": true, "reason": "..."}
@@ -314,7 +381,6 @@ or
       }
     }
   }
-
   // Overall result
   const l2_pass = result.l2_ai ?? true; // undefined means skipped, treat as pass
   result.passed = result.l0_agentDone && l1_all && l2_pass;
