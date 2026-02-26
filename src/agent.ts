@@ -4114,8 +4114,10 @@ export async function createSession(opts: {
               const filePath = typeof args.path === 'string' ? args.path : '';
               const searchTerm = typeof args.search === 'string' ? args.search : '';
 
-              // Fix 1: Hard cumulative budget — refuse reads past hard cap
-              if (cumulativeReadOnlyCalls > READ_BUDGET_HARD) {
+              // Fix 1: Hard cumulative budget — refuse reads once hard cap is reached.
+              // Count only actual executed read-only calls (not cache replays), so this check
+              // blocks the next call exactly at the configured cap.
+              if (cumulativeReadOnlyCalls >= READ_BUDGET_HARD) {
                 await emitToolCall(callId, name, args);
                 await emitToolResult({
                   id: callId,
@@ -4572,6 +4574,16 @@ export async function createSession(opts: {
               result: content,
             });
 
+            // Count only actual read-only executions toward cumulative read budget.
+            // Cached/replayed read observations should not consume budget.
+            if (
+              isReadOnlyToolDynamic(name) &&
+              !reusedCachedReadTool &&
+              !reusedCachedReadOnlyExec
+            ) {
+              cumulativeReadOnlyCalls += 1;
+            }
+
             // ── Per-file mutation spiral detection ──
             // Track edits to the same file. If the model keeps editing the same file
             // over and over, it's likely in an edit→break→read→edit corruption spiral.
@@ -4772,12 +4784,6 @@ export async function createSession(opts: {
               );
             }
           }
-
-          // Fix 1: Hard cumulative read budget — escalating enforcement
-          const readOnlyThisTurn = toolCallsArr.filter((tc) =>
-            isReadOnlyToolDynamic(tc.function.name)
-          );
-          cumulativeReadOnlyCalls += readOnlyThisTurn.length;
 
           if (harness.toolCalls.parallelCalls) {
             // Models that support parallel calls: read-only in parallel, mutations sequential

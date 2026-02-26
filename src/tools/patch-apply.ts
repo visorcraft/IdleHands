@@ -91,9 +91,64 @@ async function runCommandWithStdin(
   });
 }
 
+function normalizePatchText(input: string): string {
+  let text = String(input ?? '');
+
+  // Common model output wrapper: fenced diff blocks.
+  const fenced = text.match(/^```(?:diff|patch)?\s*\n([\s\S]*?)\n```\s*$/i);
+  if (fenced?.[1]) {
+    text = fenced[1];
+  }
+
+  // Normalize line endings for git/patch parsers.
+  text = text.replace(/\r\n/g, '\n');
+
+  // Recover from double-escaped patches ("--- a\\n+++ b...").
+  if (!text.includes('\n') && text.includes('\\n')) {
+    text = text
+      .replace(/\\r\\n/g, '\n')
+      .replace(/\\n/g, '\n')
+      .replace(/\\t/g, '\t')
+      .replace(/\\"/g, '"');
+  }
+
+  // Ensure trailing newline (some parsers are finicky without this).
+  if (!text.endsWith('\n')) text += '\n';
+  return text;
+}
+
+function enrichPatchFailure(raw: string, patchText: string): string {
+  const msg = String(raw ?? '').trim();
+
+  if (/no valid patches in input/i.test(msg)) {
+    return (
+      `${msg}\n\n` +
+      `Tip: provide plain unified diff text (---/+++ headers with @@ hunks). Avoid prose/markdown wrappers and ensure the patch is not truncated.`
+    );
+  }
+
+  const m = msg.match(/corrupt patch at line\s+(\d+)/i);
+  if (!m) return msg;
+
+  const lineNo = Number.parseInt(m[1], 10);
+  if (!Number.isFinite(lineNo) || lineNo <= 0) return msg;
+
+  const lines = patchText.split('\n');
+  const from = Math.max(1, lineNo - 2);
+  const to = Math.min(lines.length, lineNo + 2);
+  const snippet: string[] = [];
+  for (let i = from; i <= to; i++) {
+    const marker = i === lineNo ? '>>' : '  ';
+    snippet.push(`${marker} ${i}: ${lines[i - 1] ?? ''}`);
+  }
+
+  return `${msg}\n\nPatch snippet around line ${lineNo}:\n${snippet.join('\n')}\n\n` +
+    `Tip: ensure unified diff format headers/hunks are intact (---/+++ and @@ ... @@), avoid markdown fences, and keep patch text untruncated.`;
+}
+
 export async function applyPatchTool(ctx: PatchApplyContext, args: any): Promise<string> {
   const rawPatch = args?.patch;
-  const patchText =
+  const rawPatchText =
     typeof rawPatch === 'string'
       ? rawPatch
       : rawPatch != null && typeof rawPatch === 'object'
@@ -106,8 +161,10 @@ export async function applyPatchTool(ctx: PatchApplyContext, args: any): Promise
   const stripRaw = Number(args?.strip);
   const strip = Number.isFinite(stripRaw) ? Math.max(0, Math.min(5, Math.floor(stripRaw))) : 0;
 
-  if (!patchText) throw new Error('apply_patch: missing patch');
+  if (!rawPatchText) throw new Error('apply_patch: missing patch');
   if (!files.length) throw new Error('apply_patch: missing files[]');
+
+  const patchText = normalizePatchText(rawPatchText);
 
   const touched = extractTouchedFilesFromPatch(patchText);
   if (!touched.paths.length)
@@ -155,7 +212,9 @@ export async function applyPatchTool(ctx: PatchApplyContext, args: any): Promise
         maxToolBytes
       );
       if (chk.rc !== 0)
-        throw new Error(`apply_patch: git apply --check failed:\n${chk.err || chk.out}`);
+        throw new Error(
+          `apply_patch: git apply --check failed:\n${enrichPatchFailure(chk.err || chk.out, patchText)}`
+        );
     } else {
       const chk = await runCommandWithStdin(
         'patch',
@@ -165,7 +224,9 @@ export async function applyPatchTool(ctx: PatchApplyContext, args: any): Promise
         maxToolBytes
       );
       if (chk.rc !== 0)
-        throw new Error(`apply_patch: patch --dry-run failed:\n${chk.err || chk.out}`);
+        throw new Error(
+          `apply_patch: patch --dry-run failed:\n${enrichPatchFailure(chk.err || chk.out, patchText)}`
+        );
     }
     const redactedPaths = touched.paths.map((rel) =>
       redactPath(resolvePath(ctx as any, rel), path.resolve(ctx.cwd))
@@ -196,7 +257,9 @@ export async function applyPatchTool(ctx: PatchApplyContext, args: any): Promise
       maxToolBytes
     );
     if (chk.rc !== 0)
-      throw new Error(`apply_patch: git apply --check failed:\n${chk.err || chk.out}`);
+      throw new Error(
+        `apply_patch: git apply --check failed:\n${enrichPatchFailure(chk.err || chk.out, patchText)}`
+      );
     const app = await runCommandWithStdin(
       'git',
       ['apply', stripArg, '--whitespace=nowarn'],
@@ -204,7 +267,10 @@ export async function applyPatchTool(ctx: PatchApplyContext, args: any): Promise
       ctx.cwd,
       maxToolBytes
     );
-    if (app.rc !== 0) throw new Error(`apply_patch: git apply failed:\n${app.err || app.out}`);
+    if (app.rc !== 0)
+      throw new Error(
+        `apply_patch: git apply failed:\n${enrichPatchFailure(app.err || app.out, patchText)}`
+      );
   } else {
     const chk = await runCommandWithStdin(
       'patch',
@@ -214,7 +280,9 @@ export async function applyPatchTool(ctx: PatchApplyContext, args: any): Promise
       maxToolBytes
     );
     if (chk.rc !== 0)
-      throw new Error(`apply_patch: patch --dry-run failed:\n${chk.err || chk.out}`);
+      throw new Error(
+        `apply_patch: patch --dry-run failed:\n${enrichPatchFailure(chk.err || chk.out, patchText)}`
+      );
     const app = await runCommandWithStdin(
       'patch',
       [stripArg, '--batch'],
@@ -222,7 +290,8 @@ export async function applyPatchTool(ctx: PatchApplyContext, args: any): Promise
       ctx.cwd,
       maxToolBytes
     );
-    if (app.rc !== 0) throw new Error(`apply_patch: patch failed:\n${app.err || app.out}`);
+    if (app.rc !== 0)
+      throw new Error(`apply_patch: patch failed:\n${enrichPatchFailure(app.err || app.out, patchText)}`);
   }
 
   let replayNotes = '';
