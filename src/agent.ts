@@ -2632,6 +2632,14 @@ export async function createSession(opts: {
     // Widening grep pattern detection: track grep patterns across exec calls
     const grepPatternPaths = new Map<string, Set<string>>(); // grep pattern → set of paths searched
 
+    // Analysis paralysis: track total tool calls vs edits to detect stalling
+    let totalToolCallsThisAsk = 0;
+    let totalEditsThisAsk = 0;
+    let analysisParalysisWarned = false;
+
+    // Same-file search_files repetition: track search_files calls per target file
+    const searchFilesPerTarget = new Map<string, number>(); // file path → search call count
+
     // Same-file grep repetition: track how many different grep patterns hit the same file
     const grepTargetFileCounts = new Map<string, number>(); // file path → distinct grep call count
 
@@ -4237,6 +4245,26 @@ export async function createSession(opts: {
             }
 
             // ── Anti-scan: read_file guardrails (Fix 1/2/3) ──
+            // Same-file search_files repetition: if searching the same file 4+ times, tell the model to stop
+            if (name === 'search_files') {
+              const searchPath = typeof args.path === 'string' ? args.path : '';
+              // Only track when targeting a specific file (has extension), not a directory
+              if (searchPath && searchPath.includes('.')) {
+                const count = (searchFilesPerTarget.get(searchPath) ?? 0) + 1;
+                searchFilesPerTarget.set(searchPath, count);
+                if (count >= 4) {
+                  const basename = searchPath.split('/').pop() || searchPath;
+                  messages.push({
+                    role: 'user' as const,
+                    content:
+                      `[system] You have called search_files on ${basename} ${count} times with different patterns. ` +
+                      `STOP searching this file repeatedly. You already have enough information from previous reads and searches. ` +
+                      `Proceed to make your edit or tell the user what you need.`,
+                  });
+                }
+              }
+            }
+
             if (name === 'read_file' || name === 'read_files') {
               const filePath = typeof args.path === 'string' ? args.path : '';
               const searchTerm = typeof args.search === 'string' ? args.search : '';
@@ -4403,7 +4431,7 @@ export async function createSession(opts: {
               if (fileReplay) {
                 content = fileReplay;
                 reusedCachedReadTool = true;
-                cumulativeReadOnlyCalls++; // still counts toward budget
+                // Cache hit — do NOT count toward read budget (no new tokens consumed)
               }
             }
 
@@ -4749,6 +4777,12 @@ export async function createSession(opts: {
               cumulativeReadOnlyCalls += 1;
             }
 
+            // Track total tool calls and edits for analysis paralysis detection
+            totalToolCallsThisAsk++;
+            if (isMutationTool(name) && toolSuccess) {
+              totalEditsThisAsk++;
+            }
+
             // ── Per-file mutation spiral detection ──
             // Track edits to the same file. If the model keeps editing the same file
             // over and over, it's likely in an edit→break→read→edit corruption spiral.
@@ -5078,6 +5112,24 @@ export async function createSession(opts: {
               content: `[system] Read budget: ${cumulativeReadOnlyCalls}/${READ_BUDGET_HARD}. Use search_files instead of reading files individually.`,
             });
           }
+
+          // Analysis paralysis: if the model has made 25+ tool calls with zero edits,
+          // it's stuck in a read/search loop and needs to be forced into action.
+          if (
+            !analysisParalysisWarned &&
+            totalToolCallsThisAsk >= 25 &&
+            totalEditsThisAsk === 0
+          ) {
+            analysisParalysisWarned = true;
+            messages.push({
+              role: 'user' as const,
+              content:
+                `[system] CRITICAL: You have made ${totalToolCallsThisAsk} tool calls without producing a single edit. ` +
+                `You are stuck in analysis paralysis. STOP reading and searching. ` +
+                `You have enough information. Make your edit NOW or explain to the user what is blocking you.`,
+            });
+          }
+
 
           // One bounded automatic repair attempt for invalid tool args.
           if (invalidArgsThisTurn && toolRepairAttempts < MAX_TOOL_REPAIR_ATTEMPTS) {
