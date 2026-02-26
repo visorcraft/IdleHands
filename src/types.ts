@@ -697,6 +697,8 @@ export type ToolCallEvent = {
   id: string;
   name: string;
   args: Record<string, unknown>;
+  /** planned: model has started emitting a tool call; executing: tool dispatch started */
+  phase?: 'planned' | 'executing';
 };
 
 export type ToolResultEvent = {

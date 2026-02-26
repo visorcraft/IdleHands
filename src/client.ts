@@ -730,6 +730,14 @@ export class OpenAIClient {
     requestId?: string;
     onToken?: (text: string) => void;
     onFirstDelta?: () => void;
+    onToolCallDelta?: (delta: {
+      index: number;
+      id?: string;
+      name?: string;
+      argumentsChunk?: string;
+      argumentsSoFar?: string;
+      done?: boolean;
+    }) => void;
     readTimeoutMs?: number; // default 30000 (§11: partial SSE frame timeout)
   }): Promise<ChatCompletionResponse> {
     const url = `${this.endpoint}/chat/completions`;
@@ -912,6 +920,23 @@ export class OpenAIClient {
       let firstDeltaMs: number | undefined;
       let tokensReceived = 0;
 
+      const emitFinalToolCallDeltas = (response: ChatCompletionResponse) => {
+        if (!opts.onToolCallDelta) return;
+        const toolCalls = response.choices?.[0]?.message?.tool_calls;
+        if (!Array.isArray(toolCalls)) return;
+        for (let i = 0; i < toolCalls.length; i++) {
+          const tc = toolCalls[i];
+          opts.onToolCallDelta({
+            index: i,
+            id: tc?.id,
+            name: tc?.function?.name,
+            argumentsChunk: tc?.function?.arguments,
+            argumentsSoFar: tc?.function?.arguments,
+            done: true,
+          });
+        }
+      };
+
       while (true) {
         // Race reader.read() against a cancellable read timeout.
         // Using AbortController avoids leaking dangling delay() timers on every chunk.
@@ -955,6 +980,7 @@ export class OpenAIClient {
                 content + `\n[connection lost after ${tokensReceived} tokens]`;
             }
             const totalMs = Date.now() - reqStart;
+            emitFinalToolCallDeltas(partial);
             (partial as any).meta = {
               total_ms: totalMs,
               ttft_ms: firstDeltaMs,
@@ -1030,6 +1056,7 @@ export class OpenAIClient {
                 toolArgsByIndex
               );
               const totalMs = Date.now() - reqStart;
+              emitFinalToolCallDeltas(doneResult);
               (doneResult as any).meta = {
                 total_ms: totalMs,
                 ttft_ms: firstDeltaMs,
@@ -1094,6 +1121,7 @@ export class OpenAIClient {
             }
 
             if (Array.isArray(d.tool_calls)) {
+              let sawToolCallChunk = false;
               for (const tc of d.tool_calls) {
                 const i = tc.index;
                 if (i === undefined) continue;
@@ -1102,6 +1130,21 @@ export class OpenAIClient {
                 if (tc.function?.arguments) {
                   toolArgsByIndex[i] = (toolArgsByIndex[i] ?? '') + tc.function.arguments;
                 }
+
+                sawToolCallChunk = true;
+                opts.onToolCallDelta?.({
+                  index: i,
+                  id: toolIdByIndex[i],
+                  name: toolNameByIndex[i],
+                  argumentsChunk: tc.function?.arguments,
+                  argumentsSoFar: toolArgsByIndex[i] ?? '',
+                  done: false,
+                });
+              }
+
+              // Keepalive progress ping: some models stream tool deltas without content tokens.
+              if (sawToolCallChunk && !d.content) {
+                opts.onToken?.('');
               }
             }
 
@@ -1118,6 +1161,7 @@ export class OpenAIClient {
         toolNameByIndex,
         toolArgsByIndex
       );
+      emitFinalToolCallDeltas(streamResult);
       const totalMs = Date.now() - reqStart;
       // Backpressure: track streaming response time
       const bp = this.backpressure.record(totalMs);
