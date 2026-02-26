@@ -1304,6 +1304,64 @@ describe('harness behavioral wiring', () => {
       'expected tool_calls format reminder prepended to first user instruction'
     );
   });
+
+  it('auto-retries write_file with overwrite=true after refusal', async () => {
+    const target = path.join(tmpDir, 'overwrite-target.txt');
+    await fs.writeFile(target, 'old content\n', 'utf8');
+
+    let turn = 0;
+    const fakeClient: any = {
+      async models() {
+        return { data: [{ id: 'fake-model' }] };
+      },
+      async warmup() {},
+      async chatStream() {
+        turn++;
+        if (turn === 1) {
+          return {
+            id: 'fake-1',
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'tool-write',
+                      type: 'function',
+                      function: {
+                        name: 'write_file',
+                        arguments: JSON.stringify({ path: target, content: 'new content\n' }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+            usage: { prompt_tokens: 42, completion_tokens: 9 },
+          };
+        }
+
+        return {
+          id: 'fake-2',
+          choices: [{ index: 0, message: { role: 'assistant', content: 'done' } }],
+          usage: { prompt_tokens: 20, completion_tokens: 4 },
+        };
+      },
+    };
+
+    const session = await createSession({ config: baseConfig(tmpDir), runtime: { client: fakeClient } });
+    const out = await session.ask('replace file fully');
+
+    assert.equal(out.text, 'done');
+    const final = await fs.readFile(target, 'utf8');
+    assert.equal(final, 'new content\n');
+
+    const toolMsg = session.messages.find((m) => m.role === 'tool');
+    assert.ok(toolMsg, 'expected tool result message');
+    assert.ok(!String(toolMsg?.content ?? '').includes('refusing to overwrite'));
+  });
 });
 
 describe('plan mode blocking', () => {
