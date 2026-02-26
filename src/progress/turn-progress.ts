@@ -380,7 +380,11 @@ export class TurnProgressController {
   private onTurnEnd(stats: TurnEndEvent): void {
     this.markActivity();
     this.lastTurnEnd = stats;
-    this.phase = 'complete';
+
+    // IMPORTANT: turn_end can fire multiple times within a single user request
+    // (e.g., tool turn -> follow-up model turn). Mark complete only when agent
+    // explicitly says this is the final completion event.
+    this.phase = stats.final ? 'complete' : 'verifying';
     this.emit('turn_end', true);
   }
 

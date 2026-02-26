@@ -752,4 +752,6 @@ export type TurnEndEvent = {
   ttcMs?: number;
   ppTps?: number;
   tgTps?: number;
+  /** true when this turn_end corresponds to final task completion shown to user. */
+  final?: boolean;
 };
