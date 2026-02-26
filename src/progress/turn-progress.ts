@@ -110,7 +110,7 @@ export function formatStatusLine(
     return truncate(`🔧 ${snap.activeTool.summary} (${tool} tool, ${total} total)`, 160);
   }
 
-  if (snap.phase === 'verifying') return `✅ Verifying (${total})`;
+  if (snap.phase === 'verifying') return `🧪 Verifying (${total})`;
   if (snap.phase === 'complete') return `✅ Done (${total})`;
   if (snap.phase === 'runtime_preflight') return `⚙️ Pre-flight checks (${total})`;
   if (snap.phase === 'planning') return `📋 Planning (${total})`;
@@ -363,8 +363,8 @@ export class TurnProgressController {
 
   private onToolResult(ev: ToolResultEvent): void {
     this.markActivity();
-    // After a tool, we are typically waiting for the model again.
-    this.phase = 'verifying';
+    // After a tool, we are typically still actively working/planning the next step.
+    this.phase = 'planning';
 
     const icon = ev.success ? '✓' : '✗';
     const summary = sanitizeToolResultSummary(ev.name, ev.summary);
@@ -399,7 +399,8 @@ export class TurnProgressController {
     // IMPORTANT: turn_end can fire multiple times within a single user request
     // (e.g., tool turn -> follow-up model turn). Mark complete only when agent
     // explicitly says this is the final completion event.
-    this.phase = stats.final ? 'complete' : 'verifying';
+    // Non-final turn-end means we're still working/planning within the same ask.
+    this.phase = stats.final ? 'complete' : 'planning';
     this.emit('turn_end', true);
   }
 

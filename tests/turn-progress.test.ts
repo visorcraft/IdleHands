@@ -90,7 +90,7 @@ describe('TurnProgressController', () => {
     } as any);
 
     const mid = c.snapshot('manual');
-    assert.equal(mid.phase, 'verifying');
+    assert.equal(mid.phase, 'planning');
     assert.ok(!mid.statusLine.includes('Done'));
 
     c.hooks.onTurnEnd?.({
