@@ -105,4 +105,30 @@ describe('TurnProgressController', () => {
 
     c.stop();
   });
+
+  it('replaces planned tool line for the same tool instead of appending', () => {
+    const c = new TurnProgressController();
+    c.start();
+
+    c.hooks.onToolCall?.({
+      id: 't1',
+      name: 'edit_range',
+      phase: 'planned',
+      args: { path: '/home/thomas/a.ts' },
+    } as any);
+
+    c.hooks.onToolCall?.({
+      id: 't1',
+      name: 'edit_range',
+      phase: 'planned',
+      args: { path: '/home/thomas/a.ts', start_line: 759, end_line: 764 },
+    } as any);
+
+    const snap = c.snapshot('manual');
+    const planned = snap.toolLines.filter((l) => l.startsWith('… planned edit_range:'));
+    assert.equal(planned.length, 1);
+    assert.ok(planned[0].includes('[759..764]'));
+
+    c.stop();
+  });
 });
