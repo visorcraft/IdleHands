@@ -336,7 +336,10 @@ export async function editFileTool(ctx: any, args: any): Promise<string> {
   const normalizationNote = normalizedOld.normalized || normalizedNew.normalized
     ? '\n[normalized escaped newline sequences in edit_file text]'
     : '';
-  return `edited ${redactedPath} (replace_all=${replaceAll})${normalizationNote}${replayNote}${cwdWarning}${readback}`;
+  // Count replacements for replace_all mode
+  const replaceCount = replaceAll ? (cur.split(oldText).length - 1) : 1;
+  const replaceInfo = replaceAll && replaceCount > 1 ? ` [${replaceCount} occurrences replaced]` : "";
+  return `edited ${redactedPath} (replace_all=${replaceAll})${replaceInfo}${normalizationNote}${replayNote}${cwdWarning}${readback}`;
 }
 
 export async function editRangeTool(ctx: any, args: any): Promise<string> {
