@@ -213,6 +213,7 @@ export type TurnRoutingDebug = {
   toolSchemaBytes?: number;
   toolSchemaTokens?: number;
   toolCount?: number;
+  streamFallback?: string;
 };
 
 export type PerfSummary = {
@@ -642,6 +643,74 @@ export async function createSession(opts: {
       paths,
     });
     if (recentToolUsage.length > 60) recentToolUsage.shift();
+  };
+
+  const extractPartialToolArgsPreview = (
+    toolName: string,
+    rawArgs: string
+  ): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    const text = String(rawArgs ?? '');
+    if (!text.trim()) return out;
+
+    const pickString = (key: string): string | undefined => {
+      const m = text.match(new RegExp(`"${key}"\\s*:\\s*"([^\\n\"]*)`));
+      return m?.[1];
+    };
+
+    const pickNumber = (key: string): number | undefined => {
+      const m = text.match(new RegExp(`"${key}"\\s*:\\s*(-?\\d+)`));
+      if (!m) return undefined;
+      const n = Number.parseInt(m[1], 10);
+      return Number.isFinite(n) ? n : undefined;
+    };
+
+    const pathLikeTools = new Set([
+      'read_file',
+      'write_file',
+      'edit_range',
+      'edit_file',
+      'insert_file',
+      'list_dir',
+      'lsp_diagnostics',
+      'lsp_symbols',
+      'lsp_hover',
+      'lsp_definition',
+      'lsp_references',
+    ]);
+
+    if (pathLikeTools.has(toolName)) {
+      const path = pickString('path');
+      if (path) out.path = path;
+    }
+
+    if (toolName === 'search_files') {
+      const pattern = pickString('pattern');
+      const path = pickString('path');
+      if (pattern) out.pattern = pattern;
+      if (path) out.path = path;
+    }
+
+    if (toolName === 'exec') {
+      const command = pickString('command');
+      const cwd = pickString('cwd');
+      if (command) out.command = command;
+      if (cwd) out.cwd = cwd;
+    }
+
+    if (toolName === 'vault_search') {
+      const query = pickString('query');
+      if (query) out.query = query;
+    }
+
+    if (toolName === 'edit_range') {
+      const start = pickNumber('start_line');
+      const end = pickNumber('end_line');
+      if (start != null) out.start_line = start;
+      if (end != null) out.end_line = end;
+    }
+
+    return out;
   };
   const vault = vaultEnabled
     ? (opts.runtime?.vault ??
@@ -2629,6 +2698,7 @@ export async function createSession(opts: {
     let forceToollessRecoveryTurn = false;
     let toollessRecoveryUsed = false;
     const streamedToolCallPreviews = new Set<string>();
+    const streamedToolCallPreviewScores = new Map<string, number>();
 
     // ── Security: credential leak detection + prompt injection guard ──
     const leakDetector = new LeakDetector();
@@ -2969,6 +3039,7 @@ export async function createSession(opts: {
         };
 
         let resp;
+        let streamFallbackDiag: string | undefined;
         try {
           try {
             // turns is 1-indexed (incremented at loop top), so first iteration = 1.
@@ -3014,6 +3085,28 @@ export async function createSession(opts: {
                 `[turn-debug] prompt_bytes=${promptBytesEstimate} tools=${toolsForTurn.length} tool_schema_bytes=${toolSchemaBytesEstimate} tool_schema_tokens~=${toolSchemaTokenEstimate}`
               );
             }
+
+            const noteStreamFallback = (providerName: string, response: any) => {
+              const fallback = response?.meta?.stream_fallback;
+              if (!fallback || typeof fallback !== 'object') return;
+
+              const reason = String((fallback as any).reason ?? 'unknown');
+              const attempt = Number((fallback as any).attempt ?? NaN);
+              const status = Number((fallback as any).status ?? NaN);
+              const detail = [
+                Number.isFinite(attempt) ? `attempt=${attempt}` : null,
+                Number.isFinite(status) ? `status=${status}` : null,
+              ]
+                .filter(Boolean)
+                .join(' ');
+
+              streamFallbackDiag = `${providerName}:${reason}${detail ? ` (${detail})` : ''}`;
+              if (cfg.verbose) {
+                console.warn(
+                  `[routing] stream fallback provider=${providerName} reason=${reason}${detail ? ` ${detail}` : ''}`
+                );
+              }
+            };
 
             // ── Response cache: check for cached response ──────────────
             // Only cache tool-less turns (final answers, explanations) since
@@ -3064,6 +3157,7 @@ export async function createSession(opts: {
                   id?: string;
                   name?: string;
                   argumentsSoFar?: string;
+                  done?: boolean;
                 }) => {
                   const name = typeof delta?.name === 'string' ? delta.name : '';
                   if (!name) return;
@@ -3072,8 +3166,6 @@ export async function createSession(opts: {
                     ? delta.id
                     : `stream_call_${delta.index}`;
                   const previewKey = `${turns}:${id}:${name}`;
-                  if (streamedToolCallPreviews.has(previewKey)) return;
-                  streamedToolCallPreviews.add(previewKey);
 
                   let parsedArgs: Record<string, unknown> = {};
                   const rawArgs =
@@ -3087,8 +3179,19 @@ export async function createSession(opts: {
                     } catch {
                       // partial JSON chunks are expected during streaming
                     }
+
+                    if (!Object.keys(parsedArgs).length) {
+                      parsedArgs = extractPartialToolArgsPreview(name, rawArgs);
+                    }
                   }
 
+                  const score = Object.keys(parsedArgs).length + (rawArgs ? 1 : 0);
+                  const prevScore = streamedToolCallPreviewScores.get(previewKey) ?? 0;
+                  const shouldEmit = !streamedToolCallPreviews.has(previewKey) || score > prevScore;
+                  if (!shouldEmit) return;
+
+                  streamedToolCallPreviews.add(previewKey);
+                  streamedToolCallPreviewScores.set(previewKey, Math.max(prevScore, score));
                   void emitToolCall(id, name, parsedArgs, 'planned');
                 },
               };
@@ -3126,6 +3229,7 @@ export async function createSession(opts: {
                     },
                   }
                 );
+                noteStreamFallback('runtime-router', resp);
               } else {
                 const isLikelyAuthError = (errMsg: string): boolean => {
                   const lower = errMsg.toLowerCase();
@@ -3184,6 +3288,7 @@ export async function createSession(opts: {
                         },
                       }
                     );
+                    noteStreamFallback(target.name ?? 'default', resp);
                     break;
                   } catch (providerErr: any) {
                     const errMsg = String(providerErr?.message ?? providerErr ?? 'unknown error');
@@ -3209,6 +3314,10 @@ export async function createSession(opts: {
                 }
               }
             } // end if (!resp) — cache miss path
+
+            if (streamFallbackDiag && lastTurnDebug) {
+              lastTurnDebug.streamFallback = streamFallbackDiag;
+            }
 
             // Successful response resets overflow recovery budget.
             overflowCompactionAttempts = 0;

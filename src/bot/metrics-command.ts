@@ -72,6 +72,7 @@ export function metricsCommand(managed: ManagedLike): CmdResult {
     if (debug.fastLaneToolless) lines.push(`    Fast-lane toolless: on`);
     if (debug.fastLaneSlimTools) lines.push(`    Fast-lane slim: on`);
     if (debug.compactPrelude) lines.push(`    Compact prelude: on`);
+    if (debug.streamFallback) lines.push(`    Stream fallback: ${debug.streamFallback}`);
   }
 
   return { lines };

@@ -772,6 +772,26 @@ export class OpenAIClient {
     const seen5xxMessages: string[] = []; // Track 5xx error messages to detect deterministic failures
     let switchedToContentModeThisCall = false;
 
+    const fallbackToNonStream = async (
+      attempt: number,
+      reason: string,
+      detail?: Record<string, unknown>
+    ): Promise<ChatCompletionResponse> => {
+      const fallback = await this.chat({ ...opts, stream: false });
+      const priorMeta =
+        fallback && typeof (fallback as any).meta === 'object' ? (fallback as any).meta : {};
+      (fallback as any).meta = {
+        ...priorMeta,
+        stream_fallback: {
+          reason,
+          attempt: attempt + 1,
+          endpoint: this.endpoint,
+          ...(detail ?? {}),
+        },
+      };
+      return fallback;
+    };
+
     for (let attempt = 0; attempt < 3; attempt++) {
       let res: Response;
       try {
@@ -814,7 +834,7 @@ export class OpenAIClient {
       // HTTP 400 on stream → fall back to non-streaming (server doesn't support it)
       if (res.status === 400) {
         this.log('HTTP 400 on stream request, falling back to non-streaming');
-        return this.chat({ ...opts, stream: false });
+        return fallbackToNonStream(attempt, 'http_400', { status: 400 });
       }
 
       // HTTP 503 → retry with exponential backoff
@@ -884,7 +904,9 @@ export class OpenAIClient {
           this.log(
             `HTTP ${res.status} on stream request, falling back to non-streaming (attempt ${attempt + 1}/3)`
           );
-          return this.chat({ ...opts, stream: false });
+          return fallbackToNonStream(attempt, 'http_5xx_retries_exhausted', {
+            status: res.status,
+          });
         }
 
         const backoff = Math.pow(2, attempt + 1) * 1000;
@@ -963,7 +985,11 @@ export class OpenAIClient {
             } else {
               this.log(`read timeout with no data, retrying via non-streaming`);
             }
-            return this.chat({ ...opts, stream: false });
+            return fallbackToNonStream(attempt, 'stream_read_timeout', {
+              read_timeout_ms: readTimeout,
+              tokens_received: tokensReceived,
+              had_delta: sawDelta,
+            });
           }
 
           if (sawDelta) {
