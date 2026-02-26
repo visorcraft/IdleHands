@@ -193,3 +193,102 @@ export function extractGrepPattern(command: string): { pattern: string; paths: s
 
   return { pattern, paths };
 }
+
+/**
+ * Detect `cat file`, `head -N file`, `tail -N file` patterns used as
+ * substitutes for read_file. Returns a redirect message or null.
+ * Does NOT match `tail file | grep` (log tailing) — only pure file reads.
+ */
+export function detectCatHeadTailAsRead(command: string): string | null {
+  const cmd = String(command || '').trim();
+  if (!cmd) return null;
+
+  // Skip commands with pipes (these are grep/filter chains, not simple reads)
+  if (/\|/.test(cmd)) return null;
+
+  // cat FILE (possibly with | head at the end, but we already excluded pipes)
+  const catMatch = cmd.match(/^\s*cat\s+(\S+)\s*$/i);
+  if (catMatch) {
+    const filePath = catMatch[1].replace(/['"]$/g, '').replace(/^['"]/, '');
+    return (
+      `STOP: Do not use cat to read files. Use read_file instead:\n` +
+      `  read_file({ path: "${filePath}" })\n` +
+      `This is faster, tracked by the read budget, and avoids unnecessary exec calls.`
+    );
+  }
+
+  // head -N FILE or head -n N FILE
+  const headMatch = cmd.match(/^\s*head\s+(?:-n?\s*)?(\d+)\s+(\S+)\s*$/i);
+  if (headMatch) {
+    const limit = parseInt(headMatch[1], 10);
+    const filePath = headMatch[2].replace(/['"]$/g, '').replace(/^['"]/, '');
+    return (
+      `STOP: Do not use head to read files. Use read_file instead:\n` +
+      `  read_file({ path: "${filePath}", limit: ${limit} })\n` +
+      `This is faster, tracked by the read budget, and avoids unnecessary exec calls.`
+    );
+  }
+
+  // tail -N FILE (without pipes — pure tail reads)
+  const tailMatch = cmd.match(/^\s*tail\s+(?:-n?\s*)?(\d+)\s+(\S+)\s*$/i);
+  if (tailMatch) {
+    const filePath = tailMatch[2].replace(/['"]$/g, '').replace(/^['"]/, '');
+    return (
+      `STOP: Do not use tail to read files. Use read_file instead:\n` +
+      `  read_file({ path: "${filePath}" }) with search to find the section you need.\n` +
+      `This is faster, tracked by the read budget, and avoids unnecessary exec calls.`
+    );
+  }
+
+  return null;
+}
+
+/**
+ * Extract the test filter name from an exec command containing a test runner.
+ * Returns the filter string or null.
+ */
+export function extractTestFilter(command: string): string | null {
+  const cmd = String(command || '').trim();
+  if (!cmd) return null;
+
+  // php artisan test --filter=NAME or --filter NAME
+  const artisanMatch = cmd.match(/--filter[= ](\S+)/i);
+  if (artisanMatch) return artisanMatch[1];
+
+  // pytest -k "expression"
+  const pytestMatch = cmd.match(/pytest\s.*-k\s+["']?([^"'\s]+)/i);
+  if (pytestMatch) return pytestMatch[1];
+
+  // jest/vitest --testNamePattern or -t
+  const jestMatch = cmd.match(/(?:--testNamePattern|--testPathPattern|-t)\s+["']?([^"'\s]+)/i);
+  if (jestMatch) return jestMatch[1];
+
+  return null;
+}
+
+/**
+ * Extract the target file path from a tail/grep log-reading command.
+ * Returns the log file path or null if not a log-reading command.
+ */
+export function extractLogFilePath(command: string): string | null {
+  const cmd = String(command || '').trim();
+  if (!cmd) return null;
+
+  // Match tail -N FILE, grep PATTERN FILE where FILE looks like a log
+  const logPatterns = [
+    /\btail\s+(?:-[nf]?\s*)?(?:\d+\s+)?(\S*\.log\S*)/i,
+    /\bgrep\b[^|]*?(\S*\.log\S*)/i,
+    /\bcat\s+(\S*\.log\S*)/i,
+  ];
+
+  for (const re of logPatterns) {
+    const match = cmd.match(re);
+    if (match) {
+      const path = match[1].replace(/['"]$/g, '').replace(/^['"]/, '');
+      // Only match actual log files, not things like "grep log" matching the word
+      if (path.includes('.log')) return path;
+    }
+  }
+
+  return null;
+}
