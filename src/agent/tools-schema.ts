@@ -17,12 +17,22 @@ const int = (min?: number, max?: number) => ({
 
 const SCHEMA_CACHE = new Map<string, ToolSchema[]>();
 
+/**
+ * Tools that are read-only / lightweight — kept in the fast-lane slim schema.
+ * Everything else (write, edit, patch, insert, undo, spawn) is omitted.
+ */
+const FAST_LANE_TOOLS = new Set([
+  'read_file', 'read_files', 'list_dir', 'search_files', 'exec',
+  'vault_search',
+]);
+
 function cacheKey(opts?: {
   activeVaultTools?: boolean;
   passiveVault?: boolean;
   sysMode?: boolean;
   lspTools?: boolean;
   allowSpawnTask?: boolean;
+  slimFast?: boolean;
 }): string {
   return [
     opts?.activeVaultTools ? 'a1' : 'a0',
@@ -30,6 +40,7 @@ function cacheKey(opts?: {
     opts?.sysMode ? 's1' : 's0',
     opts?.lspTools ? 'l1' : 'l0',
     opts?.allowSpawnTask === false ? 'sp0' : 'sp1',
+    opts?.slimFast ? 'sf1' : 'sf0',
   ].join('|');
 }
 
@@ -40,6 +51,8 @@ export function buildToolsSchema(opts?: {
   mcpTools?: ToolSchema[];
   lspTools?: boolean;
   allowSpawnTask?: boolean;
+  /** When true, only include read-only/lightweight tools for fast-lane turns. */
+  slimFast?: boolean;
 }): ToolSchema[] {
   const key = cacheKey(opts);
   const canUseCache = !opts?.mcpTools?.length;
@@ -333,8 +346,13 @@ export function buildToolsSchema(opts?: {
     schemas.push(...opts.mcpTools);
   }
 
+  // Fast-lane slim: keep only read-only / lightweight tools to reduce token overhead.
+  const final = opts?.slimFast
+    ? schemas.filter((t) => FAST_LANE_TOOLS.has(t.function.name))
+    : schemas;
+
   if (canUseCache) {
-    SCHEMA_CACHE.set(key, schemas);
+    SCHEMA_CACHE.set(key, final);
   }
-  return schemas;
+  return final;
 }
