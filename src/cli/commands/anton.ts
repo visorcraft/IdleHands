@@ -24,6 +24,7 @@ import {
   formatToolLoopEvent,
   formatCompactionEvent,
   formatVerificationDetail,
+  formatStageUpdate,
 } from '../../anton/reporter.js';
 import type { AntonRunConfig, AntonProgressCallback } from '../../anton/types.js';
 import { projectDir } from '../../utils.js';
@@ -363,9 +364,9 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
     onVerification(taskText, verification) {
       emitAntonUpdate(ctx, formatVerificationDetail(taskText, verification));
     },
-    onStage(message) {
+    onStage(stage, message) {
       if (defaults.progress_events !== false) {
-        emitAntonUpdate(ctx, message);
+        emitAntonUpdate(ctx, formatStageUpdate(stage, message));
       }
     },
   };

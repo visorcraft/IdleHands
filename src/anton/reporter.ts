@@ -14,6 +14,7 @@ import type {
   AntonTaskFile,
   AntonVerificationResult,
   DetectedCommands,
+  AntonStage,
 } from './types.js';
 
 const formatDuration = formatDurationMs;
@@ -95,6 +96,24 @@ export function formatTaskHeartbeat(progress: AntonProgress): string {
   const tokenInfo = progress.taskTokens ? ` · ${formatTokens(progress.taskTokens)}` : '';
 
   return `⏳ Still working: ${task} (attempt ${attempt}${turnInfo}${urgency})\n${bar}\nElapsed: ${elapsed}${tokenInfo}${eta}`;
+}
+
+/**
+ * Format stage updates consistently across CLI and bot surfaces.
+ */
+export function formatStageUpdate(stage: AntonStage, message: string): string {
+  const label =
+    stage === 'planning'
+      ? '🧭 Planning'
+      : stage === 'runtime_preflight'
+        ? '⚙️ Pre-flight'
+        : stage === 'executing'
+          ? '🛠️ Executing'
+          : stage === 'verifying'
+            ? '🧪 Verifying'
+            : '✅ Complete';
+
+  return `${label}: ${message}`;
 }
 
 /**

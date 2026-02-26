@@ -263,6 +263,13 @@ export interface AntonProgress {
   taskTokens?: number;
 }
 
+export type AntonStage =
+  | 'planning'
+  | 'runtime_preflight'
+  | 'executing'
+  | 'verifying'
+  | 'complete';
+
 /** Callback interface for progress reporting. */
 export interface AntonProgressCallback {
   onTaskStart(task: AntonTask, attempt: number, progress: AntonProgress): void;
@@ -283,7 +290,7 @@ export interface AntonProgressCallback {
   ): void;
   /** Verification completed for a task attempt. */
   onVerification?(taskText: string, verification: AntonVerificationResult): void;
-  onStage?(message: string): void;
+  onStage?(stage: AntonStage, message: string): void;
 }
 
 // ─── Structured agent result ────────────────────────────────────

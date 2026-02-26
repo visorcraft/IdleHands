@@ -22,9 +22,9 @@ This file is now the **practical backlog**, not the original RFC implementation 
 ## 🎯 Active backlog (high-value, still relevant)
 
 ## 1) Progress lifecycle consistency
-- [ ] Standardize stage names emitted across long operations (`queued`, `planning`, `runtime_preflight`, `executing`, `verifying`, `complete`).
-- [ ] Ensure both Discord and Telegram surface the same stage transitions from shared UX events.
-- [ ] Add/refresh tests for stage ordering and heartbeat behavior.
+- [x] Standardize stage names emitted across long operations (`queued`, `planning`, `runtime_preflight`, `executing`, `verifying`, `complete`).
+- [x] Ensure both Discord and Telegram surface the same stage transitions from shared UX events.
+- [x] Add/refresh tests for stage ordering and heartbeat behavior.
 
 ## 2) Shared action dispatch hardening
 - [ ] Consolidate interactive action handling into one shared dispatch path (platform adapters only).
