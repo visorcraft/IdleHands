@@ -444,6 +444,31 @@ describe('OpenAIClient SSE parsing + malformed handling', () => {
     );
   });
 
+  it('annotates stream->non-stream fallback metadata on HTTP 400', async () => {
+    const client: any = new OpenAIClient('http://example.invalid/v1', undefined, false);
+
+    client.fetchWithConnTimeout = async () =>
+      new Response('bad request', {
+        status: 400,
+        statusText: 'Bad Request',
+      });
+
+    client.chat = async () => ({
+      id: 'fallback',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+
+    const resp = await client.chatStream({
+      model: 'fake',
+      messages: [{ role: 'user', content: 'u' }],
+    });
+
+    assert.equal((resp as any).meta?.stream_fallback?.reason, 'http_400');
+    assert.equal((resp as any).meta?.stream_fallback?.status, 400);
+    assert.equal((resp as any).meta?.stream_fallback?.attempt, 1);
+  });
+
   it('captures usage from usage-only SSE chunks (choices = [])', async () => {
     const client: any = new OpenAIClient('http://example.invalid/v1', undefined, false);
     const enc = new TextEncoder();
