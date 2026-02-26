@@ -92,6 +92,9 @@ export const CAUTIOUS_PATTERNS: Array<{ re: RegExp; reason: string }> = [
   { re: /\bgit\s+push\s+-f\b/, reason: 'git force push' },
   { re: /\bgit\s+reset\s+--hard\b/, reason: 'git reset --hard' },
   { re: /\bgit\s+clean\s+-[dfx]/, reason: 'git clean (removes untracked files)' },
+  { re: /\bgit\s+checkout\s+--\s+\S+/, reason: 'git checkout -- (discards local file changes)' },
+  { re: /\bgit\s+checkout\s+\./, reason: 'git checkout . (discards local changes)' },
+  { re: /\bgit\s+restore\b/, reason: 'git restore (can discard local changes)' },
 
   // Package management
   {

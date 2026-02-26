@@ -104,6 +104,9 @@ describe('CAUTIOUS patterns', () => {
     'git reset --hard HEAD~3',
     'git clean -fd',
     'git clean -dfx',
+    'git checkout -- src/index.ts',
+    'git checkout .',
+    'git restore --worktree --staged .',
     // Package management
     'apt install nginx',
     'apt-get install curl',
