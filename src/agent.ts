@@ -13,6 +13,9 @@ import {
   normalizeExecCommandForSig,
   detectSedAsRead,
   extractGrepPattern,
+  detectCatHeadTailAsRead,
+  extractTestFilter,
+  extractLogFilePath,
   readOnlyExecCacheable,
   withCachedExecObservationHint,
   withReplayedExecHint,
@@ -2628,6 +2631,12 @@ export async function createSession(opts: {
     // Widening grep pattern detection: track grep patterns across exec calls
     const grepPatternPaths = new Map<string, Set<string>>(); // grep pattern → set of paths searched
 
+    // Log-tail spiral detection: track tail/grep calls on the same log file
+    const logFileTailCounts = new Map<string, number>(); // log file path → tail call count
+
+    // Per-filter test run tracking: count test runs by filter name
+    const testRunCountsByFilter = new Map<string, number>(); // filter name → run count
+
     // identical tool call signature counts across this ask() run
     const sigCounts = new Map<string, number>();
     const toolNameByCallId = new Map<string, string>();
@@ -4132,6 +4141,53 @@ export async function createSession(opts: {
                   });
                 }
               }
+
+              // Detect cat/head/tail used as a substitute for read_file
+              const catRedirect = detectCatHeadTailAsRead(args.command);
+              if (catRedirect) {
+                await emitToolCall(callId, name, args);
+                await emitToolResult({
+                  id: callId,
+                  name,
+                  success: false,
+                  summary: 'use read_file instead',
+                  result: '',
+                });
+                return { id: callId, content: catRedirect };
+              }
+
+              // Log-tail spiral detection: track repeated tail/grep on same log file
+              const logPath = extractLogFilePath(args.command);
+              if (logPath) {
+                const count = (logFileTailCounts.get(logPath) ?? 0) + 1;
+                logFileTailCounts.set(logPath, count);
+                if (count >= 4) {
+                  messages.push({
+                    role: 'user' as const,
+                    content:
+                      `[system] You have read ${logPath} ${count} times. Stop tailing the log — ` +
+                      `review the error messages you already have and fix the root cause. ` +
+                      `If the error is unclear, read the relevant source file instead.`,
+                  });
+                }
+              }
+
+              // Per-filter test run tracking
+              const testFilter = extractTestFilter(args.command);
+              if (testFilter) {
+                const count = (testRunCountsByFilter.get(testFilter) ?? 0) + 1;
+                testRunCountsByFilter.set(testFilter, count);
+                if (count >= 5) {
+                  messages.push({
+                    role: 'user' as const,
+                    content:
+                      `[system] You have run the test "${testFilter}" ${count} times. ` +
+                      `STOP re-running the same failing test. Step back, analyze the error message, ` +
+                      `and fix the root cause before running the test again.`,
+                  });
+                }
+              }
+
             }
             if (isMutationTool(name) && typeof args.path === 'string') {
               const absPath = args.path.startsWith('/')
