@@ -45,6 +45,7 @@ import {
   budgetCommand,
   diffCommand,
   costCommand,
+  metricsCommand,
   vaultCommand,
   agentCommand,
   agentsCommand,
@@ -421,6 +422,11 @@ export async function handleTextCommand(
 
   if (content === '/cost') {
     await send(costCommand(m));
+    return true;
+  }
+
+  if (content === '/metrics') {
+    await send(metricsCommand(m));
     return true;
   }
 

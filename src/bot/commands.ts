@@ -29,6 +29,7 @@ import {
   budgetCommand,
   diffCommand,
   costCommand,
+  metricsCommand,
   dirShowCommand,
   approvalShowCommand,
   approvalSetCommand,
@@ -469,6 +470,17 @@ export async function handleCheckpoints({ ctx, sessions }: CommandContext): Prom
     return;
   }
   await reply(ctx, checkpointsCommand(managed as unknown as ManagedLike));
+}
+
+export async function handleMetrics({ ctx, sessions }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const managed = sessions.get(chatId);
+  if (!managed) {
+    await ctx.reply('No active session.');
+    return;
+  }
+  await reply(ctx, metricsCommand(managed as unknown as ManagedLike));
 }
 
 export async function handleCost({ ctx, sessions }: CommandContext): Promise<void> {
