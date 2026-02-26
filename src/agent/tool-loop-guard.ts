@@ -345,3 +345,37 @@ async function getResourceVersion(absPath: string): Promise<string | null> {
 export function stableToolArgsForTests(v: unknown): string {
   return stableStringify(v);
 }
+
+/**
+ * Generate parameter mutation hints for read-only tools caught in loops.
+ * Helps the model understand how to read different content instead of repeating.
+ */
+export function getReadLoopHints(
+  toolName: string,
+  args: Record<string, unknown>
+): string[] {
+  const hints: string[] = [];
+
+  if (toolName === "read_file" || toolName === "read_files") {
+    const hasOffset = "offset" in args && args.offset !== undefined;
+    const hasSearch = "search" in args && args.search !== undefined;
+    const limit = typeof args.limit === "number" ? args.limit : 100;
+    const currentOffset = typeof args.offset === "number" ? args.offset : 1;
+
+    if (!hasOffset && !hasSearch) {
+      hints.push(`Use offset=${limit + 1} to read the next section`);
+      hints.push(`Use search="keyword" to jump to specific content`);
+    } else if (hasOffset && !hasSearch) {
+      hints.push(`Increase offset to ${currentOffset + limit} for the next section`);
+      hints.push(`Or use search="keyword" to find specific content`);
+    }
+  } else if (toolName === "list_dir") {
+    hints.push(`Use recursive=true if you need subdirectory contents`);
+    hints.push(`Or filter results with grep/exec instead of re-reading`);
+  } else if (toolName === "search_files") {
+    hints.push(`Adjust the pattern or path to find different results`);
+    hints.push(`Increase max_results if truncated`);
+  }
+
+  return hints;
+}
