@@ -98,6 +98,7 @@ import { normalizeApprovalMode } from './shared/config-utils.js';
 import { collectSnapshot } from './sys/context.js';
 import { ToolError, ValidationError } from './tools/tool-error.js';
 import * as tools from './tools.js';
+import { EditTransaction } from './tools/transaction.js';
 import type {
   ChatMessage,
   ConfirmationProvider,
@@ -240,6 +241,11 @@ export type AgentSession = {
     instruction: UserContent,
     hooks?: ((t: string) => void) | AgentHooks
   ) => Promise<AgentResult>;
+  rollbackLastTurnEdits: () => Promise<{
+    ok: boolean;
+    error?: string;
+    results?: Array<{ path: string; ok: boolean; error?: string }>;
+  }>;
   rollback: () => { preview: string; removedMessages: number } | null;
   listCheckpoints: () => Array<{ messageCount: number; createdAt: number; preview: string }>;
   setModel: (name: string) => void;
@@ -829,6 +835,7 @@ export async function createSession(opts: {
   let inFlight: AbortController | null = null;
   let initialConnectionProbeDone = false;
   let lastEditedPath: string | undefined;
+  let lastTurnTransaction: EditTransaction | undefined;
 
   // Plan mode state (Phase 8)
   let planSteps: PlanStep[] = [];
@@ -3853,6 +3860,9 @@ export async function createSession(opts: {
                 ? args.path
                 : path.resolve(projectDir, args.path);
 
+              // Track in turn transaction for potential atomic rollback.
+              turnTransaction.track(absPath);
+
               // ── Pre-dispatch: block edits to files in a mutation spiral ──
               if (fileMutationBlocked.has(absPath)) {
                 const basename = path.basename(absPath);
@@ -4410,6 +4420,7 @@ export async function createSession(opts: {
           };
 
           const results: Array<{ id: string; content: string }> = [];
+          const turnTransaction = new EditTransaction();
           let invalidArgsThisTurn = false;
 
           // Helper: catch tool errors but re-throw AgentLoopBreak (those must break the outer loop)
@@ -4591,6 +4602,12 @@ export async function createSession(opts: {
                   'Use that earlier tool result; no new execution was performed.',
               });
             }
+          }
+
+          // Store the turn transaction for potential post-turn rollback.
+          if (turnTransaction.hasChanges) {
+            turnTransaction.commit();
+            lastTurnTransaction = turnTransaction;
           }
 
           // Bail immediately if cancelled during tool execution
@@ -4899,6 +4916,16 @@ export async function createSession(opts: {
       return currentContextTokens > 0 ? currentContextTokens : estimateTokensFromMessages(messages);
     },
     ask,
+    rollbackLastTurnEdits: async () => {
+      if (!lastTurnTransaction || !lastTurnTransaction.hasChanges) {
+        return { ok: false, error: 'No file edits to roll back.' };
+      }
+      const tx = lastTurnTransaction;
+      lastTurnTransaction = undefined;
+      const callCtx = { cwd: projectDir, noConfirm: true, dryRun: false };
+      const results = await tx.rollback(callCtx as any);
+      return { ok: true, results };
+    },
     rollback: () => {
       const cp = conversationBranch.rollback();
       if (!cp) return null;
