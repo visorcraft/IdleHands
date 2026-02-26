@@ -719,3 +719,87 @@ export function enforceContextBudgetEnhanced(opts: {
     },
   };
 }
+
+// ============================================================================
+// Rolling Compression of Old Tool Results
+// ============================================================================
+
+/**
+ * Compress an exec tool result, preserving rc and err fields intact.
+ * Only the `out` field is compressed via compressToolResult.
+ * Falls back to generic compression if content is not valid exec JSON.
+ */
+export function compressExecResult(content: string, maxChars = 1500): string {
+  try {
+    const parsed = JSON.parse(content);
+    if (typeof parsed === 'object' && parsed !== null && 'rc' in parsed) {
+      const compressed = {
+        rc: parsed.rc,
+        out: typeof parsed.out === 'string'
+          ? compressToolResult(parsed.out, maxChars - 200)
+          : parsed.out,
+        err: parsed.err,
+      };
+      return JSON.stringify(compressed);
+    }
+  } catch {
+    // Not valid JSON — fall through to generic compression
+  }
+  return compressToolResult(content, maxChars);
+}
+
+const ROLLING_TARGET_TOOLS = new Set(['read_file', 'read_files', 'exec']);
+const ROLLING_MARKER = '\n[rolling-compressed]';
+
+/**
+ * Rolling compression: shrink old read_file/read_files/exec tool results
+ * beyond a "fresh window" of recent messages. Runs every turn before
+ * enforceContextBudget to slow context growth.
+ *
+ * Pure string manipulation — zero LLM cost.
+ */
+export function rollingCompressToolResults(opts: {
+  messages: ChatMessage[];
+  freshCount: number;
+  maxChars: number;
+  toolNameByCallId: Map<string, string>;
+}): { messages: ChatMessage[]; compressedCount: number; charsSaved: number } {
+  const { freshCount, maxChars, toolNameByCallId } = opts;
+  const messages = [...opts.messages];
+  const cutoff = messages.length - freshCount;
+  let compressedCount = 0;
+  let charsSaved = 0;
+
+  for (let i = 0; i < cutoff; i++) {
+    const msg = messages[i];
+    if (msg.role !== 'tool') continue;
+
+    const content = (msg as any).content;
+    if (typeof content !== 'string') continue;
+
+    // Skip already-compressed results
+    if (content.endsWith('[rolling-compressed]')) continue;
+
+    // Skip if already small enough
+    if (content.length <= maxChars) continue;
+
+    // Only target the exempted tools
+    const toolName = toolNameByCallId.get((msg as any).tool_call_id ?? '') ?? '';
+    if (!ROLLING_TARGET_TOOLS.has(toolName)) continue;
+
+    const before = content.length;
+    const compressed = toolName === 'exec'
+      ? compressExecResult(content, maxChars)
+      : compressToolResult(content, maxChars);
+
+    messages[i] = {
+      ...msg,
+      content: compressed + ROLLING_MARKER,
+    } as ChatMessage;
+
+    charsSaved += before - (compressed.length + ROLLING_MARKER.length);
+    compressedCount++;
+  }
+
+  return { messages, compressedCount, charsSaved };
+}
