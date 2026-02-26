@@ -245,7 +245,10 @@ export class ToolLoopGuard {
     if (!filePath) return null;
 
     const absPath = filePath.startsWith('/') ? filePath : path.resolve(cwd, filePath);
-    const cached = this.fileContentCache.get(absPath);
+    const offset = args.offset != null ? Number(args.offset) : 0;
+    const limit = args.limit != null ? Number(args.limit) : 0;
+    const cacheKey = `${absPath}|${offset}|${limit}`;
+    const cached = this.fileContentCache.get(cacheKey);
     if (!cached) return null;
 
     // Check if file has changed since we cached it
@@ -253,11 +256,11 @@ export class ToolLoopGuard {
       const stat = await fs.stat(absPath);
       if (stat.mtimeMs !== cached.mtime || stat.size !== cached.size) {
         // File changed — invalidate cache
-        this.fileContentCache.delete(absPath);
+        this.fileContentCache.delete(cacheKey);
         return null;
       }
     } catch {
-      this.fileContentCache.delete(absPath);
+      this.fileContentCache.delete(cacheKey);
       return null;
     }
 
@@ -284,10 +287,13 @@ export class ToolLoopGuard {
     if (!filePath) return;
 
     const absPath = filePath.startsWith('/') ? filePath : path.resolve(cwd, filePath);
+    const offset = args.offset != null ? Number(args.offset) : 0;
+    const limit = args.limit != null ? Number(args.limit) : 0;
+    const cacheKey = `${absPath}|${offset}|${limit}`;
 
     try {
       const stat = await fs.stat(absPath);
-      this.fileContentCache.set(absPath, {
+      this.fileContentCache.set(cacheKey, {
         content,
         mtime: stat.mtimeMs,
         size: stat.size,
@@ -302,7 +308,12 @@ export class ToolLoopGuard {
    * Call this after any mutation tool (edit_file, write_file, etc.) completes.
    */
   invalidateFileContentCache(absPath: string): void {
-    this.fileContentCache.delete(absPath);
+    // Clear all cached entries for this file (any offset/limit combo)
+    for (const key of this.fileContentCache.keys()) {
+      if (key === absPath || key.startsWith(absPath + '|')) {
+        this.fileContentCache.delete(key);
+      }
+    }
   }
 
   async getReadCacheReplay(
