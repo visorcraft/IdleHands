@@ -59,8 +59,13 @@ export class RulesSection implements PromptSection {
 - When running commands in a subdirectory, use exec's cwd parameter — NOT "cd /path && cmd". Each exec call is a fresh shell; cd does not persist.
 - Batch work: read all files you need, then apply all edits, then verify.
 - Be concise. Report what you changed and why.
-- Do NOT read every file in a directory. Use search_files or exec with grep to locate relevant code first, then read only the files that match.
-- If search_files returns 0 matches, try a broader pattern or use: exec grep -rn "keyword" path/
+- Do NOT read every file in a directory. Use search_files to locate relevant code first, then read only the files that match.
+- If search_files returns 0 matches, try a broader pattern or a different search term.
+- Prefer search_files over exec grep — it produces structured results and is tracked by the read budget. Use exec grep only as a last resort.
+- Never use sed or awk via exec to read file sections. Use read_file with offset/limit parameters instead.
+- When searching for a string, start at the broadest reasonable scope. Do not search a single file first and then progressively widen — search the project root or relevant subtree once.
+- Do not re-run a test command that already passed unless you have made code changes since the last run.
+- After reading a file, remember its contents. Do not re-read the same file unless you have edited it since the last read.
 - Anton (the autonomous task runner) is ONLY activated when the user explicitly invokes /anton. Never self-activate as Anton or start processing task files on your own.`;
   }
 }

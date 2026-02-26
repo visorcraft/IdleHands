@@ -15,6 +15,7 @@ import {
   type ToolLoopDetectionResult,
   type ToolCallRecord,
 } from './tool-loop-detection.js';
+import { normalizeExecCommandForSig } from './exec-helpers.js';
 
 type ReadCacheEntry = {
   content: string;
@@ -49,9 +50,17 @@ export type PreparedTurn = {
   parsedArgsByCallId: Map<string, Record<string, unknown>>;
 };
 
+type FileContentCacheEntry = {
+  content: string;
+  mtime: number;
+  size: number;
+};
+
 export class ToolLoopGuard {
   private readonly loopState = createToolLoopState();
   private readonly readCache = new Map<string, ReadCacheEntry>();
+  /** Per-file content cache keyed by absolute path — survives non-consecutive reads. */
+  private readonly fileContentCache = new Map<string, FileContentCacheEntry>();
   private readonly config: ToolLoopConfig;
   private readonly recordByCallId = new Map<string, ToolCallRecord>();
   private readonly telemetry: ToolLoopTelemetry = {
@@ -95,6 +104,16 @@ export class ToolLoopGuard {
   }
 
   computeSignature(toolName: string, args: Record<string, unknown>): string {
+    // For exec calls, normalize the command by stripping trailing output-filter
+    // pipes so that `cmd 2>&1 | tail -15` and `cmd 2>&1 | tail -50` produce
+    // the same signature for loop detection purposes.
+    if (toolName === 'exec' && typeof args.command === 'string') {
+      const normalized = normalizeExecCommandForSig(args.command);
+      if (normalized !== args.command) {
+        const normalizedArgs = { ...args, command: normalized };
+        return hashToolCall(toolName, normalizedArgs).signature;
+      }
+    }
     return hashToolCall(toolName, args).signature;
   }
 
@@ -207,6 +226,83 @@ export class ToolLoopGuard {
 
   resetReadFileFailureCount(): void {
     this.telemetry.readFileFailures = 0;
+  }
+
+  /**
+   * Check if a file has been read before and is unchanged (by mtime/size).
+   * Works across non-consecutive reads — unlike the signature-based readCache
+   * which only catches back-to-back identical calls.
+   * Returns cached content with a hint, or null if not cached/stale.
+   */
+  async getFileContentCache(
+    toolName: string,
+    args: Record<string, unknown>,
+    cwd: string
+  ): Promise<string | null> {
+    if (toolName !== 'read_file') return null;
+
+    const filePath = typeof args.path === 'string' ? args.path.trim() : '';
+    if (!filePath) return null;
+
+    const absPath = filePath.startsWith('/') ? filePath : path.resolve(cwd, filePath);
+    const cached = this.fileContentCache.get(absPath);
+    if (!cached) return null;
+
+    // Check if file has changed since we cached it
+    try {
+      const stat = await fs.stat(absPath);
+      if (stat.mtimeMs !== cached.mtime || stat.size !== cached.size) {
+        // File changed — invalidate cache
+        this.fileContentCache.delete(absPath);
+        return null;
+      }
+    } catch {
+      this.fileContentCache.delete(absPath);
+      return null;
+    }
+
+    this.telemetry.readCacheHits += 1;
+    return (
+      `[CACHE HIT] File unchanged since previous read — returning cached content. Do NOT re-read this file unless you edit it first.\n\n` +
+      cached.content
+    );
+  }
+
+  /**
+   * Store file content in the per-file cache after a successful read.
+   */
+  async storeFileContentCache(
+    toolName: string,
+    args: Record<string, unknown>,
+    cwd: string,
+    content: string
+  ): Promise<void> {
+    if (toolName !== 'read_file') return;
+    if (content.startsWith('ERROR:')) return;
+
+    const filePath = typeof args.path === 'string' ? args.path.trim() : '';
+    if (!filePath) return;
+
+    const absPath = filePath.startsWith('/') ? filePath : path.resolve(cwd, filePath);
+
+    try {
+      const stat = await fs.stat(absPath);
+      this.fileContentCache.set(absPath, {
+        content,
+        mtime: stat.mtimeMs,
+        size: stat.size,
+      });
+    } catch {
+      // File doesn't exist or unreadable — don't cache
+    }
+  }
+
+  /**
+   * Invalidate file content cache for a path that was just edited.
+   * Call this after any mutation tool (edit_file, write_file, etc.) completes.
+   */
+  invalidateFileContentCache(absPath: string): void {
+    this.fileContentCache.delete(absPath);
   }
 
   async getReadCacheReplay(
