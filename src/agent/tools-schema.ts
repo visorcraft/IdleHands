@@ -109,7 +109,7 @@ export function buildToolsSchema(opts?: {
       function: {
         name: 'write_file',
         description:
-          'Write file (atomic, backup). Existing non-empty files require overwrite=true (or force=true).',
+          'Write file (atomic, backup). Prefer edit_range/apply_patch for edits to existing files; use write_file mainly for new files or intentional full rewrites. Existing non-empty files require overwrite=true (or force=true).',
         parameters: obj({ path: str(), content: str(), overwrite: bool(), force: bool() }, [
           'path',
           'content',
