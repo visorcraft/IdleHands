@@ -654,7 +654,9 @@ export async function createSession(opts: {
     if (!text.trim()) return out;
 
     const pickString = (key: string): string | undefined => {
-      const m = text.match(new RegExp(`"${key}"\\s*:\\s*"([^\\n\"]*)`));
+      // Require a closing quote to avoid noisy partials like "/home" while the
+      // model is still streaming a longer path ("/home/thomas/...").
+      const m = text.match(new RegExp(`"${key}"\\s*:\\s*"([^\\n\"]*)"`));
       return m?.[1];
     };
 
@@ -3190,6 +3192,11 @@ export async function createSession(opts: {
 
                   const score = Object.keys(parsedArgs).length + (rawArgs ? 1 : 0);
                   const prevScore = streamedToolCallPreviewScores.get(previewKey) ?? 0;
+
+                  // Don't spam placeholder planned events with empty args while chunks
+                  // are still incomplete; wait for either useful fields or final snapshot.
+                  if (score <= 0 && !delta.done) return;
+
                   const shouldEmit = !streamedToolCallPreviews.has(previewKey) || score > prevScore;
                   if (!shouldEmit) return;
 
