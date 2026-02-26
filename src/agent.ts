@@ -60,7 +60,7 @@ import { LeakDetector } from './security/leak-detector.js';
 import { PromptGuard } from './security/prompt-guard.js';
 import { ResponseCache } from './agent/response-cache.js';
 import { resilientCall } from './agent/resilient-provider.js';
-import { ToolLoopGuard } from './agent/tool-loop-guard.js';
+import { ToolLoopGuard, getReadLoopHints } from './agent/tool-loop-guard.js';
 import { CaptureManager } from './agent/capture.js';
 import { ClientPool } from './agent/client-pool.js';
 import { ConversationBranch } from './agent/conversation-branch.js';
@@ -3924,7 +3924,7 @@ export async function createSession(opts: {
               messages.push({
                 role: 'user' as const,
                 content:
-                  `[system] Tool loop detected: ${toolName} called ${sigCount}x with identical arguments.\n` +
+                  `[system] ⛔ STOP - Tool loop detected: ${toolName} called ${sigCount}x with identical arguments.\n` +
                   `args=${argsPreview}\n\n` +
                   `The same edit is being attempted repeatedly. This usually means:\n` +
                   `1. The edit already succeeded - verify by reading the file\n` +
@@ -3943,8 +3943,8 @@ export async function createSession(opts: {
               messages.push({
                 role: 'user' as const,
                 content:
-                  `[system] Warning: ${toolName} has been called ${sigCount} times with identical arguments. ` +
-                  `If this edit keeps failing, read the target file to verify its current state before trying again.`,
+                  `[system] ⚠️ Warning: ${toolName} has been called ${sigCount} times with identical arguments. ` +
+                  `If this edit keeps failing, read the target file to verify its current state before trying again. Next identical call will trigger recovery mode.`,
               } as ChatMessage);
             }
           }
@@ -3960,7 +3960,7 @@ export async function createSession(opts: {
               messages.push({
                 role: 'user' as const,
                 content:
-                  '[system] Tool loop detected. Tools disabled. Use existing results for next step.',
+                  '[system] 🛑 Tool loop detected. Tools disabled for this turn. Analyze the situation using existing results and explain what went wrong before continuing.',
               });
 
               await emitTurnEnd({
@@ -4472,11 +4472,22 @@ export async function createSession(opts: {
             }
 
             // Append a hint when a read-only tool is called consecutively with
-            // identical arguments — the model may not realize the content hasn't changed.
+            // identical arguments — the model may not realize the content has not changed.
             if (isReadOnlyToolDynamic(name)) {
               const consec = consecutiveCounts.get(sig) ?? 0;
               if (consec >= 2) {
-                content += `\n\n[WARNING: You have read this exact same resource ${consec}x consecutively with identical arguments. The content has NOT changed. Do NOT read it again. Use the information above and move on to the next step.]`;
+                const argsObj = toolLoopGuard.parseArgs(tc.function?.arguments ?? "{}");
+                const hints = getReadLoopHints(name, argsObj);
+                const hintBlock = hints.length > 0 
+                  ? `\n\nTo read different content, try:\n${hints.map(h => `- ${h}`).join("\n")}`
+                  : "";
+                
+                if (consec >= 4) {
+                  // Critical: disable the tool temporarily
+                  content = `Error: This exact ${name} call has been repeated ${consec} times with identical arguments and results. The tool is temporarily disabled. Use the information you already have, or try a different approach.${hintBlock}`;
+                } else {
+                  content += `\n\n[WARNING: You have read this exact same resource ${consec}x consecutively with identical arguments. The content has NOT changed. Do NOT read it again. Use the information above and move on to the next step.]${hintBlock}`;
+                }
               }
             }
 
