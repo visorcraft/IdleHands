@@ -2387,9 +2387,11 @@ export async function createSession(opts: {
     const routeRuntimeFallbackModels = (primaryRoute?.fallbackModels ?? []).filter((m) =>
       runtimeModelIds.has(m)
     );
-    const routeApiFallbackModels = (primaryRoute?.fallbackModels ?? []).filter(
-      (m) => !runtimeModelIds.has(m)
-    );
+    const apiProviderTargets = turnRoute.providerTargets.map((target) => ({
+      ...target,
+      fallbackModels: (target.fallbackModels ?? []).filter((m) => !runtimeModelIds.has(m)),
+    }));
+    const routeApiFallbackModels = apiProviderTargets[0]?.fallbackModels ?? [];
 
     const primaryUsesRuntimeModel = !!primaryRoute?.model && runtimeModelIds.has(primaryRoute.model);
     const fastLaneToolless =
@@ -3006,47 +3008,93 @@ export async function createSession(opts: {
                   }
                 );
               } else {
-                const routeEndpoint = primaryRoute?.endpoint;
-                const activeClient = getClientForEndpoint(routeEndpoint);
-                const endpointKey = routeEndpoint ? normalizeEndpoint(routeEndpoint) : undefined;
-                if (endpointKey && !probedEndpoints.has(endpointKey)) {
-                  if (typeof (activeClient as any).probeConnection === 'function') {
-                    try {
-                      await (activeClient as any).probeConnection();
-                    } catch {
-                      // best-effort: if probe fails we still try the call
+                const isLikelyAuthError = (errMsg: string): boolean => {
+                  const lower = errMsg.toLowerCase();
+                  return (
+                    lower.includes('refresh_token_reused') ||
+                    lower.includes('missing bearer') ||
+                    lower.includes('missing api key') ||
+                    lower.includes('invalid api key') ||
+                    lower.includes('authentication failed') ||
+                    lower.includes('unauthorized') ||
+                    lower.includes('forbidden') ||
+                    lower.includes('invalid token')
+                  );
+                };
+
+                const providerFailures: string[] = [];
+                for (const target of apiProviderTargets.length
+                  ? apiProviderTargets
+                  : [{
+                      name: primaryRoute?.name ?? 'default',
+                      endpoint: primaryRoute?.endpoint,
+                      model: primaryRoute?.model ?? model,
+                      fallbackModels: routeApiFallbackModels,
+                    }]) {
+                  const routeEndpoint = target.endpoint;
+                  const activeClient = getClientForEndpoint(routeEndpoint);
+                  const endpointKey = routeEndpoint ? normalizeEndpoint(routeEndpoint) : undefined;
+                  if (endpointKey && !probedEndpoints.has(endpointKey)) {
+                    if (typeof (activeClient as any).probeConnection === 'function') {
+                      try {
+                        await (activeClient as any).probeConnection();
+                      } catch {
+                        // best-effort: if probe fails we still try the call
+                      }
+                      probedEndpoints.add(endpointKey);
                     }
-                    probedEndpoints.add(endpointKey);
+                  }
+
+                  const routeModel = target.model || model;
+                  const modelFallbackMap: Record<string, string[]> = {};
+                  if (target.fallbackModels?.length) {
+                    modelFallbackMap[routeModel] = target.fallbackModels;
+                  }
+
+                  try {
+                    resp = await resilientCall(
+                      [
+                        {
+                          name: target.name ?? 'default',
+                          execute: (m: string) =>
+                            activeClient.chatStream({ ...chatOptsBase, model: m }),
+                        },
+                      ],
+                      routeModel,
+                      {
+                        maxRetries: 0,
+                        modelFallbacks: modelFallbackMap,
+                        onRetry: (info) => {
+                          if (cfg.verbose) {
+                            console.error(
+                              `[routing] retry: provider=${info.provider} model=${info.model} attempt=${info.attempt}/${info.maxAttempts} reason=${info.reason}`
+                            );
+                          }
+                        },
+                      }
+                    );
+                    break;
+                  } catch (providerErr: any) {
+                    const errMsg = String(providerErr?.message ?? providerErr ?? 'unknown error');
+                    const compactErr = errMsg.replace(/\s+/g, ' ').trim();
+                    providerFailures.push(`${target.name}: ${compactErr}`);
+
+                    if (cfg.verbose && isLikelyAuthError(errMsg)) {
+                      console.warn(
+                        `[routing] auth/provider failure on ${target.name}; trying next provider fallback`
+                      );
+                    }
+
+                    if (isContextWindowExceededError(providerErr)) {
+                      throw providerErr;
+                    }
                   }
                 }
 
-                const routeModel = primaryRoute?.model ?? model;
-                if (routeApiFallbackModels.length > 0) {
-                  const modelFallbackMap: Record<string, string[]> = {
-                    [routeModel]: routeApiFallbackModels,
-                  };
-                  resp = await resilientCall(
-                    [
-                      {
-                        name: primaryRoute?.name ?? 'default',
-                        execute: (m: string) => activeClient.chatStream({ ...chatOptsBase, model: m }),
-                      },
-                    ],
-                    routeModel,
-                    {
-                      maxRetries: 1,
-                      modelFallbacks: modelFallbackMap,
-                      onRetry: (info) => {
-                        if (cfg.verbose) {
-                          console.error(
-                            `[routing] retry: provider=${info.provider} model=${info.model} attempt=${info.attempt}/${info.maxAttempts} reason=${info.reason}`
-                          );
-                        }
-                      },
-                    }
+                if (!resp) {
+                  throw new Error(
+                    `All routed providers failed for this turn. ${providerFailures.join(' | ')}`
                   );
-                } else {
-                  resp = await activeClient.chatStream({ ...chatOptsBase, model: routeModel });
                 }
               }
             } // end if (!resp) — cache miss path
@@ -3976,6 +4024,7 @@ export async function createSession(opts: {
             let content = '';
             let reusedCachedReadOnlyExec = false;
             let reusedCachedReadTool = false;
+            let toolFallbackNote: string | null = null;
 
             if (name === 'exec' && repeatedReadOnlyExecSigs.has(sig)) {
               const cached = execObservationCacheBySig.get(sig);
@@ -4022,22 +4071,96 @@ export async function createSession(opts: {
                   value = await builtInFn(callCtx as any, args);
                 } catch (err: any) {
                   const msg = String(err?.message ?? err ?? '');
-                  const isWriteRefusal =
-                    name === 'write_file' &&
-                    !args?.overwrite &&
-                    !args?.force &&
-                    /write_file:\s*refusing to overwrite existing non-empty file/i.test(msg);
 
-                  if (!isWriteRefusal) throw err;
+                  // Fallback #1: edit_file mismatch -> targeted edit_range based on closest-match hint.
+                  const isEditMismatch =
+                    name === 'edit_file' && /edit_file:\s*old_text not found/i.test(msg);
+                  if (isEditMismatch && typeof args?.path === 'string') {
+                    const best = msg.match(/Closest match at line\s+(\d+)\s*\((\d+)% similarity\)/i);
+                    const bestLine = best ? Number.parseInt(best[1], 10) : NaN;
+                    const similarity = best ? Number.parseInt(best[2], 10) : NaN;
+                    const oldTextForRange = String(args?.old_text ?? '');
+                    const oldLineCount = Math.max(1, oldTextForRange.split(/\r?\n/).length);
+                    const endLine = Number.isFinite(bestLine)
+                      ? bestLine + oldLineCount - 1
+                      : Number.NaN;
+                    const editRangeFn = (tools as any)['edit_range'] as Function | undefined;
 
-                  const retryArgs = { ...(args as Record<string, unknown>), overwrite: true };
-                  if (cfg.verbose) {
-                    console.warn(
-                      '[write_file] auto-retrying with overwrite=true after explicit overwrite refusal'
-                    );
+                    if (
+                      editRangeFn &&
+                      Number.isFinite(bestLine) &&
+                      Number.isFinite(endLine) &&
+                      Number.isFinite(similarity) &&
+                      similarity >= 70
+                    ) {
+                      const fallbackArgs = {
+                        path: args.path,
+                        start_line: bestLine,
+                        end_line: endLine,
+                        replacement: args.new_text,
+                      };
+                      if (cfg.verbose) {
+                        console.warn(
+                          `[edit_file] auto-fallback to edit_range at ${bestLine}-${endLine} (${similarity}% similarity)`
+                        );
+                      }
+                      value = await editRangeFn(callCtx as any, fallbackArgs);
+                      args = fallbackArgs;
+                      toolFallbackNote = 'auto edit_range fallback';
+                    } else {
+                      throw err;
+                    }
+                  } else {
+                    const isWriteRefusal =
+                      name === 'write_file' &&
+                      !args?.overwrite &&
+                      !args?.force &&
+                      /write_file:\s*refusing to overwrite existing non-empty file/i.test(msg);
+
+                    if (!isWriteRefusal) throw err;
+
+                    // Fallback #2 (preferred): rewrite existing file via edit_range first.
+                    const editRangeFn = (tools as any)['edit_range'] as Function | undefined;
+                    let usedEditRangeFallback = false;
+                    if (editRangeFn && typeof args?.path === 'string') {
+                      try {
+                        const absWritePath = args.path.startsWith('/')
+                          ? args.path
+                          : path.resolve(projectDir, args.path);
+                        const curText = await fs.readFile(absWritePath, 'utf8');
+                        const totalLines = Math.max(1, curText.split(/\r?\n/).length);
+                        const fallbackArgs = {
+                          path: args.path,
+                          start_line: 1,
+                          end_line: totalLines,
+                          replacement: args.content,
+                        };
+                        if (cfg.verbose) {
+                          console.warn(
+                            `[write_file] auto-fallback to edit_range for existing file (${totalLines} lines)`
+                          );
+                        }
+                        value = await editRangeFn(callCtx as any, fallbackArgs);
+                        args = fallbackArgs;
+                        toolFallbackNote = 'auto edit_range fallback';
+                        usedEditRangeFallback = true;
+                      } catch {
+                        // fall through to explicit overwrite retry below
+                      }
+                    }
+
+                    if (!usedEditRangeFallback) {
+                      const retryArgs = { ...(args as Record<string, unknown>), overwrite: true };
+                      if (cfg.verbose) {
+                        console.warn(
+                          '[write_file] auto-retrying with overwrite=true after explicit overwrite refusal'
+                        );
+                      }
+                      value = await builtInFn(callCtx as any, retryArgs);
+                      args = retryArgs;
+                      toolFallbackNote = 'auto overwrite fallback';
+                    }
                   }
-                  value = await builtInFn(callCtx as any, retryArgs);
-                  args = retryArgs;
                 }
 
                 content = typeof value === 'string' ? value : JSON.stringify(value);
@@ -4144,6 +4267,9 @@ export async function createSession(opts: {
             let summary = reusedCachedReadOnlyExec
               ? 'cached read-only exec observation (unchanged)'
               : toolResultSummary(name, args, content, true);
+            if (toolFallbackNote) {
+              summary = `${summary} (${toolFallbackNote})`;
+            }
             const resultEvent: ToolResultEvent = {
               id: callId,
               name,
