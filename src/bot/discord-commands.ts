@@ -46,6 +46,7 @@ import {
   diffCommand,
   costCommand,
   metricsCommand,
+  mcpDiscoverCommand,
   vaultCommand,
   agentCommand,
   agentsCommand,
@@ -427,6 +428,11 @@ export async function handleTextCommand(
 
   if (content === '/metrics') {
     await send(metricsCommand(m));
+    return true;
+  }
+
+  if (content === '/mcp_discover') {
+    await send(await mcpDiscoverCommand(m));
     return true;
   }
 
