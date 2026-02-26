@@ -45,6 +45,11 @@ import {
   handleSubAgents,
   handleChanges,
   handleUndo,
+  handleRollback,
+  handleCheckpoints,
+  handleBudget,
+  handleDiff,
+  handleCost,
   handleVault,
   handleAnton,
   handleAgent,
@@ -422,6 +427,11 @@ export async function startTelegramBot(
   bot.command('subagents', (ctx) => handleSubAgents(cmdCtx(ctx)));
   bot.command('changes', (ctx) => handleChanges(cmdCtx(ctx)));
   bot.command('undo', (ctx) => handleUndo(cmdCtx(ctx)));
+  bot.command('rollback', (ctx) => handleRollback(cmdCtx(ctx)));
+  bot.command('checkpoints', (ctx) => handleCheckpoints(cmdCtx(ctx)));
+  bot.command('budget', (ctx) => handleBudget(cmdCtx(ctx)));
+  bot.command('diff', (ctx) => handleDiff(cmdCtx(ctx)));
+  bot.command('cost', (ctx) => handleCost(cmdCtx(ctx)));
   bot.command('vault', (ctx) => handleVault(cmdCtx(ctx)));
   bot.command('anton', (ctx) => handleAnton(cmdCtx(ctx)));
   bot.command('agent', (ctx) => handleAgent(cmdCtx(ctx)));

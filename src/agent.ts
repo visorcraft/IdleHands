@@ -63,6 +63,7 @@ import { resilientCall } from './agent/resilient-provider.js';
 import { ToolLoopGuard } from './agent/tool-loop-guard.js';
 import { CaptureManager } from './agent/capture.js';
 import { ClientPool } from './agent/client-pool.js';
+import { ConversationBranch } from './agent/conversation-branch.js';
 import { isLspTool, isMutationTool, isReadOnlyTool, planModeSummary } from './agent/tool-policy.js';
 import { buildToolsSchema } from './agent/tools-schema.js';
 import { OpenAIClient } from './client.js';
@@ -239,6 +240,8 @@ export type AgentSession = {
     instruction: UserContent,
     hooks?: ((t: string) => void) | AgentHooks
   ) => Promise<AgentResult>;
+  rollback: () => { preview: string; removedMessages: number } | null;
+  listCheckpoints: () => Array<{ messageCount: number; createdAt: number; preview: string }>;
   setModel: (name: string) => void;
   setEndpoint: (endpoint: string, modelName?: string) => Promise<void>;
   listModels: () => Promise<string[]>;
@@ -541,6 +544,8 @@ export async function createSession(opts: {
     enabled: (cfg.routing as any)?.hysteresis !== false,
   });
 
+  const conversationBranch = new ConversationBranch();
+
   const getToolsSchema = (slimFast?: boolean) =>
     buildToolsSchema({
       activeVaultTools,
@@ -794,6 +799,7 @@ export async function createSession(opts: {
     initialConnectionProbeDone = false;
     mcpToolsLoaded = !mcpLazySchemaMode;
     routeHysteresis.reset();
+    conversationBranch.reset();
   };
 
   const restore = (next: ChatMessage[]) => {
@@ -2129,6 +2135,12 @@ export async function createSession(opts: {
         // Vault search is best-effort; don't fail the turn
       }
     }
+
+    // Save rollback checkpoint before this turn (captures pre-turn state).
+    conversationBranch.checkpoint(
+      messages.length,
+      typeof instruction === 'string' ? instruction : '[multimodal]'
+    );
 
     messages.push({ role: 'user', content: userContent });
 
@@ -4887,6 +4899,14 @@ export async function createSession(opts: {
       return currentContextTokens > 0 ? currentContextTokens : estimateTokensFromMessages(messages);
     },
     ask,
+    rollback: () => {
+      const cp = conversationBranch.rollback();
+      if (!cp) return null;
+      const removed = messages.length - cp.messageCount;
+      messages.length = cp.messageCount;
+      return { preview: cp.preview, removedMessages: removed };
+    },
+    listCheckpoints: () => conversationBranch.list(),
     setModel,
     setEndpoint,
     listModels,

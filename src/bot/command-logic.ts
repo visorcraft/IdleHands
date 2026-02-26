@@ -46,6 +46,10 @@ export {
   watchdogCommand,
 } from './basic-commands.js';
 export { captureSetCommand, captureShowCommand } from './capture-commands.js';
+export { rollbackCommand, checkpointsCommand } from './rollback-command.js';
+export { budgetCommand } from './budget-command.js';
+export { diffCommand } from './diff-command.js';
+export { costCommand } from './cost-command.js';
 export {
   antonCommand,
   antonHelpCommand,
@@ -107,6 +111,8 @@ export interface SessionLike {
   captureGetRedact?: () => boolean;
   captureOpen?: () => string | null;
   capturePath?: string;
+  rollback?: () => { preview: string; removedMessages: number } | null;
+  listCheckpoints?: () => Array<{ messageCount: number; createdAt: number; preview: string }>;
   reset(): void;
 }
 

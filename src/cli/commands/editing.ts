@@ -61,11 +61,13 @@ export const editingCommands: SlashCommand[] = [
   },
   {
     name: '/mode',
-    description: 'Switch code/sys mode',
+    description: 'Switch code/sys mode or routing mode (auto/fast/heavy)',
     async execute(ctx, args) {
       const arg = args.toLowerCase();
       if (!arg) {
         console.log(`Mode: ${ctx.S.bold(ctx.config.mode ?? 'code')}`);
+        const routeMode = getEffectiveRoutingMode(ctx.config);
+        console.log(`Routing: ${ctx.S.bold(routeMode)}`);
       } else if (arg === 'code' || arg === 'sys') {
         ctx.config.mode = arg as any;
         if (ctx.config.mode === 'sys' && ctx.config.approval_mode === 'auto-edit') {
@@ -73,8 +75,14 @@ export const editingCommands: SlashCommand[] = [
         }
         console.log(`Mode: ${ctx.S.bold(ctx.config.mode ?? 'code')}`);
         console.log(`Approval mode: ${ctx.S.bold(ctx.config.approval_mode)}`);
+      } else if (arg === 'auto' || arg === 'fast' || arg === 'heavy') {
+        const next = normalizeRoutingMode(arg);
+        if (next) {
+          ctx.config.routing_mode = next;
+          console.log(`Routing mode: ${ctx.S.bold(next)}`);
+        }
       } else {
-        console.log('Invalid mode. Options: code, sys');
+        console.log('Invalid mode. Options: code, sys, auto, fast, heavy');
       }
       return true;
     },
