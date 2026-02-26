@@ -15,6 +15,7 @@ import {
   extractGrepPattern,
   detectCatHeadTailAsRead,
   extractTestFilter,
+  extractGrepTargetFile,
   extractLogFilePath,
   readOnlyExecCacheable,
   withCachedExecObservationHint,
@@ -2631,6 +2632,9 @@ export async function createSession(opts: {
     // Widening grep pattern detection: track grep patterns across exec calls
     const grepPatternPaths = new Map<string, Set<string>>(); // grep pattern → set of paths searched
 
+    // Same-file grep repetition: track how many different grep patterns hit the same file
+    const grepTargetFileCounts = new Map<string, number>(); // file path → distinct grep call count
+
     // Log-tail spiral detection: track tail/grep calls on the same log file
     const logFileTailCounts = new Map<string, number>(); // log file path → tail call count
 
@@ -4184,6 +4188,23 @@ export async function createSession(opts: {
                       `[system] You have run the test "${testFilter}" ${count} times. ` +
                       `STOP re-running the same failing test. Step back, analyze the error message, ` +
                       `and fix the root cause before running the test again.`,
+                  });
+                }
+              }
+
+              // Same-file grep thrashing: track grep calls targeting a single file
+              const grepTargetFile = extractGrepTargetFile(args.command);
+              if (grepTargetFile) {
+                const count = (grepTargetFileCounts.get(grepTargetFile) ?? 0) + 1;
+                grepTargetFileCounts.set(grepTargetFile, count);
+                if (count >= 4) {
+                  const basename = grepTargetFile.split('/').pop() || grepTargetFile;
+                  messages.push({
+                    role: 'user' as const,
+                    content:
+                      `[system] You have run ${count} separate grep commands on ${basename}. ` +
+                      `STOP grepping the same file repeatedly. Use read_file to read the whole file once: ` +
+                      `read_file({ path: "${grepTargetFile}" })`,
                   });
                 }
               }
