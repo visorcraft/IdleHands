@@ -58,6 +58,10 @@ export function helpCommand(surface: 'telegram' | 'discord'): CmdResult {
     '/undo — Undo last edit',
     '/subagents [on|off] — Toggle sub-agents',
     '/vault <query> — Search vault entries',
+    '/hooks [status|plugins|errors|slow] — Inspect hook ecosystem',
+    '/cost — Estimate session API costs',
+    '/metrics — Show session metrics',
+    '/mcp_discover — Discover MCP servers from project files',
     '/anton <file> — Start autonomous task runner',
     '/anton status | /anton stop | /anton last',
   ];

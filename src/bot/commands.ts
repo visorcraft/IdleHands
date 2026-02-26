@@ -31,6 +31,7 @@ import {
   costCommand,
   metricsCommand,
   mcpDiscoverCommand,
+  hooksCommand,
   dirShowCommand,
   approvalShowCommand,
   approvalSetCommand,
@@ -482,6 +483,20 @@ export async function handleMcpDiscover({ ctx, sessions }: CommandContext): Prom
     return;
   }
   await reply(ctx, await mcpDiscoverCommand(managed as unknown as ManagedLike));
+}
+
+export async function handleHooks({ ctx, sessions }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const managed = sessions.get(chatId);
+  if (!managed) {
+    await ctx.reply('No active session.');
+    return;
+  }
+
+  const text = ctx.message?.text ?? '';
+  const arg = text.replace(/^\/hooks\s*/i, '').trim();
+  await reply(ctx, hooksCommand(managed as unknown as ManagedLike, arg));
 }
 
 export async function handleMetrics({ ctx, sessions }: CommandContext): Promise<void> {

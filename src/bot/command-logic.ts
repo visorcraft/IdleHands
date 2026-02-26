@@ -51,6 +51,7 @@ export { budgetCommand } from './budget-command.js';
 export { diffCommand } from './diff-command.js';
 export { costCommand } from './cost-command.js';
 export { metricsCommand } from './metrics-command.js';
+export { hooksCommand } from './hooks-command.js';
 export { mcpDiscoverCommand } from './mcp-discover-command.js';
 export {
   antonCommand,
@@ -115,6 +116,9 @@ export interface SessionLike {
   capturePath?: string;
   rollback?: () => { preview: string; removedMessages: number } | null;
   listCheckpoints?: () => Array<{ messageCount: number; createdAt: number; preview: string }>;
+  hookManager?: {
+    getSnapshot: () => any;
+  };
   reset(): void;
 }
 
