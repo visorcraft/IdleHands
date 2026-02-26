@@ -2804,10 +2804,10 @@ export async function createSession(opts: {
         }
       }
 
-      // Skip lens+digest compaction for read_file/read_files – the model
-      // explicitly asked for file content and needs to see it in context.
+      // Skip lens+digest compaction for read_file/read_files/exec – the model
+      // needs to see actual results in context (file content, command output).
       // Context size is already bounded by max_read_lines config.
-      const skipCompaction = toolName === 'read_file' || toolName === 'read_files';
+      const skipCompaction = toolName === 'read_file' || toolName === 'read_files' || toolName === 'exec';
       if (skipCompaction) {
         return rawMsg;
       }
@@ -3194,6 +3194,7 @@ export async function createSession(opts: {
                     : {}),
                   ...(frequencyPenalty && { frequency_penalty: frequencyPenalty }),
                   ...(presencePenalty && { presence_penalty: presencePenalty }),
+                  ...(harness.toolCalls.parallelCalls && { parallel_tool_calls: true }),
                 },
                 signal: ac.signal,
                 requestId: `r${reqCounter}`,
