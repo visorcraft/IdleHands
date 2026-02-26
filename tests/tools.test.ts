@@ -283,18 +283,18 @@ describe('edit_range', () => {
     );
   });
 
-  it('rejects double-escaped replacement payloads and asks for real newlines', async () => {
+  it('normalizes double-escaped replacement payloads to real newlines', async () => {
     await fs.writeFile(path.join(tmpDir, 'range-escaped.txt'), 'one\ntwo\nthree\n', 'utf8');
-    await assert.rejects(
-      () =>
-        edit_range(ctx, {
-          path: 'range-escaped.txt',
-          start_line: 2,
-          end_line: 2,
-          replacement: 'alpha\\nbeta',
-        }),
-      /double-escaped|real newline/i
-    );
+    const out = await edit_range(ctx, {
+      path: 'range-escaped.txt',
+      start_line: 2,
+      end_line: 2,
+      replacement: 'alpha\\nbeta',
+    });
+
+    const content = await fs.readFile(path.join(tmpDir, 'range-escaped.txt'), 'utf8');
+    assert.ok(/normalized escaped newline/i.test(out));
+    assert.equal(content, 'one\nalpha\nbeta\nthree\n');
   });
 
   it('blocks range edits outside cwd in code mode', async () => {
