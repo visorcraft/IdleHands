@@ -28,9 +28,10 @@ Recommended BotFather settings:
 Common commands:
 
 - `/new`, `/cancel`, `/status`, `/watchdog [status]`
-- `/dir <path>`, `/model`, `/approval <mode>`, `/mode <mode>`
-- `/changes`, `/undo`, `/vault <query>`, `/compact`
-- `/hosts`, `/backends`, `/models`, `/rtstatus`, `/switch <model-id>`
+- `/dir <path>`, `/model`, `/approval <mode>`, `/mode <mode>`, `/routing_mode <auto|fast|heavy>`
+- `/changes`, `/undo`, `/vault <query>`, `/compact`, `/cost`, `/metrics`
+- `/hooks`, `/hooks [status|plugins|errors|slow]`
+- `/mcp_discover`, `/hosts`, `/backends`, `/models`, `/rtstatus`, `/switch <model-id>`
 
 ## Discord
 
@@ -49,9 +50,10 @@ Recommended configuration:
 Common commands:
 
 - `/new`, `/cancel`, `/status`, `/watchdog [status]`
-- `/dir <path>`, `/model`, `/approval <mode>`, `/mode <mode>`
-- `/changes`, `/undo`, `/vault <query>`, `/compact`
-- `/hosts`, `/backends`, `/models`, `/rtstatus`, `/switch <model-id>`
+- `/dir <path>`, `/model`, `/approval <mode>`, `/mode <mode>`, `/routing_mode <auto|fast|heavy>`
+- `/changes`, `/undo`, `/vault <query>`, `/compact`, `/cost`, `/metrics`
+- `/hooks`, `/hooks [status|plugins|errors|slow]`
+- `/mcp_discover`, `/hosts`, `/backends`, `/models`, `/rtstatus`, `/switch <model-id>`
 
 Set `allow_guilds: true` to enable guild channels.
 
