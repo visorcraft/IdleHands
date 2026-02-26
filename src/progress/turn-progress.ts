@@ -330,7 +330,21 @@ export class TurnProgressController {
 
     if (ev.phase === 'planned') {
       const summary = this.toolSummary(ev);
-      this.appendToolLine(`… planned ${ev.name}: ${summary}`);
+      const nextLine = `… planned ${ev.name}: ${summary}`;
+
+      // Replace the most recent planned line for the same tool instead of appending
+      // a new row on each streamed argument update.
+      const plannedPrefix = `… planned ${ev.name}:`;
+      let replaced = false;
+      for (let i = this.toolLines.length - 1; i >= 0; i--) {
+        if (this.toolLines[i].startsWith(plannedPrefix)) {
+          this.toolLines[i] = nextLine;
+          replaced = true;
+          break;
+        }
+      }
+
+      if (!replaced) this.appendToolLine(nextLine);
       this.emit('tool_call', true);
       return;
     }

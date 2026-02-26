@@ -29,8 +29,15 @@ export function formatToolCallSummary(call: { name: string; args: AnyArgs }): st
       const size = typeof args.patch === 'string' ? args.patch.length : 0;
       return `apply_patch (${size.toLocaleString()} chars)`;
     }
-    case 'edit_range':
-      return `edit_range ${args.path || '?'} [${args.start_line ?? '?'}..${args.end_line ?? '?'}]`;
+    case 'edit_range': {
+      const p = args.path || '?';
+      const hasStart = args.start_line != null;
+      const hasEnd = args.end_line != null;
+      if (hasStart && hasEnd) {
+        return `edit_range ${p} [${args.start_line}..${args.end_line}]`;
+      }
+      return `edit_range ${p}`;
+    }
 
     case 'write_file':
       return `write_file ${args.path || '?'}`;
