@@ -127,6 +127,7 @@ export interface ResolvedModel {
 }
 
 export type PlanStepKind =
+  | 'verify_model_source'
   | 'stop_model'
   | 'apply_backend'
   | 'verify_backend'
