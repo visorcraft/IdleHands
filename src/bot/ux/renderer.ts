@@ -604,12 +604,26 @@ export function snapshotToBlocks(snap: TurnProgressSnapshot, banner?: string | n
     });
   }
 
-  // Progress bar
-  blocks.push({
-    type: 'progress',
-    message: 'Processing...',
-    progress: snap.elapsedMs > 0 ? Math.min(0.95, snap.elapsedMs / 60000) : 0, // Estimate progress based on elapsed time
-  });
+  // Progress bar: only for non-complete phases.
+  // Before this fix, we always rendered "Processing..." (capped at 95%),
+  // which could contradict a completed status line ("✅ Done ...").
+  if (snap.phase !== 'complete') {
+    const estimated = snap.elapsedMs > 0 ? Math.min(0.95, snap.elapsedMs / 60000) : 0;
+    const message =
+      snap.phase === 'verifying'
+        ? 'Verifying...'
+        : snap.phase === 'planning'
+          ? 'Planning...'
+          : snap.phase === 'runtime_preflight'
+            ? 'Running pre-flight checks...'
+            : 'Processing...';
+
+    blocks.push({
+      type: 'progress',
+      message,
+      progress: snap.phase === 'verifying' ? Math.max(0.95, estimated) : estimated,
+    });
+  }
 
   return blocks;
 }
