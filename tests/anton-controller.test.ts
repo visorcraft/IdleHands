@@ -217,6 +217,50 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.equal(sessionCount, 3);
   });
 
+  test('1b. Emits heartbeat callbacks while run is active', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+
+    const config = createTestConfig({
+      taskFile,
+      projectDir: tmpDir,
+      dryRun: true,
+    });
+
+    let heartbeats = 0;
+    const progress = {
+      ...createMockProgressCallback(),
+      onHeartbeat: () => {
+        heartbeats += 1;
+      },
+    } as any;
+
+    const originalSetInterval = global.setInterval;
+    const originalClearInterval = global.clearInterval;
+
+    // Force one immediate heartbeat tick without waiting 5s wall-clock.
+    (global as any).setInterval = (fn: (...args: any[]) => void, _ms?: number) => {
+      fn();
+      return 1 as any;
+    };
+    (global as any).clearInterval = (_id: any) => {};
+
+    try {
+      await runAnton({
+        config,
+        idlehandsConfig: createTestIdlehandsConfig(),
+        progress,
+        abortSignal: { aborted: false },
+        createSession: async () => createMockSession(['<anton-result>status: done</anton-result>']),
+      });
+    } finally {
+      (global as any).setInterval = originalSetInterval;
+      (global as any).clearInterval = originalClearInterval;
+    }
+
+    assert.ok(heartbeats >= 1, 'expected at least one heartbeat callback');
+  });
+
   test('2. Retry then pass → attempts.length=2 and failed=0', async () => {
     const tmpDir = await createTempGitRepo();
     const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
@@ -855,7 +899,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     };
 
     const progress = createMockProgressCallback();
-    progress.onStage = (msg: string) => stages.push(msg);
+    progress.onStage = (_stage, msg) => stages.push(msg);
 
     const result = await runAnton({
       config,
@@ -971,7 +1015,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     const stageMessages: string[] = [];
     const progress = {
       ...createMockProgressCallback(),
-      onStage: (m: string) => stageMessages.push(m),
+      onStage: (_stage, m) => stageMessages.push(m),
     } as any;
 
     const createSession = async () =>
@@ -1024,7 +1068,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     const stageMessages: string[] = [];
     const progress = {
       ...createMockProgressCallback(),
-      onStage: (m: string) => stageMessages.push(m),
+      onStage: (_stage, m) => stageMessages.push(m),
     } as any;
 
     const createSession = async () =>
@@ -1073,7 +1117,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     const stageMessages: string[] = [];
     const progress = {
       ...createMockProgressCallback(),
-      onStage: (m: string) => stageMessages.push(m),
+      onStage: (_stage, m) => stageMessages.push(m),
     } as any;
 
     let calls = 0;
@@ -1115,6 +1159,72 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     assert.ok(stageMessages.some((m) => m.includes('Implementation')));
   });
 
+  test('17f2. Stage ordering flows planning -> runtime_preflight -> executing', async () => {
+    const tmpDir = await createTempGitRepo();
+    const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
+    const planFile = join(tmpDir, '.agents', 'tasks', 'plan.md');
+    await mkdir(join(tmpDir, '.agents', 'tasks'), { recursive: true });
+    await writeFile(planFile, '# plan');
+
+    const config = createTestConfig({
+      taskFile,
+      projectDir: tmpDir,
+      preflightEnabled: true,
+      preflightRequirementsReview: true,
+      preflightSeparateReview: true,
+    } as any);
+
+    const stageOrder: string[] = [];
+    const progress = {
+      ...createMockProgressCallback(),
+      onStage: (stage, _message) => stageOrder.push(String(stage)),
+    } as any;
+
+    let calls = 0;
+    const createSession = async () =>
+      ({
+        ...createMockSession(['<anton-result>status: done</anton-result>']),
+        async ask() {
+          calls++;
+          if (calls === 1)
+            return {
+              text: `{"status":"incomplete","filename":"${planFile}"}`,
+              turns: 1,
+              toolCalls: 1,
+            } as any;
+          if (calls === 2)
+            return {
+              text: `{"status":"ready","filename":"${planFile}"}`,
+              turns: 1,
+              toolCalls: 1,
+            } as any;
+          return {
+            text: '<anton-result>status: done</anton-result>',
+            turns: 1,
+            toolCalls: 1,
+          } as any;
+        },
+      }) as any;
+
+    await runAnton({
+      config,
+      idlehandsConfig: createTestIdlehandsConfig(),
+      progress,
+      abortSignal: { aborted: false },
+      createSession,
+    });
+
+    const firstPlanning = stageOrder.indexOf('planning');
+    const firstPreflight = stageOrder.indexOf('runtime_preflight');
+    const firstExecuting = stageOrder.indexOf('executing');
+
+    assert.ok(firstPlanning >= 0, 'planning stage should be emitted');
+    assert.ok(firstPreflight >= 0, 'runtime_preflight stage should be emitted');
+    assert.ok(firstExecuting >= 0, 'executing stage should be emitted');
+    assert.ok(firstPlanning < firstPreflight, 'planning should occur before runtime_preflight');
+    assert.ok(firstPreflight < firstExecuting, 'runtime_preflight should occur before executing');
+  });
+
   test('17g. Preflight review retry stays on review stage and reuses same plan file', async () => {
     const tmpDir = await createTempGitRepo();
     const taskFile = await createTaskFile(tmpDir, ['# Test Tasks', '', '- [ ] Task 1'].join('\n'));
@@ -1134,7 +1244,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     const stageMessages: string[] = [];
     const progress = {
       ...createMockProgressCallback(),
-      onStage: (m: string) => stageMessages.push(m),
+      onStage: (_stage, m) => stageMessages.push(m),
     } as any;
 
     let discoveryCalls = 0;
@@ -1250,7 +1360,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     const stageMessages: string[] = [];
     const progress = {
       ...createMockProgressCallback(),
-      onStage: (m: string) => stageMessages.push(m),
+      onStage: (_stage, m) => stageMessages.push(m),
     } as any;
 
     const config = createTestConfig({
@@ -1301,7 +1411,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     const stageMessages: string[] = [];
     const progress = {
       ...createMockProgressCallback(),
-      onStage: (m: string) => stageMessages.push(m),
+      onStage: (_stage, m) => stageMessages.push(m),
     } as any;
 
     const createSession = async () =>
@@ -1367,7 +1477,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     const stageMessages: string[] = [];
     const progress = {
       ...createMockProgressCallback(),
-      onStage: (m: string) => stageMessages.push(m),
+      onStage: (_stage, m) => stageMessages.push(m),
     } as any;
 
     const discoveryCaps: number[] = [];
@@ -1426,7 +1536,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     const stageMessages: string[] = [];
     const progress = {
       ...createMockProgressCallback(),
-      onStage: (m: string) => stageMessages.push(m),
+      onStage: (_stage, m) => stageMessages.push(m),
     } as any;
 
     let reviewCalls = 0;
@@ -1483,7 +1593,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     const stageMessages: string[] = [];
     const progress = {
       ...createMockProgressCallback(),
-      onStage: (m: string) => stageMessages.push(m),
+      onStage: (_stage, m) => stageMessages.push(m),
     } as any;
 
     let discoveryCalls = 0;
@@ -1542,7 +1652,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     const stageMessages: string[] = [];
     const progress = {
       ...createMockProgressCallback(),
-      onStage: (m: string) => stageMessages.push(m),
+      onStage: (_stage, m) => stageMessages.push(m),
     } as any;
 
     let discoveryCalls = 0;
@@ -1710,7 +1820,7 @@ describe('Anton Controller', { concurrency: 1 }, () => {
     const stageMessages: string[] = [];
     const progress = {
       ...createMockProgressCallback(),
-      onStage: (m: string) => stageMessages.push(m),
+      onStage: (_stage, m) => stageMessages.push(m),
     } as any;
 
     let askCalls: string[] = [];

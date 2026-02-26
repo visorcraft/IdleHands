@@ -67,6 +67,7 @@ import type {
   AntonStopReason,
   AntonAttemptStatus,
   AntonPreflightRecord,
+  AntonStage,
 } from './types.js';
 import { captureLintBaseline, detectVerificationCommands, runVerification } from './verifier.js';
 
@@ -291,6 +292,27 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
     abortSignal.aborted = true;
   };
   process.on('SIGINT', handleAbort);
+
+  const inferAntonStage = (message: string): AntonStage => {
+    const m = message.toLowerCase();
+    if (m.includes('implementation')) return 'executing';
+    if (m.includes('requirements review') || m.includes('pre-flight') || m.includes('preflight')) {
+      return 'runtime_preflight';
+    }
+    if (m.includes('already complete') || m.includes('confirmed already complete')) return 'complete';
+    if (m.includes('verify')) return 'verifying';
+    return 'planning';
+  };
+
+  const emitStage = (stageOrMessage: AntonStage | string, maybeMessage?: string): void => {
+    if (typeof maybeMessage === 'string') {
+      progress.onStage?.(stageOrMessage as AntonStage, maybeMessage);
+      return;
+    }
+
+    const message = String(stageOrMessage);
+    progress.onStage?.(inferAntonStage(message), message);
+  };
 
   try {
     // 1. Acquire Anton lock
@@ -609,7 +631,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
           const discoveryTimeoutMs = discoveryTimeoutSec * 1000;
 
           try {
-            progress.onStage?.('🔎 Discovery: checking if already done...');
+            emitStage('planning', '🔎 Discovery: checking if already done...');
             // Create session if not already open (first try or after error closed it)
             if (!preflightSession) {
               preflightSession = await createSessionFn(
@@ -658,14 +680,14 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               const parseErrMsg = parseError instanceof Error ? parseError.message : String(parseError);
               // Only try force-decision for JSON/format errors, not file path errors
               if (/preflight-json-missing-object|preflight-discovery-invalid/i.test(parseErrMsg)) {
-                progress.onStage?.('⚠️ Discovery output invalid, requesting forced decision...');
+                emitStage('planning', '⚠️ Discovery output invalid, requesting forced decision...');
                 try {
                   const forceRes = await preflightSession.ask(FORCE_DISCOVERY_DECISION_PROMPT);
                   const forceTokens = preflightSession.usage.prompt + preflightSession.usage.completion - discoveryTokens;
                   discoveryTokens += forceTokens;
                   totalTokens += forceTokens;
                   discovery = parseDiscoveryResult(forceRes.text, config.projectDir);
-                  progress.onStage?.('✅ Forced decision succeeded');
+                  emitStage('planning', '✅ Forced decision succeeded');
                 } catch {
                   // Force-decision also failed, throw original error
                   throw parseError;
@@ -679,7 +701,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               // If the model claims "complete" but never used any tools, it didn't
               // actually verify anything — force it to re-examine with tools.
               if (discoveryRes.toolCalls === 0) {
-                progress.onStage?.('⚠️ Discovery claims complete but made no tool calls — forcing verification...');
+                emitStage('planning', '⚠️ Discovery claims complete but made no tool calls — forcing verification...');
                 const verifyRes = await preflightSession.ask(
                   'You claimed this task is already complete, but you did not use any tools to verify. ' +
                   'Please use tools (read files, check code, run tests) to actually confirm the task is done. ' +
@@ -708,7 +730,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                 await markTaskChecked(config.taskFile, currentTask.key);
                 const ancestorsCompleted = await autoCompleteAncestors(config.taskFile, currentTask.key);
                 autoCompleted += 1 + ancestorsCompleted.length;
-                progress.onStage?.(`✅ Discovery confirmed already complete: ${currentTask.text}`);
+                emitStage('complete', `✅ Discovery confirmed already complete: ${currentTask.text}`);
                 preflightMarkedComplete = true;
                 discoveryOk = true;
                 // No review needed - close session now
@@ -721,7 +743,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             // it almost certainly hallucinated the file write. Immediately ask it to
             // actually write the file before we even check the filesystem.
             if (discoveryRes.toolCalls === 0) {
-              progress.onStage?.('⚠️ Discovery returned filename but made no tool calls — forcing write...');
+              emitStage('planning', '⚠️ Discovery returned filename but made no tool calls — forcing write...');
               const writeRes = await preflightSession.ask(
                 buildDiscoveryRewritePrompt(discovery.filename, 'file was never written (no tool calls)')
               );
@@ -757,7 +779,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                       : planMsg;
 
                 if (writeFixTry === 0) {
-                  progress.onStage?.(
+                  emitStage(
+                    'planning',
                     `⚠️ Discovery returned filename but file is invalid (${reason}). Asking model to rewrite plan file...`
                   );
                   const rewriteRes = await preflightSession.ask(
@@ -786,7 +809,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                 });
                 if (discoveryPlanState === 'bootstrapped') {
                   discoveryUsedFallbackPlan = true;
-                  progress.onStage?.(
+                  emitStage(
+                    'planning',
                     `⚠️ Discovery returned a filename but did not write valid contents. Created fallback plan file: ${planPath}`
                   );
                 }
@@ -803,7 +827,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             });
 
             taskPlanByTaskKey.set(currentTask.key, planPath);
-            progress.onStage?.(`📝 Discovery plan file: ${planPath}`);
+            emitStage('planning', `📝 Discovery plan file: ${planPath}`);
             discoveryOk = true;
             break;
           } catch (error) {
@@ -832,11 +856,13 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                 source: 'discovery',
               });
               if (fallbackState === 'bootstrapped') {
-                progress.onStage?.(
+                emitStage(
+                  'planning',
                   `⚠️ Discovery returned invalid output (${short}). Bootstrapped fallback plan and continuing: ${plannedFilePath}`
                 );
               } else {
-                progress.onStage?.(
+                emitStage(
+                  'planning',
                   `⚠️ Discovery returned invalid output (${short}). Reusing existing plan and continuing: ${plannedFilePath}`
                 );
               }
@@ -855,7 +881,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                   1000
                 );
                 if (nextCap > discoveryIterationCap) {
-                  progress.onStage?.(
+                  emitStage(
+                    'planning',
                     `⚠️ Discovery hit max iterations (${discoveryIterationCap}). Increasing preflight cap to ${nextCap} and retrying...`
                   );
                   discoveryIterationCap = nextCap;
@@ -863,7 +890,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                 }
               }
 
-              progress.onStage?.(
+              emitStage(
+                'planning',
                 `⚠️ Discovery failed (${discoveryTry + 1}/${preflightTotalTries}): ${short}. Retrying discovery...`
               );
               continue;
@@ -878,11 +906,13 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               source: 'discovery',
             });
             if (fallbackState === 'bootstrapped') {
-              progress.onStage?.(
+              emitStage(
+                'planning',
                 `⚠️ Discovery failed after ${preflightTotalTries} tries (${short}). Bootstrapped fallback plan and continuing: ${plannedFilePath}`
               );
             } else {
-              progress.onStage?.(
+              emitStage(
+                'planning',
                 `⚠️ Discovery failed after ${preflightTotalTries} tries (${short}). Reusing existing plan and continuing: ${plannedFilePath}`
               );
             }
@@ -909,7 +939,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         const skipSeparateReview = !config.preflightSeparateReview;
         const forceSeparateReview = config.preflightRequirementsReview && discoveryUsedFallbackPlan;
         if (forceSeparateReview && skipSeparateReview) {
-          progress.onStage?.(
+          emitStage(
+            'runtime_preflight',
             '⚠️ Discovery used a fallback plan; forcing separate requirements review before implementation...'
           );
         }
@@ -929,7 +960,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             const reviewTimeoutMs = reviewTimeoutSec * 1000;
 
             try {
-              progress.onStage?.('🧪 Requirements review: refining plan...');
+              emitStage('runtime_preflight', '🧪 Requirements review: refining plan...');
               // Reuse preflight session from discovery, or create new one if needed (e.g., after error)
               if (!preflightSession) {
                 preflightSession = await createSessionFn(
@@ -965,14 +996,14 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                 const parseErrMsg = parseError instanceof Error ? parseError.message : String(parseError);
                 // Only try force-decision for JSON/format errors
                 if (/preflight-json-missing-object|preflight-review-invalid/i.test(parseErrMsg)) {
-                  progress.onStage?.('⚠️ Review output invalid, requesting forced decision...');
+                  emitStage('runtime_preflight', '⚠️ Review output invalid, requesting forced decision...');
                   try {
                     const forceRes = await preflightSession.ask(FORCE_REVIEW_DECISION_PROMPT);
                     const forceTokens = preflightSession.usage.prompt + preflightSession.usage.completion - reviewTokens;
                     reviewTokens += forceTokens;
                     totalTokens += forceTokens;
                     review = parseRequirementsReviewResult(forceRes.text, config.projectDir);
-                    progress.onStage?.('✅ Forced decision succeeded');
+                    emitStage('runtime_preflight', '✅ Forced decision succeeded');
                   } catch (forceError) {
                     // Force-decision also failed, throw original error
                     throw parseError;
@@ -998,7 +1029,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                         : planMsg;
 
                   if (writeFixTry === 0) {
-                    progress.onStage?.(
+                    emitStage(
+                      'runtime_preflight',
                       `⚠️ Requirements review returned filename but file is invalid (${reason}). Asking model to rewrite plan file...`
                     );
                     const rewriteRes = await preflightSession.ask(
@@ -1026,7 +1058,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                     source: 'requirements-review',
                   });
                   if (reviewPlanState === 'bootstrapped') {
-                    progress.onStage?.(
+                    emitStage(
+                      'runtime_preflight',
                       `⚠️ Requirements review returned a filename but did not write valid contents. Created fallback plan file: ${reviewedPlanPath}`
                     );
                   }
@@ -1043,7 +1076,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               });
 
               taskPlanByTaskKey.set(currentTask.key, reviewedPlanPath);
-              progress.onStage?.(`✅ Requirements review ready: ${reviewedPlanPath}`);
+              emitStage('runtime_preflight', `✅ Requirements review ready: ${reviewedPlanPath}`);
               reviewOk = true;
               break;
             } catch (error) {
@@ -1072,11 +1105,13 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                     source: 'requirements-review',
                   });
                   if (fallbackState === 'bootstrapped') {
-                    progress.onStage?.(
+                    emitStage(
+                      'runtime_preflight',
                       `⚠️ Requirements review returned invalid output (${short}). Bootstrapped fallback plan and continuing: ${reviewPlanFile}`
                     );
                   } else {
-                    progress.onStage?.(
+                    emitStage(
+                      'runtime_preflight',
                       `⚠️ Requirements review returned invalid output (${short}). Reusing existing plan and continuing: ${reviewPlanFile}`
                     );
                   }
@@ -1085,7 +1120,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                   break;
                 }
 
-                progress.onStage?.(
+                emitStage(
+                  'runtime_preflight',
                   `⚠️ Requirements review returned invalid output (${short}). Discovery fallback plan requires a valid review, retrying...`
                 );
               }
@@ -1100,7 +1136,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                     1000
                   );
                   if (nextCap > reviewIterationCap) {
-                    progress.onStage?.(
+                    emitStage(
+                      'runtime_preflight',
                       `⚠️ Requirements review hit max iterations (${reviewIterationCap}). Increasing preflight cap to ${nextCap} and retrying...`
                     );
                     reviewIterationCap = nextCap;
@@ -1108,7 +1145,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                   }
                 }
 
-                progress.onStage?.(
+                emitStage(
+                  'runtime_preflight',
                   `⚠️ Requirements review failed (${reviewTry + 1}/${preflightTotalTries}): ${short}. Retrying review with existing plan file...`
                 );
                 continue;
@@ -1142,7 +1180,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
         }
       }
 
-      progress.onStage?.('🛠️ Implementation: executing vetted plan...');
+      emitStage('executing', '🛠️ Implementation: executing vetted plan...');
 
       let session: AgentSession | undefined;
       let attempt: AntonAttempt;
@@ -1392,7 +1430,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             !controller.signal.aborted
           ) {
             try {
-              progress.onStage?.(
+              emitStage(
+                'verifying',
                 '⚠️ Agent omitted structured result. Requesting format-only recovery...'
               );
               const repaired = await session.ask(STRUCTURED_RESULT_RECOVERY_PROMPT);

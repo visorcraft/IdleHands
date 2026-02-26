@@ -7,6 +7,7 @@ import {
   formatToolLoopEvent,
   formatCompactionEvent,
   formatVerificationDetail,
+  formatStageUpdate,
 } from '../anton/reporter.js';
 import type { AntonProgressCallback, AntonRunConfig } from '../anton/types.js';
 
@@ -171,10 +172,10 @@ export function makeAntonProgress(
         send(formatVerificationDetail(taskText, verification));
       }
     },
-    onStage(message) {
+    onStage(stage, message) {
       managed.lastActivity = Date.now();
       if (defaults.progress_events !== false) {
-        send(message);
+        send(formatStageUpdate(stage, message));
       }
     },
   };

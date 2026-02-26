@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { formatTaskHeartbeat, formatToolLoopEvent } from '../dist/anton/reporter.js';
+import {
+  formatTaskHeartbeat,
+  formatToolLoopEvent,
+  formatStageUpdate,
+} from '../dist/anton/reporter.js';
 
 describe('anton reporter tool-loop messaging', () => {
   it('formats periodic heartbeat updates', () => {
@@ -45,5 +49,15 @@ describe('anton reporter tool-loop messaging', () => {
 
     assert.match(msg, /final loop failure/i);
     assert.match(msg, /3\/3/);
+  });
+
+  it('formats stage updates with consistent labels', () => {
+    const planning = formatStageUpdate('planning', 'Discovery: checking if already done...');
+    const preflight = formatStageUpdate('runtime_preflight', 'Requirements review: refining plan...');
+    const executing = formatStageUpdate('executing', 'Implementation: executing vetted plan...');
+
+    assert.match(planning, /Planning/i);
+    assert.match(preflight, /Pre-flight/i);
+    assert.match(executing, /Executing/i);
   });
 });
