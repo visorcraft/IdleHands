@@ -244,6 +244,32 @@ export class OpenAIClient {
     void Promise.resolve(this.exchangeHook(record)).catch(() => {});
   }
 
+  private emitExchangeError(
+    request: Record<string, unknown>,
+    err: unknown,
+    opts?: { attempt?: number; streamed?: boolean; totalMs?: number }
+  ): Error {
+    const e = asError(err);
+    this.emitExchange({
+      timestamp: new Date().toISOString(),
+      request,
+      response: {
+        error: {
+          name: e.name,
+          message: e.message,
+          status: (e as any)?.status,
+          retryable: (e as any)?.retryable,
+          attempt: opts?.attempt,
+          streamed: opts?.streamed === true,
+        },
+      },
+      metrics: {
+        total_ms: opts?.totalMs,
+      },
+    });
+    return e;
+  }
+
   private rootEndpoint(): string {
     if (this.cachedRootEndpoint) return this.cachedRootEndpoint;
     this.cachedRootEndpoint = this.endpoint.replace(/\/v1\/?$/, '');
@@ -669,15 +695,26 @@ export class OpenAIClient {
         return result;
       } catch (e: any) {
         lastErr = asError(e, `POST /chat/completions attempt ${attempt + 1} failed`);
-        if (callerSignal?.aborted) throw lastErr;
+        if (callerSignal?.aborted) {
+          throw this.emitExchangeError(clean, lastErr, {
+            attempt: attempt + 1,
+            streamed: false,
+            totalMs: Date.now() - reqStart,
+          });
+        }
 
         // Distinguish response timeout from other AbortErrors
         if (timeoutAc.signal.aborted && !callerSignal?.aborted) {
-          throw makeClientError(
+          const timeoutErr = makeClientError(
             `Response timeout (${responseTimeout}ms) waiting for ${url}`,
             undefined,
             true
           );
+          throw this.emitExchangeError(clean, timeoutErr, {
+            attempt: attempt + 1,
+            streamed: false,
+            totalMs: Date.now() - reqStart,
+          });
         }
 
         if (isConnTimeout(e)) {
@@ -687,7 +724,11 @@ export class OpenAIClient {
             await delay(getRetryDelayMs(2000));
             continue;
           }
-          throw lastErr;
+          throw this.emitExchangeError(clean, lastErr, {
+            attempt: attempt + 1,
+            streamed: false,
+            totalMs: Date.now() - reqStart,
+          });
         }
 
         if (isConnRefused(e) || isFetchFailed(e)) {
@@ -698,22 +739,35 @@ export class OpenAIClient {
             await delay(getRetryDelayMs(2000));
             continue;
           }
-          throw makeClientError(
+          const connErr = makeClientError(
             `Cannot reach ${this.endpoint}. Is llama-server running? (${e?.message ?? ''})`,
             undefined,
             true
           );
+          throw this.emitExchangeError(clean, connErr, {
+            attempt: attempt + 1,
+            streamed: false,
+            totalMs: Date.now() - reqStart,
+          });
         }
 
         // Non-retryable errors (4xx, etc.)
-        throw lastErr;
+        throw this.emitExchangeError(clean, lastErr, {
+          attempt: attempt + 1,
+          streamed: false,
+          totalMs: Date.now() - reqStart,
+        });
       } finally {
         clearTimeout(timer);
         callerSignal?.removeEventListener('abort', onCallerAbort);
       }
     }
 
-    throw lastErr;
+    throw this.emitExchangeError(clean, lastErr, {
+      attempt: 3,
+      streamed: false,
+      totalMs: Date.now() - reqStart,
+    });
   }
 
   /** Streaming chat with retry, read timeout, and 400→non-stream fallback */
@@ -803,7 +857,13 @@ export class OpenAIClient {
         });
       } catch (e: any) {
         lastErr = asError(e, `POST /chat/completions (stream) attempt ${attempt + 1} failed`);
-        if (opts.signal?.aborted) throw lastErr;
+        if (opts.signal?.aborted) {
+          throw this.emitExchangeError(clean, lastErr, {
+            attempt: attempt + 1,
+            streamed: true,
+            totalMs: Date.now() - reqStart,
+          });
+        }
 
         if (isConnTimeout(e)) {
           if (attempt < 1) {
@@ -811,7 +871,11 @@ export class OpenAIClient {
             await delay(getRetryDelayMs(2000));
             continue;
           }
-          throw lastErr;
+          throw this.emitExchangeError(clean, lastErr, {
+            attempt: attempt + 1,
+            streamed: true,
+            totalMs: Date.now() - reqStart,
+          });
         }
 
         if (isConnRefused(e) || isFetchFailed(e)) {
@@ -822,13 +886,22 @@ export class OpenAIClient {
             await delay(getRetryDelayMs(2000));
             continue;
           }
-          throw makeClientError(
+          const connErr = makeClientError(
             `Cannot reach ${this.endpoint}. Is llama-server running? (${e?.message ?? ''})`,
             undefined,
             true
           );
+          throw this.emitExchangeError(clean, connErr, {
+            attempt: attempt + 1,
+            streamed: true,
+            totalMs: Date.now() - reqStart,
+          });
         }
-        throw lastErr;
+        throw this.emitExchangeError(clean, lastErr, {
+          attempt: attempt + 1,
+          streamed: true,
+          totalMs: Date.now() - reqStart,
+        });
       }
 
       // HTTP 400 on stream → fall back to non-streaming (server doesn't support it)
@@ -851,7 +924,11 @@ export class OpenAIClient {
           await delay(getRetryDelayMs(backoff));
           continue;
         }
-        throw lastErr;
+        throw this.emitExchangeError(clean, lastErr, {
+          attempt: attempt + 1,
+          streamed: true,
+          totalMs: Date.now() - reqStart,
+        });
       }
 
       // HTTP 5xx on stream → retry (and optionally fall back to non-stream after repeated failures)
@@ -868,11 +945,16 @@ export class OpenAIClient {
         const compat = this.detectToolCallCompatFailure(text);
         if (compat) {
           if (switchedToContentModeThisCall) {
-            throw makeClientError(
+            const compatErr = makeClientError(
               `Tool-call compatibility failure persisted after content-mode switch (${compat.kind}). Aborting to avoid retry loop.\n${text.slice(0, 2000)}`,
               res.status,
               false
             );
+            throw this.emitExchangeError(clean, compatErr, {
+              attempt: attempt + 1,
+              streamed: true,
+              totalMs: Date.now() - reqStart,
+            });
           }
           this.log(`Detected ${compat.reason} — switching to content-mode tool calls`);
           console.warn(
@@ -890,11 +972,16 @@ export class OpenAIClient {
           this.log(
             `Deterministic server error detected (same ${res.status} repeated) — not retrying`
           );
-          throw makeClientError(
+          const deterministicErr = makeClientError(
             `Server returns the same error repeatedly (${res.status}). This is likely a template or model compatibility issue, not a transient failure.\n${text.slice(0, 2000)}`,
             res.status,
             false // not retryable
           );
+          throw this.emitExchangeError(clean, deterministicErr, {
+            attempt: attempt + 1,
+            streamed: true,
+            totalMs: Date.now() - reqStart,
+          });
         }
         seen5xxMessages.push(errSig);
 
@@ -917,16 +1004,27 @@ export class OpenAIClient {
 
       if (!res.ok) {
         const text = await res.text().catch(() => '');
-        throw makeClientError(
+        const httpErr = makeClientError(
           `POST /chat/completions (stream) failed: ${res.status} ${res.statusText}${text ? `\n${text.slice(0, 2000)}` : ''}`,
           res.status,
           false
         );
+        throw this.emitExchangeError(clean, httpErr, {
+          attempt: attempt + 1,
+          streamed: true,
+          totalMs: Date.now() - reqStart,
+        });
       }
 
       // --- Parse SSE stream with read timeout ---
       const reader = res.body?.getReader();
-      if (!reader) throw new Error('No response body to read (stream)');
+      if (!reader) {
+        throw this.emitExchangeError(clean, new Error('No response body to read (stream)'), {
+          attempt: attempt + 1,
+          streamed: true,
+          totalMs: Date.now() - reqStart,
+        });
+      }
 
       const decoder = new TextDecoder();
       let buf = '';
@@ -1027,11 +1125,16 @@ export class OpenAIClient {
             return partial;
           }
 
-          throw makeClientError(
+          const streamTimeoutErr = makeClientError(
             `Stream read timeout (${readTimeout}ms) with no data received`,
             undefined,
             true
           );
+          throw this.emitExchangeError(clean, streamTimeoutErr, {
+            attempt: attempt + 1,
+            streamed: true,
+            totalMs: Date.now() - reqStart,
+          });
         }
 
         if (result === 'CANCELLED') continue; // timeout was cancelled, read won
@@ -1228,7 +1331,11 @@ export class OpenAIClient {
       return streamResult;
     }
 
-    throw lastErr;
+    throw this.emitExchangeError(clean, lastErr, {
+      attempt: 3,
+      streamed: true,
+      totalMs: Date.now() - reqStart,
+    });
   }
 
   /**
