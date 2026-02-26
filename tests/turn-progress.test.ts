@@ -21,6 +21,8 @@ describe('TurnProgressController', () => {
     const snap = c.snapshot('manual');
     assert.equal(snap.startedAt, 10_000);
     assert.equal(snap.elapsedMs, 0);
+    assert.equal(snap.phase, 'runtime_preflight');
+    assert.ok(snap.statusLine.includes('Pre-flight checks'));
     c.stop();
   });
 
