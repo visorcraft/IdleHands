@@ -114,7 +114,7 @@ export function formatStatusLine(
   if (snap.phase === 'complete') return `✅ Done (${total})`;
   if (snap.phase === 'runtime_preflight') return `⚙️ Pre-flight checks (${total})`;
   if (snap.phase === 'planning') return `📋 Planning (${total})`;
-  if (snap.phase === 'queued') return `⏳ Queued (${total})`;
+  if (snap.phase === 'queued') return `⏳ Starting (${total})`;
   return `⏳ Executing (${total})`;
 }
 
@@ -137,7 +137,7 @@ export class TurnProgressController {
   private lastActivityMs: number = 0;
   private lastTurnEnd?: TurnEndEvent;
   private lastHeartbeatAt: number = 0;
-  private phase: TurnProgressPhase = 'queued';
+  private phase: TurnProgressPhase = 'runtime_preflight';
   private statusLine: string = '';
   private toolLines: string[] = [];
   private activeTool?: {
@@ -223,6 +223,7 @@ export class TurnProgressController {
     this.lastActivityMs = now;
     this.lastHeartbeatAt = now;
     this.lastStatusLine = '';
+    this.phase = 'runtime_preflight';
     this.statusLine = formatStatusLine({
       phase: this.phase,
       elapsedBucketMs: 0,
