@@ -82,6 +82,7 @@ import {
   stripThinking,
   estimateTokensFromMessages,
   estimateToolSchemaTokens,
+  rollingCompressToolResults,
 } from './history.js';
 import { truncateToolResultContent } from './agent/context-budget.js';
 import { HookManager, loadHookPlugins } from './hooks/index.js';
@@ -2910,7 +2911,22 @@ export async function createSession(opts: {
 
         const compactionStartMs = Date.now();
         await runCompactionWithLock('auto context-budget compaction', async () => {
-          const beforeMsgs = messages;
+          let beforeMsgs = messages;
+
+          // Rolling compression: shrink old read_file/read_files/exec results
+          const rolling = rollingCompressToolResults({
+            messages: beforeMsgs,
+            freshCount: cfg.rolling_compress_fresh_count ?? cfg.compact_min_tail ?? 12,
+            maxChars: cfg.rolling_compress_max_chars ?? 1500,
+            toolNameByCallId,
+          });
+          if (rolling.compressedCount > 0) {
+            beforeMsgs = rolling.messages;
+            if (cfg.verbose) {
+              console.error(`[rolling-compress] ${rolling.compressedCount} results, ~${Math.ceil(rolling.charsSaved / 4)} tokens freed`);
+            }
+          }
+
           const beforeTokens = estimateTokensCached(beforeMsgs);
           const compacted = enforceContextBudget({
             messages: beforeMsgs,

@@ -335,6 +335,8 @@ export type IdlehandsConfig = {
   compact_summary?: boolean; // LLM-based summarization on compaction (default: true)
   compact_summary_max_tokens?: number; // Max tokens for summary (default 300)
   compact_min_tail?: number; // Override minTailMessages (default 12)
+  rolling_compress_fresh_count?: number; // tail messages kept uncompressed (default: 12)
+  rolling_compress_max_chars?: number;   // max chars for compressed results (default: 1500)
   show_change_summary?: boolean;
   step_mode?: boolean;
   editor?: string;
