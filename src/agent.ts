@@ -2804,6 +2804,14 @@ export async function createSession(opts: {
         }
       }
 
+      // Skip lens+digest compaction for read_file/read_files – the model
+      // explicitly asked for file content and needs to see it in context.
+      // Context size is already bounded by max_read_lines config.
+      const skipCompaction = toolName === 'read_file' || toolName === 'read_files';
+      if (skipCompaction) {
+        return rawMsg;
+      }
+
       let compact = rawContent;
       if (lens) {
         try {
