@@ -49,6 +49,7 @@ export function helpCommand(surface: 'telegram' | 'discord'): CmdResult {
     '/pin — Pin current working directory',
     '/unpin — Unpin working directory',
     '/model — Show current model',
+    '/capture on|off|last [path] — Capture model req/resp payloads',
     '/approval [mode] — Get/set approval mode',
     '/mode [code|sys|status] — Get/set mode',
     '/routing_mode [auto|fast|heavy|status] — Get/set routing mode',
@@ -57,6 +58,10 @@ export function helpCommand(surface: 'telegram' | 'discord'): CmdResult {
     '/undo — Undo last edit',
     '/subagents [on|off] — Toggle sub-agents',
     '/vault <query> — Search vault entries',
+    '/hooks [status|plugins|errors|slow] — Inspect hook ecosystem',
+    '/cost — Estimate session API costs',
+    '/metrics — Show session metrics',
+    '/mcp_discover — Discover MCP servers from project files',
     '/anton <file> — Start autonomous task runner',
     '/anton status | /anton stop | /anton last',
   ];
@@ -120,6 +125,19 @@ export function statusCommand(managed: ManagedLike, extra?: { maxQueue?: number 
         : `${managed.pendingQueue.length} pending`,
     ]
   );
+
+  if (s.lastTurnDebug) {
+    const d = s.lastTurnDebug;
+    kv.push(
+      ['Route', `${d.selectedMode} (${d.selectedModeSource})`],
+      ['Route model', d.model, true],
+      ['Route provider', d.provider],
+      [
+        'Payload',
+        `prompt_bytes=${(d.promptBytes ?? 0).toLocaleString()}, tool_bytes=${(d.toolSchemaBytes ?? 0).toLocaleString()}, tool_count=${d.toolCount ?? 0}`,
+      ]
+    );
+  }
 
   return { title: 'Session Status', kv };
 }

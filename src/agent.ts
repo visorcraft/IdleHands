@@ -61,8 +61,11 @@ import { PromptGuard } from './security/prompt-guard.js';
 import { ResponseCache } from './agent/response-cache.js';
 import { resilientCall } from './agent/resilient-provider.js';
 import { ToolLoopGuard } from './agent/tool-loop-guard.js';
+import { CaptureManager } from './agent/capture.js';
+import { ClientPool } from './agent/client-pool.js';
+import { ConversationBranch } from './agent/conversation-branch.js';
 import { isLspTool, isMutationTool, isReadOnlyTool, planModeSummary } from './agent/tool-policy.js';
-import { buildToolsSchema } from './agent/tools-schema.js';
+import { applyContextAwareToolDescriptions, buildToolsSchema } from './agent/tools-schema.js';
 import { OpenAIClient } from './client.js';
 import { loadProjectContext } from './context.js';
 import { loadGitContext, isGitDirty, stashWorkingTree } from './git.js';
@@ -90,10 +93,12 @@ import {
 import { ReplayStore } from './replay.js';
 import { checkExecSafety, checkPathSafety } from './safety.js';
 import { decideTurnRoute } from './routing/turn-router.js';
+import { RouteHysteresis } from './routing/hysteresis.js';
 import { normalizeApprovalMode } from './shared/config-utils.js';
 import { collectSnapshot } from './sys/context.js';
 import { ToolError, ValidationError } from './tools/tool-error.js';
 import * as tools from './tools.js';
+import { EditTransaction } from './tools/transaction.js';
 import type {
   ChatMessage,
   ConfirmationProvider,
@@ -193,6 +198,24 @@ export type TurnPerformance = {
   health?: ServerHealthSnapshot;
 };
 
+export type TurnRoutingDebug = {
+  requestedMode: string;
+  selectedMode: string;
+  selectedModeSource: string;
+  classificationHint: string | null;
+  provider: string;
+  model: string;
+  runtimeRoute: boolean;
+  compactPrelude: boolean;
+  fastLaneToolless: boolean;
+  fastLaneSlimTools?: boolean;
+  promptBytes?: number;
+  toolSchemaBytes?: number;
+  toolSchemaTokens?: number;
+  toolCount?: number;
+  streamFallback?: string;
+};
+
 export type PerfSummary = {
   turns: number;
   totalTokens: number;
@@ -219,6 +242,13 @@ export type AgentSession = {
     instruction: UserContent,
     hooks?: ((t: string) => void) | AgentHooks
   ) => Promise<AgentResult>;
+  rollbackLastTurnEdits: () => Promise<{
+    ok: boolean;
+    error?: string;
+    results?: Array<{ path: string; ok: boolean; error?: string }>;
+  }>;
+  rollback: () => { preview: string; removedMessages: number } | null;
+  listCheckpoints: () => Array<{ messageCount: number; createdAt: number; preview: string }>;
   setModel: (name: string) => void;
   setEndpoint: (endpoint: string, modelName?: string) => Promise<void>;
   listModels: () => Promise<string[]>;
@@ -244,6 +274,9 @@ export type AgentSession = {
   captureOn: (filePath?: string) => Promise<string>;
   captureOff: () => void;
   captureLast: (filePath?: string) => Promise<string>;
+  captureSetRedact: (enabled: boolean) => void;
+  captureGetRedact: () => boolean;
+  captureOpen: () => string | null;
   capturePath?: string;
   getSystemPrompt: () => string;
   setSystemPrompt: (prompt: string) => void;
@@ -266,6 +299,7 @@ export type AgentSession = {
   hookManager?: HookManager;
   lastEditedPath?: string;
   lastTurnMetrics?: TurnPerformance;
+  lastTurnDebug?: TurnRoutingDebug;
   lastServerHealth?: ServerHealthSnapshot;
   /** Plan mode: accumulated steps from the last ask() in plan mode */
   planSteps: PlanStep[];
@@ -512,7 +546,14 @@ export async function createSession(opts: {
   const mcpLazySchemaMode = Boolean(mcpManager && mcpHasEnabledTools);
   let mcpToolsLoaded = !mcpLazySchemaMode;
 
-  const getToolsSchema = () =>
+  const routeHysteresis = new RouteHysteresis({
+    minDwell: (cfg.routing as any)?.hysteresisMinDwell ?? 2,
+    enabled: (cfg.routing as any)?.hysteresis !== false,
+  });
+
+  const conversationBranch = new ConversationBranch();
+
+  const getToolsSchema = (slimFast?: boolean) =>
     buildToolsSchema({
       activeVaultTools,
       passiveVault: !activeVaultTools && vaultEnabled && vaultMode === 'passive',
@@ -520,8 +561,157 @@ export async function createSession(opts: {
       lspTools: lspManager?.hasServers() === true,
       mcpTools: mcpToolsLoaded ? (mcpManager?.getEnabledToolSchemas() ?? []) : [],
       allowSpawnTask: spawnTaskEnabled,
+      slimFast,
     });
 
+  const collectToolContext = () => {
+    const recentTools = recentToolUsage.map((row) => row.tool);
+    const recentPaths = recentToolUsage.flatMap((row) => row.paths);
+
+    const dedupeRecent = (items: string[], max: number) => {
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i];
+        if (seen.has(item)) continue;
+        seen.add(item);
+        out.push(item);
+        if (out.length >= max) break;
+      }
+      return out.reverse();
+    };
+
+    return {
+      lastTool: recentTools[recentTools.length - 1],
+      recentTools: dedupeRecent(recentTools, 12),
+      recentPaths: dedupeRecent(recentPaths, 8),
+    };
+  };
+
+  const extractToolPaths = (toolName: string, args: Record<string, unknown>) => {
+    const out: string[] = [];
+    const add = (value: unknown) => {
+      if (typeof value !== 'string') return;
+      const v = value.trim();
+      if (!v) return;
+      out.push(v);
+    };
+
+    if (!args || typeof args !== 'object') return out;
+
+    if (toolName === 'read_files') {
+      const reqs = args.requests;
+      if (Array.isArray(reqs)) {
+        for (const r of reqs) {
+          if (r && typeof r === 'object' && 'path' in (r as any)) {
+            add((r as any).path);
+          }
+        }
+      }
+    }
+
+    if (toolName === 'search_files' || toolName === 'list_dir' || toolName === 'read_file') {
+      add(args.path);
+    }
+
+    if (toolName === 'exec' && typeof args.cwd === 'string') {
+      add(args.cwd);
+    }
+
+    if (
+      (toolName === 'edit_range' ||
+        toolName === 'write_file' ||
+        toolName === 'edit_file' ||
+        toolName === 'insert_file' ||
+        toolName === 'lsp_diagnostics' ||
+        toolName === 'lsp_symbols' ||
+        toolName === 'lsp_hover' ||
+        toolName === 'lsp_definition' ||
+        toolName === 'lsp_references') &&
+      typeof args.path === 'string'
+    ) {
+      add(args.path);
+    }
+
+    return out;
+  };
+
+  const recordToolUsageForHints = (toolName: string, args: Record<string, unknown>) => {
+    const paths = extractToolPaths(toolName, args);
+    recentToolUsage.push({
+      tool: toolName,
+      paths,
+    });
+    if (recentToolUsage.length > 60) recentToolUsage.shift();
+  };
+
+  const extractPartialToolArgsPreview = (
+    toolName: string,
+    rawArgs: string
+  ): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    const text = String(rawArgs ?? '');
+    if (!text.trim()) return out;
+
+    const pickString = (key: string): string | undefined => {
+      const m = text.match(new RegExp(`"${key}"\\s*:\\s*"([^\\n\"]*)`));
+      return m?.[1];
+    };
+
+    const pickNumber = (key: string): number | undefined => {
+      const m = text.match(new RegExp(`"${key}"\\s*:\\s*(-?\\d+)`));
+      if (!m) return undefined;
+      const n = Number.parseInt(m[1], 10);
+      return Number.isFinite(n) ? n : undefined;
+    };
+
+    const pathLikeTools = new Set([
+      'read_file',
+      'write_file',
+      'edit_range',
+      'edit_file',
+      'insert_file',
+      'list_dir',
+      'lsp_diagnostics',
+      'lsp_symbols',
+      'lsp_hover',
+      'lsp_definition',
+      'lsp_references',
+    ]);
+
+    if (pathLikeTools.has(toolName)) {
+      const path = pickString('path');
+      if (path) out.path = path;
+    }
+
+    if (toolName === 'search_files') {
+      const pattern = pickString('pattern');
+      const path = pickString('path');
+      if (pattern) out.pattern = pattern;
+      if (path) out.path = path;
+    }
+
+    if (toolName === 'exec') {
+      const command = pickString('command');
+      const cwd = pickString('cwd');
+      if (command) out.command = command;
+      if (cwd) out.cwd = cwd;
+    }
+
+    if (toolName === 'vault_search') {
+      const query = pickString('query');
+      if (query) out.query = query;
+    }
+
+    if (toolName === 'edit_range') {
+      const start = pickNumber('start_line');
+      const end = pickNumber('end_line');
+      if (start != null) out.start_line = start;
+      if (end != null) out.end_line = end;
+    }
+
+    return out;
+  };
   const vault = vaultEnabled
     ? (opts.runtime?.vault ??
       new VaultStore({
@@ -702,6 +892,27 @@ export async function createSession(opts: {
     }
   }
 
+  const buildCompactSessionMeta = (): string => {
+    const caps: string[] = [];
+    if (vaultEnabled) caps.push('vault');
+    if (lspManager?.hasServers()) caps.push('lsp');
+    if (mcpManager) caps.push('mcp');
+    if (spawnTaskEnabled) caps.push('subagents');
+
+    const lines = [
+      `[cwd: ${cfg.dir}]`,
+      `[harness: ${harness.id}]`,
+      '[fast-lane prelude: concise response by default; ask for details if needed.]',
+      caps.length ? `[optional capabilities: ${caps.join(', ')}]` : '',
+    ].filter(Boolean);
+
+    const maxChars = (cfg.routing as any)?.fastCompactPreludeMaxChars ?? 320;
+    const joined = lines.join('\n');
+    return joined.length > maxChars ? `${joined.slice(0, maxChars - 1)}…` : joined;
+  };
+
+  const compactSessionMeta = buildCompactSessionMeta();
+
   const defaultSystemPromptBase = SYSTEM_PROMPT;
   let activeSystemPromptBase = (cfg.system_prompt_override ?? '').trim() || defaultSystemPromptBase;
   let systemPromptOverridden = (cfg.system_prompt_override ?? '').trim().length > 0;
@@ -740,8 +951,11 @@ export async function createSession(opts: {
     messages = [{ role: 'system', content: effective }];
     sessionMetaPending = sessionMeta;
     lastEditedPath = undefined;
+    recentToolUsage.length = 0;
     initialConnectionProbeDone = false;
     mcpToolsLoaded = !mcpLazySchemaMode;
+    routeHysteresis.reset();
+    conversationBranch.reset();
   };
 
   const restore = (next: ChatMessage[]) => {
@@ -771,6 +985,10 @@ export async function createSession(opts: {
   let inFlight: AbortController | null = null;
   let initialConnectionProbeDone = false;
   let lastEditedPath: string | undefined;
+  let lastTurnTransaction: EditTransaction | undefined;
+
+  // Context for adaptive tool schema hints (recent tool actions and paths).
+  const recentToolUsage: Array<{ tool: string; paths: string[] }> = [];
 
   // Plan mode state (Phase 8)
   let planSteps: PlanStep[] = [];
@@ -1484,6 +1702,7 @@ export async function createSession(opts: {
   const ppSamples: number[] = [];
   const tgSamples: number[] = [];
   let lastTurnMetrics: TurnPerformance | undefined;
+  let lastTurnDebug: TurnRoutingDebug | undefined;
   let lastServerHealth: ServerHealthSnapshot | undefined;
   let lastToolLoopStats: {
     totalHistory: number;
@@ -1518,79 +1737,34 @@ export async function createSession(opts: {
   };
   let lastModelsProbeMs = 0;
 
-  const capturesDir = path.join(stateDir(), 'captures');
-  let captureEnabled = false;
-  let capturePath: string | undefined;
-  let lastCaptureRecord: any | null = null;
-  const routedClients = new Map<string, OpenAIClient>();
-  const probedEndpoints = new Set<string>();
-
+  const capture = new CaptureManager(stateDir());
   const normalizeEndpoint = (endpoint: string): string => endpoint.trim().replace(/\/+$/, '');
 
-  const defaultCapturePath = () => {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    return path.join(capturesDir, `${stamp}.jsonl`);
-  };
+  const clientPool = new ClientPool({
+    primary: client as any,
+    primaryEndpoint: cfg.endpoint,
+    apiKey: opts.apiKey,
+    cfg,
+    capture,
+    ClientCtor: OpenAIClient as any,
+  });
 
-  const appendCaptureRecord = async (record: any, outPath: string) => {
-    await fs.mkdir(path.dirname(outPath), { recursive: true });
-    await fs.appendFile(outPath, JSON.stringify(record) + '\n', 'utf8');
-  };
-
+  // Thin wrapper used by setEndpoint when primary client is replaced.
   const applyClientRuntimeOptions = (target: OpenAIClient) => {
-    if (typeof (target as any).setVerbose === 'function') {
-      (target as any).setVerbose(cfg.verbose);
-    }
-    if (typeof cfg.response_timeout === 'number' && cfg.response_timeout > 0) {
-      target.setResponseTimeout(cfg.response_timeout);
-    }
-    if (
-      typeof (target as any).setConnectionTimeout === 'function' &&
-      typeof cfg.connection_timeout === 'number' &&
-      cfg.connection_timeout > 0
-    ) {
-      (target as any).setConnectionTimeout(cfg.connection_timeout);
-    }
-    if (
-      typeof (target as any).setInitialConnectionCheck === 'function' &&
-      typeof cfg.initial_connection_check === 'boolean'
-    ) {
-      (target as any).setInitialConnectionCheck(cfg.initial_connection_check);
-    }
-    if (
-      typeof (target as any).setInitialConnectionProbeTimeout === 'function' &&
-      typeof cfg.initial_connection_timeout === 'number' &&
-      cfg.initial_connection_timeout > 0
-    ) {
-      (target as any).setInitialConnectionProbeTimeout(cfg.initial_connection_timeout);
-    }
+    if (typeof (target as any).setVerbose === 'function') (target as any).setVerbose(cfg.verbose);
+    if (typeof cfg.response_timeout === 'number' && cfg.response_timeout > 0) target.setResponseTimeout(cfg.response_timeout);
+    if (typeof (target as any).setConnectionTimeout === 'function' && typeof cfg.connection_timeout === 'number' && cfg.connection_timeout > 0) (target as any).setConnectionTimeout(cfg.connection_timeout);
+    if (typeof (target as any).setInitialConnectionCheck === 'function' && typeof cfg.initial_connection_check === 'boolean') (target as any).setInitialConnectionCheck(cfg.initial_connection_check);
+    if (typeof (target as any).setInitialConnectionProbeTimeout === 'function' && typeof cfg.initial_connection_timeout === 'number' && cfg.initial_connection_timeout > 0) (target as any).setInitialConnectionProbeTimeout(cfg.initial_connection_timeout);
   };
 
   const attachCaptureHook = (target: OpenAIClient) => {
     if (typeof (target as any).setExchangeHook !== 'function') return;
-    (target as any).setExchangeHook(async (record: any) => {
-      lastCaptureRecord = record;
-      if (!captureEnabled) return;
-      const outFile = capturePath || defaultCapturePath();
-      capturePath = outFile;
-      await appendCaptureRecord(record, outFile);
-    });
+    (target as any).setExchangeHook(capture.createExchangeHook());
   };
 
-  const getClientForEndpoint = (endpoint?: string): OpenAIClient => {
-    if (!endpoint) return client;
-    const normalized = normalizeEndpoint(endpoint);
-    if (!normalized || normalized === normalizeEndpoint(cfg.endpoint)) return client;
-
-    const existing = routedClients.get(normalized);
-    if (existing) return existing;
-
-    const routed = new OpenAIClient(normalized, opts.apiKey, cfg.verbose);
-    applyClientRuntimeOptions(routed);
-    attachCaptureHook(routed);
-    routedClients.set(normalized, routed);
-    return routed;
-  };
+  const getClientForEndpoint = (endpoint?: string): OpenAIClient =>
+    clientPool.getForEndpoint(endpoint) as unknown as OpenAIClient;
 
   let runtimeRoutingModules:
     | {
@@ -1874,8 +2048,8 @@ export async function createSession(opts: {
 
     applyClientRuntimeOptions(client);
 
-    routedClients.clear();
-    probedEndpoints.clear();
+    clientPool.setPrimary(client as any);
+    clientPool.reset();
     wireCaptureHook();
 
     modelsList = normalizeModelsResponse(await client.models());
@@ -1888,27 +2062,12 @@ export async function createSession(opts: {
     setModel(chosen);
   };
 
-  const captureOn = async (filePath?: string): Promise<string> => {
-    const target = filePath?.trim() ? path.resolve(filePath) : defaultCapturePath();
-    await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.appendFile(target, '', 'utf8');
-    captureEnabled = true;
-    capturePath = target;
-    return target;
-  };
-
-  const captureOff = () => {
-    captureEnabled = false;
-  };
-
-  const captureLast = async (filePath?: string): Promise<string> => {
-    if (!lastCaptureRecord) {
-      throw new Error('No captured request/response pair is available yet.');
-    }
-    const target = filePath?.trim() ? path.resolve(filePath) : capturePath || defaultCapturePath();
-    await appendCaptureRecord(lastCaptureRecord, target);
-    return target;
-  };
+  const captureOn = (filePath?: string) => capture.on(filePath);
+  const captureOff = () => capture.off();
+  const captureSetRedact = (enabled: boolean) => capture.setRedact(enabled);
+  const captureGetRedact = () => capture.getRedact();
+  const captureOpen = () => capture.open();
+  const captureLast = (filePath?: string) => capture.last(filePath);
 
   const listMcpServers = (): McpServerStatus[] => {
     return mcpManager?.listServers() ?? [];
@@ -1944,7 +2103,7 @@ export async function createSession(opts: {
   const close = async () => {
     await mcpManager?.close().catch(() => {});
     await lspManager?.close().catch(() => {});
-    routedClients.clear();
+    await clientPool.closeAll();
     vault?.close();
     lens?.close();
   };
@@ -2057,16 +2216,47 @@ export async function createSession(opts: {
     const wallStart = Date.now();
 
     const delegationForbiddenByUser = userDisallowsDelegation(instruction);
+    const rawInstructionText = userContentToText(instruction).trim();
+
+    // Route early so first-turn prelude/tool choices can adapt.
+    const turnRoute = decideTurnRoute(cfg, rawInstructionText, model);
+
+    // Apply hysteresis to suppress rapid lane thrashing in auto mode.
+    const hysteresisResult = routeHysteresis.apply(
+      turnRoute.selectedMode,
+      turnRoute.selectedModeSource
+    );
+    if (hysteresisResult.suppressed) {
+      // Override the selected mode with the hysteresis-stabilized lane.
+      turnRoute.selectedMode = hysteresisResult.lane;
+      turnRoute.selectedModeSource = 'hysteresis';
+    }
+
+    const routeFastByAuto =
+      turnRoute.requestedMode === 'auto' &&
+      turnRoute.selectedMode === 'fast' &&
+      turnRoute.selectedModeSource !== 'override';
+    const compactPreludeEnabled = (cfg.routing as any)?.fastCompactPrelude !== false;
+    // Never use compact prelude when the harness injected format reminders
+    // (e.g. tool_calls format for nemotron) — those are critical for correctness.
+    const hasHarnessInjection = sessionMetaPending
+      ? sessionMetaPending.includes('Use the tool_calls mechanism') ||
+        sessionMetaPending.includes('[Format reminder]')
+      : false;
+    const useCompactPrelude = Boolean(
+      sessionMetaPending && compactPreludeEnabled && routeFastByAuto && !hasHarnessInjection
+    );
 
     // Prepend session meta to the first user instruction (§9b: variable context
     // goes in first user message, not system prompt, to preserve KV cache).
     // This avoids two consecutive user messages without an assistant response.
     let userContent: UserContent = instruction;
     if (sessionMetaPending) {
+      const prelude = useCompactPrelude ? compactSessionMeta : sessionMetaPending;
       if (typeof instruction === 'string') {
-        userContent = `${sessionMetaPending}\n\n${instruction}`;
+        userContent = `${prelude}\n\n${instruction}`;
       } else {
-        userContent = [{ type: 'text', text: sessionMetaPending }, ...instruction];
+        userContent = [{ type: 'text', text: prelude }, ...instruction];
       }
       sessionMetaPending = null;
     }
@@ -2106,6 +2296,12 @@ export async function createSession(opts: {
       }
     }
 
+    // Save rollback checkpoint before this turn (captures pre-turn state).
+    conversationBranch.checkpoint(
+      messages.length,
+      typeof instruction === 'string' ? instruction : '[multimodal]'
+    );
+
     messages.push({ role: 'user', content: userContent });
 
     const hookObj: AgentHooks = typeof hooks === 'function' ? { onToken: hooks } : (hooks ?? {});
@@ -2141,10 +2337,11 @@ export async function createSession(opts: {
     const emitToolCall = async (
       id: string,
       name: string,
-      args: Record<string, unknown>
+      args: Record<string, unknown>,
+      phase: ToolCallEvent['phase'] = 'executing'
     ): Promise<void> => {
       if (!hasOnToolCall && !hooksEnabled) return;
-      const call: ToolCallEvent = { id, name, args };
+      const call: ToolCallEvent = { id, name, args, phase };
       if (hasOnToolCall) hookObj.onToolCall?.(call);
       if (hooksEnabled) {
         await hookManager.emit('tool_call', { askId, turn: turns, call });
@@ -2244,7 +2441,6 @@ export async function createSession(opts: {
       return { text: finalText, turns, toolCalls };
     };
 
-    const rawInstructionText = userContentToText(instruction).trim();
     lastAskInstructionText = rawInstructionText;
     lastCompactionReminderObjective = '';
     if (hooksEnabled)
@@ -2263,7 +2459,7 @@ export async function createSession(opts: {
         await (client as any).probeConnection();
         initialConnectionProbeDone = true;
         if (typeof (client as any).getEndpoint === 'function') {
-          probedEndpoints.add(normalizeEndpoint((client as any).getEndpoint()));
+          clientPool.markProbed((client as any).getEndpoint());
         }
       }
     }
@@ -2324,18 +2520,31 @@ export async function createSession(opts: {
       return await finalizeAsk(miss);
     }
 
-    const turnRoute = decideTurnRoute(cfg, rawInstructionText, model);
     const primaryRoute = turnRoute.providerTargets[0];
     const runtimeModelIds = await loadRuntimeModelIds();
 
     const routeRuntimeFallbackModels = (primaryRoute?.fallbackModels ?? []).filter((m) =>
       runtimeModelIds.has(m)
     );
-    const routeApiFallbackModels = (primaryRoute?.fallbackModels ?? []).filter(
-      (m) => !runtimeModelIds.has(m)
-    );
+    const apiProviderTargets = turnRoute.providerTargets.map((target) => ({
+      ...target,
+      fallbackModels: (target.fallbackModels ?? []).filter((m) => !runtimeModelIds.has(m)),
+    }));
+    const routeApiFallbackModels = apiProviderTargets[0]?.fallbackModels ?? [];
 
     const primaryUsesRuntimeModel = !!primaryRoute?.model && runtimeModelIds.has(primaryRoute.model);
+    const fastLaneToolless =
+      (cfg.routing as any)?.fastLaneToolless !== false &&
+      routeFastByAuto &&
+      turnRoute.classificationHint === 'fast';
+
+    // Fast-lane slim tools: on subsequent turns of a fast-route ask, include only
+    // read-only / lightweight tools to reduce per-turn token overhead (~40-50%).
+    // Only active when the classifier explicitly said 'fast' (not heuristic/fallback).
+    const fastLaneSlimTools =
+      (cfg.routing as any)?.fastLaneSlimTools !== false &&
+      routeFastByAuto &&
+      turnRoute.classificationHint === 'fast';
 
     // Non-runtime route models can be selected directly in-session.
     if (!primaryUsesRuntimeModel && primaryRoute?.model && primaryRoute.model !== model) {
@@ -2360,6 +2569,8 @@ export async function createSession(opts: {
       } else if (routeApiFallbackModels.length) {
         routeParts.push(`api_fallbacks=${routeApiFallbackModels.join(',')}`);
       }
+      if (useCompactPrelude) routeParts.push('compact_prelude=on');
+      if (fastLaneToolless) routeParts.push('fast_toolless=on');
       console.error(`[routing] ${routeParts.join(' ')}`);
     }
 
@@ -2486,6 +2697,8 @@ export async function createSession(opts: {
     const toolLoopWarningKeys = new Set<string>();
     let forceToollessRecoveryTurn = false;
     let toollessRecoveryUsed = false;
+    const streamedToolCallPreviews = new Set<string>();
+    const streamedToolCallPreviewScores = new Map<string, number>();
 
     // ── Security: credential leak detection + prompt injection guard ──
     const leakDetector = new LeakDetector();
@@ -2826,13 +3039,74 @@ export async function createSession(opts: {
         };
 
         let resp;
+        let streamFallbackDiag: string | undefined;
         try {
           try {
+            // turns is 1-indexed (incremented at loop top), so first iteration = 1.
+            const forceToollessByRouting = fastLaneToolless && turns === 1;
+            // On fast-lane subsequent turns, slim the schema to read-only tools.
+            const useSlimFast = !forceToollessByRouting && fastLaneSlimTools && turns > 1;
+            const schemaContext = collectToolContext();
             const toolsForTurn =
-              cfg.no_tools || forceToollessRecoveryTurn
+              cfg.no_tools || forceToollessRecoveryTurn || forceToollessByRouting
                 ? []
-                : getToolsSchema().filter((t) => !suppressedTools.has(t.function.name));
-            const toolChoiceForTurn = cfg.no_tools || forceToollessRecoveryTurn ? 'none' : 'auto';
+                : applyContextAwareToolDescriptions(
+                    getToolsSchema(useSlimFast).filter((t) => !suppressedTools.has(t.function.name)),
+                    schemaContext
+                  );
+            const toolChoiceForTurn =
+              cfg.no_tools || forceToollessRecoveryTurn || forceToollessByRouting ? 'none' : 'auto';
+
+            const promptBytesEstimate = Buffer.byteLength(JSON.stringify(messages), 'utf8');
+            const toolSchemaBytesEstimate = toolsForTurn.length
+              ? Buffer.byteLength(JSON.stringify(toolsForTurn), 'utf8')
+              : 0;
+            const toolSchemaTokenEstimate = estimateToolSchemaTokens(toolsForTurn);
+
+            lastTurnDebug = {
+              requestedMode: turnRoute.requestedMode,
+              selectedMode: turnRoute.selectedMode,
+              selectedModeSource: turnRoute.selectedModeSource,
+              classificationHint: turnRoute.classificationHint,
+              provider: primaryRoute?.name ?? 'default',
+              model: primaryRoute?.model ?? model,
+              runtimeRoute: primaryUsesRuntimeModel,
+              compactPrelude: useCompactPrelude,
+              fastLaneToolless,
+              fastLaneSlimTools: useSlimFast,
+              promptBytes: promptBytesEstimate,
+              toolSchemaBytes: toolSchemaBytesEstimate,
+              toolSchemaTokens: toolSchemaTokenEstimate,
+              toolCount: toolsForTurn.length,
+            };
+
+            if (cfg.verbose) {
+              console.error(
+                `[turn-debug] prompt_bytes=${promptBytesEstimate} tools=${toolsForTurn.length} tool_schema_bytes=${toolSchemaBytesEstimate} tool_schema_tokens~=${toolSchemaTokenEstimate}`
+              );
+            }
+
+            const noteStreamFallback = (providerName: string, response: any) => {
+              const fallback = response?.meta?.stream_fallback;
+              if (!fallback || typeof fallback !== 'object') return;
+
+              const reason = String((fallback as any).reason ?? 'unknown');
+              const attempt = Number((fallback as any).attempt ?? NaN);
+              const status = Number((fallback as any).status ?? NaN);
+              const detail = [
+                Number.isFinite(attempt) ? `attempt=${attempt}` : null,
+                Number.isFinite(status) ? `status=${status}` : null,
+              ]
+                .filter(Boolean)
+                .join(' ');
+
+              streamFallbackDiag = `${providerName}:${reason}${detail ? ` (${detail})` : ''}`;
+              if (cfg.verbose) {
+                console.warn(
+                  `[routing] stream fallback provider=${providerName} reason=${reason}${detail ? ` ${detail}` : ''}`
+                );
+              }
+            };
 
             // ── Response cache: check for cached response ──────────────
             // Only cache tool-less turns (final answers, explanations) since
@@ -2878,6 +3152,48 @@ export async function createSession(opts: {
                 requestId: `r${reqCounter}`,
                 onToken: hookObj.onToken,
                 onFirstDelta,
+                onToolCallDelta: (delta: {
+                  index: number;
+                  id?: string;
+                  name?: string;
+                  argumentsSoFar?: string;
+                  done?: boolean;
+                }) => {
+                  const name = typeof delta?.name === 'string' ? delta.name : '';
+                  if (!name) return;
+
+                  const id = typeof delta?.id === 'string' && delta.id.trim().length
+                    ? delta.id
+                    : `stream_call_${delta.index}`;
+                  const previewKey = `${turns}:${id}:${name}`;
+
+                  let parsedArgs: Record<string, unknown> = {};
+                  const rawArgs =
+                    typeof delta.argumentsSoFar === 'string' ? delta.argumentsSoFar.trim() : '';
+                  if (rawArgs) {
+                    try {
+                      const parsed = parseJsonArgs(rawArgs);
+                      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                        parsedArgs = parsed as Record<string, unknown>;
+                      }
+                    } catch {
+                      // partial JSON chunks are expected during streaming
+                    }
+
+                    if (!Object.keys(parsedArgs).length) {
+                      parsedArgs = extractPartialToolArgsPreview(name, rawArgs);
+                    }
+                  }
+
+                  const score = Object.keys(parsedArgs).length + (rawArgs ? 1 : 0);
+                  const prevScore = streamedToolCallPreviewScores.get(previewKey) ?? 0;
+                  const shouldEmit = !streamedToolCallPreviews.has(previewKey) || score > prevScore;
+                  if (!shouldEmit) return;
+
+                  streamedToolCallPreviews.add(previewKey);
+                  streamedToolCallPreviewScores.set(previewKey, Math.max(prevScore, score));
+                  void emitToolCall(id, name, parsedArgs, 'planned');
+                },
               };
 
               if (primaryUsesRuntimeModel && primaryRoute?.model) {
@@ -2913,51 +3229,95 @@ export async function createSession(opts: {
                     },
                   }
                 );
+                noteStreamFallback('runtime-router', resp);
               } else {
-                const routeEndpoint = primaryRoute?.endpoint;
-                const activeClient = getClientForEndpoint(routeEndpoint);
-                const endpointKey = routeEndpoint ? normalizeEndpoint(routeEndpoint) : undefined;
-                if (endpointKey && !probedEndpoints.has(endpointKey)) {
-                  if (typeof (activeClient as any).probeConnection === 'function') {
-                    try {
-                      await (activeClient as any).probeConnection();
-                    } catch {
-                      // best-effort: if probe fails we still try the call
+                const isLikelyAuthError = (errMsg: string): boolean => {
+                  const lower = errMsg.toLowerCase();
+                  return (
+                    lower.includes('refresh_token_reused') ||
+                    lower.includes('missing bearer') ||
+                    lower.includes('missing api key') ||
+                    lower.includes('invalid api key') ||
+                    lower.includes('authentication failed') ||
+                    lower.includes('unauthorized') ||
+                    lower.includes('forbidden') ||
+                    lower.includes('invalid token')
+                  );
+                };
+
+                const providerFailures: string[] = [];
+                for (const target of apiProviderTargets.length
+                  ? apiProviderTargets
+                  : [{
+                      name: primaryRoute?.name ?? 'default',
+                      endpoint: primaryRoute?.endpoint,
+                      model: primaryRoute?.model ?? model,
+                      fallbackModels: routeApiFallbackModels,
+                    }]) {
+                  const routeEndpoint = target.endpoint;
+                  const activeClient = getClientForEndpoint(routeEndpoint);
+                  if (routeEndpoint) {
+                    await clientPool.probeIfNeeded(routeEndpoint);
+                  }
+
+                  const routeModel = target.model || model;
+                  const modelFallbackMap: Record<string, string[]> = {};
+                  if (target.fallbackModels?.length) {
+                    modelFallbackMap[routeModel] = target.fallbackModels;
+                  }
+
+                  try {
+                    resp = await resilientCall(
+                      [
+                        {
+                          name: target.name ?? 'default',
+                          execute: (m: string) =>
+                            activeClient.chatStream({ ...chatOptsBase, model: m }),
+                        },
+                      ],
+                      routeModel,
+                      {
+                        maxRetries: 0,
+                        modelFallbacks: modelFallbackMap,
+                        onRetry: (info) => {
+                          if (cfg.verbose) {
+                            console.error(
+                              `[routing] retry: provider=${info.provider} model=${info.model} attempt=${info.attempt}/${info.maxAttempts} reason=${info.reason}`
+                            );
+                          }
+                        },
+                      }
+                    );
+                    noteStreamFallback(target.name ?? 'default', resp);
+                    break;
+                  } catch (providerErr: any) {
+                    const errMsg = String(providerErr?.message ?? providerErr ?? 'unknown error');
+                    const compactErr = errMsg.replace(/\s+/g, ' ').trim();
+                    providerFailures.push(`${target.name}: ${compactErr}`);
+
+                    if (cfg.verbose && isLikelyAuthError(errMsg)) {
+                      console.warn(
+                        `[routing] auth/provider failure on ${target.name}; trying next provider fallback`
+                      );
                     }
-                    probedEndpoints.add(endpointKey);
+
+                    if (isContextWindowExceededError(providerErr)) {
+                      throw providerErr;
+                    }
                   }
                 }
 
-                const routeModel = primaryRoute?.model ?? model;
-                if (routeApiFallbackModels.length > 0) {
-                  const modelFallbackMap: Record<string, string[]> = {
-                    [routeModel]: routeApiFallbackModels,
-                  };
-                  resp = await resilientCall(
-                    [
-                      {
-                        name: primaryRoute?.name ?? 'default',
-                        execute: (m: string) => activeClient.chatStream({ ...chatOptsBase, model: m }),
-                      },
-                    ],
-                    routeModel,
-                    {
-                      maxRetries: 1,
-                      modelFallbacks: modelFallbackMap,
-                      onRetry: (info) => {
-                        if (cfg.verbose) {
-                          console.error(
-                            `[routing] retry: provider=${info.provider} model=${info.model} attempt=${info.attempt}/${info.maxAttempts} reason=${info.reason}`
-                          );
-                        }
-                      },
-                    }
+                if (!resp) {
+                  throw new Error(
+                    `All routed providers failed for this turn. ${providerFailures.join(' | ')}`
                   );
-                } else {
-                  resp = await activeClient.chatStream({ ...chatOptsBase, model: routeModel });
                 }
               }
             } // end if (!resp) — cache miss path
+
+            if (streamFallbackDiag && lastTurnDebug) {
+              lastTurnDebug.streamFallback = streamFallbackDiag;
+            }
 
             // Successful response resets overflow recovery budget.
             overflowCompactionAttempts = 0;
@@ -3681,15 +4041,12 @@ export async function createSession(opts: {
               throw new Error(`unknown tool: ${name}`);
 
             // Keep parsed args by call-id so we can digest/archive tool outputs with context.
-            toolArgsByCallId.set(
-              callId,
-              args && typeof args === 'object' && !Array.isArray(args) ? args : {}
-            );
-            toolLoopGuard.registerCall(
-              name,
-              args && typeof args === 'object' && !Array.isArray(args) ? args : {},
-              callId
-            );
+            const parsedArgs = args && typeof args === 'object' && !Array.isArray(args)
+              ? args
+              : {};
+            toolLoopGuard.registerCall(name, parsedArgs, callId);
+            toolArgsByCallId.set(callId, parsedArgs);
+            recordToolUsageForHints(name, parsedArgs as Record<string, unknown>);
 
             // Pre-dispatch argument validation.
             // - Required params
@@ -3730,6 +4087,9 @@ export async function createSession(opts: {
               const absPath = args.path.startsWith('/')
                 ? args.path
                 : path.resolve(projectDir, args.path);
+
+              // Track in turn transaction for potential atomic rollback.
+              turnTransaction.track(absPath);
 
               // ── Pre-dispatch: block edits to files in a mutation spiral ──
               if (fileMutationBlocked.has(absPath)) {
@@ -3884,6 +4244,7 @@ export async function createSession(opts: {
             let content = '';
             let reusedCachedReadOnlyExec = false;
             let reusedCachedReadTool = false;
+            let toolFallbackNote: string | null = null;
 
             if (name === 'exec' && repeatedReadOnlyExecSigs.has(sig)) {
               const cached = execObservationCacheBySig.get(sig);
@@ -3924,7 +4285,104 @@ export async function createSession(opts: {
                   toolName: name,
                   onToolStream: emitToolStream,
                 };
-                const value = await builtInFn(callCtx as any, args);
+
+                let value: any;
+                try {
+                  value = await builtInFn(callCtx as any, args);
+                } catch (err: any) {
+                  const msg = String(err?.message ?? err ?? '');
+
+                  // Fallback #1: edit_file mismatch -> targeted edit_range based on closest-match hint.
+                  const isEditMismatch =
+                    name === 'edit_file' && /edit_file:\s*old_text not found/i.test(msg);
+                  if (isEditMismatch && typeof args?.path === 'string') {
+                    const best = msg.match(/Closest match at line\s+(\d+)\s*\((\d+)% similarity\)/i);
+                    const bestLine = best ? Number.parseInt(best[1], 10) : NaN;
+                    const similarity = best ? Number.parseInt(best[2], 10) : NaN;
+                    const oldTextForRange = String(args?.old_text ?? '');
+                    const oldLineCount = Math.max(1, oldTextForRange.split(/\r?\n/).length);
+                    const endLine = Number.isFinite(bestLine)
+                      ? bestLine + oldLineCount - 1
+                      : Number.NaN;
+                    const editRangeFn = (tools as any)['edit_range'] as Function | undefined;
+
+                    if (
+                      editRangeFn &&
+                      Number.isFinite(bestLine) &&
+                      Number.isFinite(endLine) &&
+                      Number.isFinite(similarity) &&
+                      similarity >= 70
+                    ) {
+                      const fallbackArgs = {
+                        path: args.path,
+                        start_line: bestLine,
+                        end_line: endLine,
+                        replacement: args.new_text,
+                      };
+                      if (cfg.verbose) {
+                        console.warn(
+                          `[edit_file] auto-fallback to edit_range at ${bestLine}-${endLine} (${similarity}% similarity)`
+                        );
+                      }
+                      value = await editRangeFn(callCtx as any, fallbackArgs);
+                      args = fallbackArgs;
+                      toolFallbackNote = 'auto edit_range fallback';
+                    } else {
+                      throw err;
+                    }
+                  } else {
+                    const isWriteRefusal =
+                      name === 'write_file' &&
+                      !args?.overwrite &&
+                      !args?.force &&
+                      /write_file:\s*refusing to overwrite existing non-empty file/i.test(msg);
+
+                    if (!isWriteRefusal) throw err;
+
+                    // Fallback #2 (preferred): rewrite existing file via edit_range first.
+                    const editRangeFn = (tools as any)['edit_range'] as Function | undefined;
+                    let usedEditRangeFallback = false;
+                    if (editRangeFn && typeof args?.path === 'string') {
+                      try {
+                        const absWritePath = args.path.startsWith('/')
+                          ? args.path
+                          : path.resolve(projectDir, args.path);
+                        const curText = await fs.readFile(absWritePath, 'utf8');
+                        const totalLines = Math.max(1, curText.split(/\r?\n/).length);
+                        const fallbackArgs = {
+                          path: args.path,
+                          start_line: 1,
+                          end_line: totalLines,
+                          replacement: args.content,
+                        };
+                        if (cfg.verbose) {
+                          console.warn(
+                            `[write_file] auto-fallback to edit_range for existing file (${totalLines} lines)`
+                          );
+                        }
+                        value = await editRangeFn(callCtx as any, fallbackArgs);
+                        args = fallbackArgs;
+                        toolFallbackNote = 'auto edit_range fallback';
+                        usedEditRangeFallback = true;
+                      } catch {
+                        // fall through to explicit overwrite retry below
+                      }
+                    }
+
+                    if (!usedEditRangeFallback) {
+                      const retryArgs = { ...(args as Record<string, unknown>), overwrite: true };
+                      if (cfg.verbose) {
+                        console.warn(
+                          '[write_file] auto-retrying with overwrite=true after explicit overwrite refusal'
+                        );
+                      }
+                      value = await builtInFn(callCtx as any, retryArgs);
+                      args = retryArgs;
+                      toolFallbackNote = 'auto overwrite fallback';
+                    }
+                  }
+                }
+
                 content = typeof value === 'string' ? value : JSON.stringify(value);
 
                 if (
@@ -4029,6 +4487,9 @@ export async function createSession(opts: {
             let summary = reusedCachedReadOnlyExec
               ? 'cached read-only exec observation (unchanged)'
               : toolResultSummary(name, args, content, true);
+            if (toolFallbackNote) {
+              summary = `${summary} (${toolFallbackNote})`;
+            }
             const resultEvent: ToolResultEvent = {
               id: callId,
               name,
@@ -4187,6 +4648,7 @@ export async function createSession(opts: {
           };
 
           const results: Array<{ id: string; content: string }> = [];
+          const turnTransaction = new EditTransaction();
           let invalidArgsThisTurn = false;
 
           // Helper: catch tool errors but re-throw AgentLoopBreak (those must break the outer loop)
@@ -4368,6 +4830,12 @@ export async function createSession(opts: {
                   'Use that earlier tool result; no new execution was performed.',
               });
             }
+          }
+
+          // Store the turn transaction for potential post-turn rollback.
+          if (turnTransaction.hasChanges) {
+            turnTransaction.commit();
+            lastTurnTransaction = turnTransaction;
           }
 
           // Bail immediately if cancelled during tool execution
@@ -4676,6 +5144,24 @@ export async function createSession(opts: {
       return currentContextTokens > 0 ? currentContextTokens : estimateTokensFromMessages(messages);
     },
     ask,
+    rollbackLastTurnEdits: async () => {
+      if (!lastTurnTransaction || !lastTurnTransaction.hasChanges) {
+        return { ok: false, error: 'No file edits to roll back.' };
+      }
+      const tx = lastTurnTransaction;
+      lastTurnTransaction = undefined;
+      const callCtx = { cwd: projectDir, noConfirm: true, dryRun: false };
+      const results = await tx.rollback(callCtx as any);
+      return { ok: true, results };
+    },
+    rollback: () => {
+      const cp = conversationBranch.rollback();
+      if (!cp) return null;
+      const removed = messages.length - cp.messageCount;
+      messages.length = cp.messageCount;
+      return { preview: cp.preview, removedMessages: removed };
+    },
+    listCheckpoints: () => conversationBranch.list(),
     setModel,
     setEndpoint,
     listModels,
@@ -4688,8 +5174,11 @@ export async function createSession(opts: {
     captureOn,
     captureOff,
     captureLast,
+    captureSetRedact,
+    captureGetRedact,
+    captureOpen,
     get capturePath() {
-      return capturePath;
+      return capture.path;
     },
     getSystemPrompt: () =>
       messages[0]?.role === 'system' ? String(messages[0].content) : activeSystemPromptBase,
@@ -4716,6 +5205,9 @@ export async function createSession(opts: {
     },
     get lastTurnMetrics() {
       return lastTurnMetrics;
+    },
+    get lastTurnDebug() {
+      return lastTurnDebug;
     },
     get lastServerHealth() {
       return lastServerHealth;

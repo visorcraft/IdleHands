@@ -201,6 +201,18 @@ export type RoutingConfig = {
   heavyFallbackModels?: string[];
   /** Optional explicit hint→lane mapping (e.g. reasoning→heavy). */
   hintModeMap?: Record<string, Exclude<RoutingMode, 'auto'>>;
+  /** In auto mode, suppress tool schemas for clearly-fast turns (default: true in runtime logic). */
+  fastLaneToolless?: boolean;
+  /** In auto mode, use a compact first-turn prelude for fast turns (default: true in runtime logic). */
+  fastCompactPrelude?: boolean;
+  /** Optional cap for compact prelude length (characters). */
+  fastCompactPreludeMaxChars?: number;
+  /** In auto mode on subsequent turns, slim tool schema to read-only tools (default: true). */
+  fastLaneSlimTools?: boolean;
+  /** Enable routing hysteresis to prevent rapid lane thrashing (default: true). */
+  hysteresis?: boolean;
+  /** Minimum consecutive turns in a lane before auto-switch is allowed (default: 2). */
+  hysteresisMinDwell?: number;
   /** Thresholds for auto-selection */
   thresholds: {
     /** Maximum prompt length (chars) to use fast model in auto mode */
@@ -685,6 +697,8 @@ export type ToolCallEvent = {
   id: string;
   name: string;
   args: Record<string, unknown>;
+  /** planned: model has started emitting a tool call; executing: tool dispatch started */
+  phase?: 'planned' | 'executing';
 };
 
 export type ToolResultEvent = {

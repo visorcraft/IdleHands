@@ -384,6 +384,91 @@ describe('OpenAIClient SSE parsing + malformed handling', () => {
     assert.equal(resp.usage?.completion_tokens, 2);
   });
 
+  it('emits streaming tool-call deltas and final done snapshot', async () => {
+    const client: any = new OpenAIClient('http://example.invalid/v1', undefined, false);
+    const enc = new TextEncoder();
+    const keepaliveTicks: string[] = [];
+    const toolDeltas: Array<any> = [];
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          enc.encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\\"path\\":\\"src/"}}]}}]}\n\n'
+          )
+        );
+        controller.enqueue(
+          enc.encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"type":"function","function":{"arguments":"agent.ts\\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":6,"completion_tokens":4}}\n\n'
+          )
+        );
+        controller.enqueue(enc.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+
+    client.fetchWithConnTimeout = async () =>
+      new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+
+    const resp = await client.chatStream({
+      model: 'fake',
+      messages: [{ role: 'user', content: 'u' }],
+      onToken: (t: string) => keepaliveTicks.push(t),
+      onToolCallDelta: (d: any) => toolDeltas.push(d),
+    });
+
+    assert.equal(resp.choices?.[0]?.message?.tool_calls?.[0]?.function?.name, 'read_file');
+    assert.equal(
+      resp.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments,
+      '{"path":"src/agent.ts"}'
+    );
+    assert.ok(
+      toolDeltas.some((d) => d.done === false && d.name === 'read_file'),
+      'should emit incremental tool-call delta'
+    );
+    assert.ok(
+      toolDeltas.some(
+        (d) =>
+          d.done === true &&
+          d.name === 'read_file' &&
+          d.argumentsSoFar === '{"path":"src/agent.ts"}'
+      ),
+      'should emit final done snapshot with full arguments'
+    );
+    assert.ok(
+      keepaliveTicks.some((t) => t === ''),
+      'should emit keepalive empty token for tool-only chunks'
+    );
+  });
+
+  it('annotates stream->non-stream fallback metadata on HTTP 400', async () => {
+    const client: any = new OpenAIClient('http://example.invalid/v1', undefined, false);
+
+    client.fetchWithConnTimeout = async () =>
+      new Response('bad request', {
+        status: 400,
+        statusText: 'Bad Request',
+      });
+
+    client.chat = async () => ({
+      id: 'fallback',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+
+    const resp = await client.chatStream({
+      model: 'fake',
+      messages: [{ role: 'user', content: 'u' }],
+    });
+
+    assert.equal((resp as any).meta?.stream_fallback?.reason, 'http_400');
+    assert.equal((resp as any).meta?.stream_fallback?.status, 400);
+    assert.equal((resp as any).meta?.stream_fallback?.attempt, 1);
+  });
+
   it('captures usage from usage-only SSE chunks (choices = [])', async () => {
     const client: any = new OpenAIClient('http://example.invalid/v1', undefined, false);
     const enc = new TextEncoder();

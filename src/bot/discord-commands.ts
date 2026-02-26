@@ -24,6 +24,8 @@ import {
   helpCommand,
   modelCommand,
   compactCommand,
+  captureSetCommand,
+  captureShowCommand,
   statusCommand,
   dirShowCommand,
   approvalShowCommand,
@@ -38,6 +40,14 @@ import {
   subagentsSetCommand,
   changesCommand,
   undoCommand,
+  rollbackCommand,
+  checkpointsCommand,
+  budgetCommand,
+  diffCommand,
+  costCommand,
+  metricsCommand,
+  mcpDiscoverCommand,
+  hooksCommand,
   vaultCommand,
   agentCommand,
   agentsCommand,
@@ -175,6 +185,19 @@ export async function handleTextCommand(
 
   if (content === '/compact') {
     await send(compactCommand(m));
+    return true;
+  }
+
+  if (content === '/capture' || content.startsWith('/capture ')) {
+    const arg = content.slice('/capture'.length).trim();
+    if (!arg) {
+      await send(captureShowCommand(m));
+      return true;
+    }
+
+    const [modeToken, ...rest] = arg.split(/\s+/);
+    const filePath = rest.join(' ').trim() || undefined;
+    await send(await captureSetCommand(m, modeToken.toLowerCase(), filePath));
     return true;
   }
 
@@ -376,6 +399,47 @@ export async function handleTextCommand(
 
   if (content === '/undo') {
     await send(await undoCommand(m));
+    return true;
+  }
+
+  if (content === '/rollback') {
+    await send(rollbackCommand(m));
+    return true;
+  }
+
+  if (content === '/checkpoints') {
+    await send(checkpointsCommand(m));
+    return true;
+  }
+
+  if (content === '/budget') {
+    await send(budgetCommand(m));
+    return true;
+  }
+
+  if (content === '/diff') {
+    await send(diffCommand(m));
+    return true;
+  }
+
+  if (content === '/cost') {
+    await send(costCommand(m));
+    return true;
+  }
+
+  if (content === '/metrics') {
+    await send(metricsCommand(m));
+    return true;
+  }
+
+  if (content === '/mcp_discover') {
+    await send(await mcpDiscoverCommand(m));
+    return true;
+  }
+
+  if (content === '/hooks' || content.startsWith('/hooks ')) {
+    const arg = content.replace(/^\/hooks\s*/i, '').trim();
+    await send(hooksCommand(m, arg));
     return true;
   }
 
