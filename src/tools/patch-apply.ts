@@ -57,6 +57,19 @@ async function runCommandWithStdin(
     let errSeen = 0;
     let outCaptured = 0;
     let errCaptured = 0;
+    let settled = false;
+
+    const safeReject = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+
+    const safeResolve = (val: { rc: number; out: string; err: string }) => {
+      if (settled) return;
+      settled = true;
+      resolve(val);
+    };
 
     const pushCapped = (chunks: Buffer[], buf: Buffer, kind: 'out' | 'err') => {
       const n = buf.length;
@@ -75,7 +88,16 @@ async function runCommandWithStdin(
     child.stdout.on('data', (d) => pushCapped(outChunks, Buffer.from(d), 'out'));
     child.stderr.on('data', (d) => pushCapped(errChunks, Buffer.from(d), 'err'));
 
-    child.on('error', (e: any) => reject(new Error(`${cmd}: ${e?.message ?? String(e)}`)));
+    child.on('error', (e: any) => safeReject(new Error(`${cmd}: ${e?.message ?? String(e)}`)));
+
+    // Some tools (git apply/patch) can exit early and close stdin, producing EPIPE.
+    // That's not a transport failure for our purposes: we still want exit code + stderr.
+    child.stdin.on('error', (e: any) => {
+      const code = String(e?.code ?? '');
+      if (code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') return;
+      safeReject(new Error(`${cmd}: stdin ${e?.message ?? String(e)}`));
+    });
+
     child.on('close', (code) => {
       const outRaw = stripAnsi(Buffer.concat(outChunks).toString('utf8'));
       const errRaw = stripAnsi(Buffer.concat(errChunks).toString('utf8'));
@@ -83,11 +105,17 @@ async function runCommandWithStdin(
       const outT = truncateBytes(outRaw, maxOutBytes, outSeen);
       const errT = truncateBytes(errRaw, maxOutBytes, errSeen);
 
-      resolve({ rc: code ?? 0, out: outT.text, err: errT.text });
+      safeResolve({ rc: code ?? 0, out: outT.text, err: errT.text });
     });
 
-    child.stdin.write(String(stdinText ?? ''), 'utf8');
-    child.stdin.end();
+    try {
+      child.stdin.end(String(stdinText ?? ''), 'utf8');
+    } catch (e: any) {
+      const code = String(e?.code ?? '');
+      if (code !== 'EPIPE' && code !== 'ERR_STREAM_DESTROYED') {
+        safeReject(new Error(`${cmd}: stdin ${e?.message ?? String(e)}`));
+      }
+    }
   });
 }
 
