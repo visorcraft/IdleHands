@@ -94,6 +94,7 @@ export interface SessionLike {
     runtimeRoute: boolean;
     compactPrelude: boolean;
     fastLaneToolless: boolean;
+    fastLaneSlimTools?: boolean;
     promptBytes?: number;
     toolSchemaBytes?: number;
     toolSchemaTokens?: number;
@@ -102,6 +103,9 @@ export interface SessionLike {
   captureOn?: (filePath?: string) => Promise<string>;
   captureOff?: () => void;
   captureLast?: (filePath?: string) => Promise<string>;
+  captureSetRedact?: (enabled: boolean) => void;
+  captureGetRedact?: () => boolean;
+  captureOpen?: () => string | null;
   capturePath?: string;
   reset(): void;
 }

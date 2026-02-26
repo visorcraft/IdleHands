@@ -19,7 +19,7 @@ export type RouteProviderTarget = {
 export type TurnRoutePlan = {
   requestedMode: RoutingMode;
   selectedMode: RouteLane;
-  selectedModeSource: 'override' | 'classifier' | 'heuristic';
+  selectedModeSource: 'override' | 'classifier' | 'heuristic' | 'hysteresis';
   classificationHint: string | null;
   heuristicDecision?: RoutingDecision;
   providerTargets: RouteProviderTarget[];

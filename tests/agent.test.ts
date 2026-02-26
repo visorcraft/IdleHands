@@ -37,6 +37,8 @@ function baseConfig(tmpDir: string, overrides?: Record<string, any>): any {
     context_file: '',
     context_file_names: ['.idlehands.md', 'AGENTS.md', '.github/AGENTS.md'],
     context_max_tokens: 8192,
+    // Disable fast-lane optimizations in tests so tool schemas are always sent.
+    routing: { fastLaneToolless: false, fastLaneSlimTools: false, fastCompactPrelude: false },
     no_context: true,
     trifecta: {
       enabled: true,

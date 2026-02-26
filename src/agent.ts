@@ -90,6 +90,7 @@ import {
 import { ReplayStore } from './replay.js';
 import { checkExecSafety, checkPathSafety } from './safety.js';
 import { decideTurnRoute } from './routing/turn-router.js';
+import { RouteHysteresis } from './routing/hysteresis.js';
 import { normalizeApprovalMode } from './shared/config-utils.js';
 import { collectSnapshot } from './sys/context.js';
 import { ToolError, ValidationError } from './tools/tool-error.js';
@@ -203,6 +204,7 @@ export type TurnRoutingDebug = {
   runtimeRoute: boolean;
   compactPrelude: boolean;
   fastLaneToolless: boolean;
+  fastLaneSlimTools?: boolean;
   promptBytes?: number;
   toolSchemaBytes?: number;
   toolSchemaTokens?: number;
@@ -260,6 +262,9 @@ export type AgentSession = {
   captureOn: (filePath?: string) => Promise<string>;
   captureOff: () => void;
   captureLast: (filePath?: string) => Promise<string>;
+  captureSetRedact: (enabled: boolean) => void;
+  captureGetRedact: () => boolean;
+  captureOpen: () => string | null;
   capturePath?: string;
   getSystemPrompt: () => string;
   setSystemPrompt: (prompt: string) => void;
@@ -529,7 +534,12 @@ export async function createSession(opts: {
   const mcpLazySchemaMode = Boolean(mcpManager && mcpHasEnabledTools);
   let mcpToolsLoaded = !mcpLazySchemaMode;
 
-  const getToolsSchema = () =>
+  const routeHysteresis = new RouteHysteresis({
+    minDwell: (cfg.routing as any)?.hysteresisMinDwell ?? 2,
+    enabled: (cfg.routing as any)?.hysteresis !== false,
+  });
+
+  const getToolsSchema = (slimFast?: boolean) =>
     buildToolsSchema({
       activeVaultTools,
       passiveVault: !activeVaultTools && vaultEnabled && vaultMode === 'passive',
@@ -537,6 +547,7 @@ export async function createSession(opts: {
       lspTools: lspManager?.hasServers() === true,
       mcpTools: mcpToolsLoaded ? (mcpManager?.getEnabledToolSchemas() ?? []) : [],
       allowSpawnTask: spawnTaskEnabled,
+      slimFast,
     });
 
   const vault = vaultEnabled
@@ -780,6 +791,7 @@ export async function createSession(opts: {
     lastEditedPath = undefined;
     initialConnectionProbeDone = false;
     mcpToolsLoaded = !mcpLazySchemaMode;
+    routeHysteresis.reset();
   };
 
   const restore = (next: ChatMessage[]) => {
@@ -1559,6 +1571,7 @@ export async function createSession(opts: {
 
   const capturesDir = path.join(stateDir(), 'captures');
   let captureEnabled = false;
+  let captureRedactEnabled = true; // redact API keys/tokens in captures by default
   let capturePath: string | undefined;
   let lastCaptureRecord: any | null = null;
   const routedClients = new Map<string, OpenAIClient>();
@@ -1571,9 +1584,29 @@ export async function createSession(opts: {
     return path.join(capturesDir, `${stamp}.jsonl`);
   };
 
+  const redactCaptureRecord = (record: any): any => {
+    if (!captureRedactEnabled) return record;
+    const redacted = JSON.parse(JSON.stringify(record));
+    // Redact authorization headers, API keys, bearer tokens
+    const redactObj = (obj: any) => {
+      if (!obj || typeof obj !== 'object') return;
+      for (const key of Object.keys(obj)) {
+        const lower = key.toLowerCase();
+        if (lower === 'authorization' || lower === 'api-key' || lower === 'x-api-key') {
+          obj[key] = '[REDACTED]';
+        } else if (typeof obj[key] === 'object') {
+          redactObj(obj[key]);
+        }
+      }
+    };
+    redactObj(redacted);
+    return redacted;
+  };
+
   const appendCaptureRecord = async (record: any, outPath: string) => {
     await fs.mkdir(path.dirname(outPath), { recursive: true });
-    await fs.appendFile(outPath, JSON.stringify(record) + '\n', 'utf8');
+    const safe = redactCaptureRecord(record);
+    await fs.appendFile(outPath, JSON.stringify(safe) + '\n', 'utf8');
   };
 
   const applyClientRuntimeOptions = (target: OpenAIClient) => {
@@ -1940,6 +1973,16 @@ export async function createSession(opts: {
     captureEnabled = false;
   };
 
+  const captureSetRedact = (enabled: boolean) => {
+    captureRedactEnabled = enabled;
+  };
+
+  const captureGetRedact = () => captureRedactEnabled;
+
+  const captureOpen = (): string | null => {
+    return capturePath || null;
+  };
+
   const captureLast = async (filePath?: string): Promise<string> => {
     if (!lastCaptureRecord) {
       throw new Error('No captured request/response pair is available yet.');
@@ -2100,6 +2143,18 @@ export async function createSession(opts: {
 
     // Route early so first-turn prelude/tool choices can adapt.
     const turnRoute = decideTurnRoute(cfg, rawInstructionText, model);
+
+    // Apply hysteresis to suppress rapid lane thrashing in auto mode.
+    const hysteresisResult = routeHysteresis.apply(
+      turnRoute.selectedMode,
+      turnRoute.selectedModeSource
+    );
+    if (hysteresisResult.suppressed) {
+      // Override the selected mode with the hysteresis-stabilized lane.
+      turnRoute.selectedMode = hysteresisResult.lane;
+      turnRoute.selectedModeSource = 'hysteresis';
+    }
+
     const routeFastByAuto =
       turnRoute.requestedMode === 'auto' &&
       turnRoute.selectedMode === 'fast' &&
@@ -2396,6 +2451,14 @@ export async function createSession(opts: {
     const primaryUsesRuntimeModel = !!primaryRoute?.model && runtimeModelIds.has(primaryRoute.model);
     const fastLaneToolless =
       (cfg.routing as any)?.fastLaneToolless !== false &&
+      routeFastByAuto &&
+      turnRoute.classificationHint === 'fast';
+
+    // Fast-lane slim tools: on subsequent turns of a fast-route ask, include only
+    // read-only / lightweight tools to reduce per-turn token overhead (~40-50%).
+    // Only active when the classifier explicitly said 'fast' (not heuristic/fallback).
+    const fastLaneSlimTools =
+      (cfg.routing as any)?.fastLaneSlimTools !== false &&
       routeFastByAuto &&
       turnRoute.classificationHint === 'fast';
 
@@ -2892,11 +2955,14 @@ export async function createSession(opts: {
         let resp;
         try {
           try {
-            const forceToollessByRouting = fastLaneToolless && turns === 0;
+            // turns is 1-indexed (incremented at loop top), so first iteration = 1.
+            const forceToollessByRouting = fastLaneToolless && turns === 1;
+            // On fast-lane subsequent turns, slim the schema to read-only tools.
+            const useSlimFast = !forceToollessByRouting && fastLaneSlimTools && turns > 1;
             const toolsForTurn =
               cfg.no_tools || forceToollessRecoveryTurn || forceToollessByRouting
                 ? []
-                : getToolsSchema().filter((t) => !suppressedTools.has(t.function.name));
+                : getToolsSchema(useSlimFast).filter((t) => !suppressedTools.has(t.function.name));
             const toolChoiceForTurn =
               cfg.no_tools || forceToollessRecoveryTurn || forceToollessByRouting ? 'none' : 'auto';
 
@@ -2916,6 +2982,7 @@ export async function createSession(opts: {
               runtimeRoute: primaryUsesRuntimeModel,
               compactPrelude: useCompactPrelude,
               fastLaneToolless,
+              fastLaneSlimTools: useSlimFast,
               promptBytes: promptBytesEstimate,
               toolSchemaBytes: toolSchemaBytesEstimate,
               toolSchemaTokens: toolSchemaTokenEstimate,
@@ -4929,6 +4996,9 @@ export async function createSession(opts: {
     captureOn,
     captureOff,
     captureLast,
+    captureSetRedact,
+    captureGetRedact,
+    captureOpen,
     get capturePath() {
       return capturePath;
     },

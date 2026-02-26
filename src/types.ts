@@ -207,6 +207,12 @@ export type RoutingConfig = {
   fastCompactPrelude?: boolean;
   /** Optional cap for compact prelude length (characters). */
   fastCompactPreludeMaxChars?: number;
+  /** In auto mode on subsequent turns, slim tool schema to read-only tools (default: true). */
+  fastLaneSlimTools?: boolean;
+  /** Enable routing hysteresis to prevent rapid lane thrashing (default: true). */
+  hysteresis?: boolean;
+  /** Minimum consecutive turns in a lane before auto-switch is allowed (default: 2). */
+  hysteresisMinDwell?: number;
   /** Thresholds for auto-selection */
   thresholds: {
     /** Maximum prompt length (chars) to use fast model in auto mode */
