@@ -283,7 +283,7 @@ export async function editRangeTool(ctx: any, args: any): Promise<string> {
   const startLine = Number(args?.start_line);
   const endLine = Number(args?.end_line);
   const rawReplacement = args?.replacement;
-  const replacement =
+  let replacement =
     typeof rawReplacement === 'string'
       ? rawReplacement
       : rawReplacement != null && typeof rawReplacement === 'object'
@@ -298,13 +298,20 @@ export async function editRangeTool(ctx: any, args: any): Promise<string> {
   if (replacement == null)
     throw new Error('edit_range: missing replacement (got ' + typeof rawReplacement + ')');
 
-  const hasLiteralEscapedNewlines = replacement.includes('\\n');
+  let normalizedEscapedReplacement = false;
+  const hasLiteralEscapedNewlines = replacement.includes('\\n') || replacement.includes('\\r');
   const hasRealNewlines = replacement.includes('\n') || replacement.includes('\r');
+
+  // Recover common model payload issue: replacement arrives as a single-line string
+  // with literal backslash-newline sequences ("alpha\\nbeta") instead of real line breaks.
   if (hasLiteralEscapedNewlines && !hasRealNewlines) {
-    throw new Error(
-      'edit_range: replacement appears double-escaped (contains literal "\\n" sequences). ' +
-        'Resend replacement with REAL newline characters (multi-line string), not escaped backslash-n text.'
-    );
+    replacement = replacement
+      .replace(/\\r\\n/g, '\n')
+      .replace(/\\n/g, '\n')
+      .replace(/\\r/g, '\r')
+      .replace(/\\t/g, '\t')
+      .replace(/\\"/g, '"');
+    normalizedEscapedReplacement = true;
   }
 
   enforceMutationWithinCwd('edit_range', p, ctx);
@@ -363,5 +370,8 @@ export async function editRangeTool(ctx: any, args: any): Promise<string> {
   const cwdWarning = checkCwdWarning('edit_range', p, ctx);
   const rangeEndLine = startIdx + replacementLines.length;
   const readback = mutationReadback(out, startIdx, rangeEndLine);
-  return `edited ${p} lines ${startLine}-${endLine}${replayNote}${cwdWarning}${readback}`;
+  const normalizationNote = normalizedEscapedReplacement
+    ? '\n[normalized escaped newline sequences in replacement]'
+    : '';
+  return `edited ${p} lines ${startLine}-${endLine}${normalizationNote}${replayNote}${cwdWarning}${readback}`;
 }
