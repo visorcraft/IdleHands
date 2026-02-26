@@ -203,7 +203,30 @@ export function detectCatHeadTailAsRead(command: string): string | null {
   const cmd = String(command || '').trim();
   if (!cmd) return null;
 
-  // Skip commands with pipes (these are grep/filter chains, not simple reads)
+  // Detect cat FILE | head -N | tail -M (manual file pagination)
+  const catPipeMatch = cmd.match(
+    /^\s*cat\s+(\S+)\s*\|\s*head\s+(?:-n?\s*)?(\d+)\s*(?:\|\s*tail\s+(?:-n?\s*)?(\d+))?\s*$/i
+  );
+  if (catPipeMatch) {
+    const filePath = catPipeMatch[1].replace(/['"]$/g, '').replace(/^['"]/, '');
+    const headN = parseInt(catPipeMatch[2], 10);
+    const tailN = catPipeMatch[3] ? parseInt(catPipeMatch[3], 10) : 0;
+    if (tailN > 0) {
+      const offset = headN - tailN + 1;
+      return (
+        `STOP: Do not use cat|head|tail to paginate files. Use read_file instead:\n` +
+        `  read_file({ path: "${filePath}", offset: ${offset}, limit: ${tailN} })\n` +
+        `This is faster, tracked by the read budget, and avoids unnecessary exec calls.`
+      );
+    }
+    return (
+      `STOP: Do not use cat|head to read files. Use read_file instead:\n` +
+      `  read_file({ path: "${filePath}", limit: ${headN} })\n` +
+      `This is faster, tracked by the read budget, and avoids unnecessary exec calls.`
+    );
+  }
+
+  // Skip other commands with pipes (grep/filter chains, not simple reads)
   if (/\|/.test(cmd)) return null;
 
   // cat FILE (possibly with | head at the end, but we already excluded pipes)
@@ -266,6 +289,33 @@ export function extractTestFilter(command: string): string | null {
   return null;
 }
 
+
+/**
+ * Extract the target file path from an exec grep command that targets a single file.
+ * Returns the file path or null if the grep doesn't target a specific file.
+ * Used to detect same-file grep thrashing (many different patterns on the same file).
+ */
+export function extractGrepTargetFile(command: string): string | null {
+  let cmd = String(command || '').trim();
+  if (!cmd) return null;
+
+  // Strip leading cd && chains
+  cmd = cmd.replace(/^(\s*cd\s+[^;&|]+\s*(?:&&|;)\s*)+/i, '').trim();
+
+  // Match: grep [flags] "pattern" SINGLE_FILE (no wildcards, no directory recursion)
+  const grepMatch = cmd.match(
+    /^\s*(?:grep|egrep|fgrep)\s+(?:-\w+\s+)*(?:["'][^"']+["']|\S+)\s+(\S+?)\s*$/i
+  );
+  if (!grepMatch) return null;
+
+  const filePath = grepMatch[1].replace(/['"]$/g, '').replace(/^['"]/, '');
+  // Skip wildcards, directories (ending in /), and flags
+  if (filePath.startsWith('-') || filePath.includes('*') || filePath.endsWith('/')) return null;
+  // Must look like a file (has an extension or path separator)
+  if (!filePath.includes('.') && !filePath.includes('/')) return null;
+
+  return filePath;
+}
 /**
  * Extract the target file path from a tail/grep log-reading command.
  * Returns the log file path or null if not a log-reading command.
