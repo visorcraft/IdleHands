@@ -10,16 +10,32 @@ Idle Hands provides a broad slash-command surface for session control, runtime m
 - `/conv branch <name>`, `/conv branches`, `/conv checkout <name>`, `/conv merge <name>`
 - `/new`, `/quit`, `/exit`
 
-## Model / server / diagnostics
+## Observability and diagnostics
+
+- `/cost` — Show estimated token cost from current session usage
+- `/metrics` — Show latency, throughput, cache, and route diagnostics
+- `/server`, `/perf`, `/stats`
+
+## Hooks
+
+- `/hooks` — Inspect hook system status
+- `/hooks status` — Hook snapshot + recent event counts
+- `/hooks plugins` — Installed plugin grants/requests/denials
+- `/hooks errors` — Recent hook errors
+- `/hooks slow` — Recently slow handlers
+
+## Model / server / project integration
 
 - `/model`, `/model list`, `/model <name>`, `/model <endpoint> <name>`
-- `/server`, `/perf`, `/stats`, `/cost`
 - `/offline [on|off|status]`
 - `/capture on [path]`, `/capture off`, `/capture last [path]`
+- `/mcp_discover` — Discover MCP servers from project files
+- `/mcp`, `/mcp desc`, `/mcp restart <name>`, `/mcp enable <tool>`, `/mcp disable <tool>`
+- `/hosts`, `/backends`, `/models`, `/runtime`, `/select <model-id>`, `/health`
 
 ## Editing / mode / approvals
 
-- `/edit [seed]`, `/mode [code|sys]`
+- `/edit [seed]`, `/mode [code|sys]`, `/routing_mode [auto|fast|heavy]`
 - `/system`, `/system tokens`, `/system edit`, `/system reset`
 - `/approval [plan|reject|default|auto-edit|yolo]`
 - `/plan [on|off|toggle|show]`, `/step [on|off|toggle]`
@@ -40,13 +56,6 @@ Idle Hands provides a broad slash-command surface for session control, runtime m
 
 - `/vault <query>`, `/notes`, `/note <key> <value>`
 - `/checkpoints`, `/rewind <id>`, `/diff <id>`
-
-## Integrations
-
-- `/lsp [status]`
-- `/mcp`, `/mcp desc`, `/mcp restart <name>`, `/mcp enable <tool>`, `/mcp disable <tool>`
-- `/commands`
-- `/hosts`, `/backends`, `/models`, `/runtime`, `/select <model-id>`, `/health`
 
 ## Anton
 

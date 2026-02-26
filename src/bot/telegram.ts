@@ -36,6 +36,7 @@ import {
   handleUnpin,
   handleModel,
   handleCompact,
+  handleCapture,
   handleApproval,
   handleMode,
   handleRoutingMode,
@@ -44,6 +45,14 @@ import {
   handleSubAgents,
   handleChanges,
   handleUndo,
+  handleRollback,
+  handleCheckpoints,
+  handleBudget,
+  handleDiff,
+  handleCost,
+  handleMetrics,
+  handleMcpDiscover,
+  handleHooks,
   handleVault,
   handleAnton,
   handleAgent,
@@ -412,6 +421,7 @@ export async function startTelegramBot(
   bot.command('unpin', (ctx) => handleUnpin(cmdCtx(ctx)));
   bot.command('model', (ctx) => handleModel(cmdCtx(ctx)));
   bot.command('compact', (ctx) => handleCompact(cmdCtx(ctx)));
+  bot.command('capture', (ctx) => handleCapture(cmdCtx(ctx)));
   bot.command('approval', (ctx) => handleApproval(cmdCtx(ctx)));
   bot.command('mode', (ctx) => handleMode(cmdCtx(ctx)));
   bot.command('routing_mode', (ctx) => handleRoutingMode(cmdCtx(ctx)));
@@ -420,6 +430,14 @@ export async function startTelegramBot(
   bot.command('subagents', (ctx) => handleSubAgents(cmdCtx(ctx)));
   bot.command('changes', (ctx) => handleChanges(cmdCtx(ctx)));
   bot.command('undo', (ctx) => handleUndo(cmdCtx(ctx)));
+  bot.command('rollback', (ctx) => handleRollback(cmdCtx(ctx)));
+  bot.command('checkpoints', (ctx) => handleCheckpoints(cmdCtx(ctx)));
+  bot.command('budget', (ctx) => handleBudget(cmdCtx(ctx)));
+  bot.command('diff', (ctx) => handleDiff(cmdCtx(ctx)));
+  bot.command('cost', (ctx) => handleCost(cmdCtx(ctx)));
+  bot.command('metrics', (ctx) => handleMetrics(cmdCtx(ctx)));
+  bot.command('mcp_discover', (ctx) => handleMcpDiscover(cmdCtx(ctx)));
+  bot.command('hooks', (ctx) => handleHooks(cmdCtx(ctx)));
   bot.command('vault', (ctx) => handleVault(cmdCtx(ctx)));
   bot.command('anton', (ctx) => handleAnton(cmdCtx(ctx)));
   bot.command('agent', (ctx) => handleAgent(cmdCtx(ctx)));
@@ -593,10 +611,12 @@ export async function startTelegramBot(
     { command: 'agents', description: 'List all configured agents' },
     { command: 'escalate', description: 'Use larger model for next message' },
     { command: 'deescalate', description: 'Return to base model' },
+    { command: 'restart_bot', description: 'Restart bot service' },
     { command: 'upgrade', description: 'Upgrade IdleHands and restart' },
     { command: 'dir', description: 'Get/set working directory' },
     { command: 'model', description: 'Show current model' },
     { command: 'compact', description: 'Compact context' },
+    { command: 'capture', description: 'Capture model req/resp payloads' },
     { command: 'approval', description: 'Get/set approval mode' },
     { command: 'mode', description: 'Get/set mode (code/sys)' },
     { command: 'routing_mode', description: 'Get/set routing mode (auto/fast/heavy)' },
@@ -604,6 +624,10 @@ export async function startTelegramBot(
     { command: 'changes', description: 'Files modified this session' },
     { command: 'undo', description: 'Undo last edit' },
     { command: 'vault', description: 'Search vault entries' },
+    { command: 'cost', description: 'Show session cost estimate' },
+    { command: 'metrics', description: 'Show session metrics' },
+    { command: 'mcp_discover', description: 'Discover MCP servers' },
+    { command: 'hooks', description: 'Inspect hook ecosystem status' },
     { command: 'hosts', description: 'List runtime hosts' },
     { command: 'backends', description: 'List runtime backends' },
     { command: 'models', description: 'List runtime models' },

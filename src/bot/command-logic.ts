@@ -45,6 +45,14 @@ export {
   versionCommand,
   watchdogCommand,
 } from './basic-commands.js';
+export { captureSetCommand, captureShowCommand } from './capture-commands.js';
+export { rollbackCommand, checkpointsCommand } from './rollback-command.js';
+export { budgetCommand } from './budget-command.js';
+export { diffCommand } from './diff-command.js';
+export { costCommand } from './cost-command.js';
+export { metricsCommand } from './metrics-command.js';
+export { hooksCommand } from './hooks-command.js';
+export { mcpDiscoverCommand } from './mcp-discover-command.js';
 export {
   antonCommand,
   antonHelpCommand,
@@ -83,6 +91,34 @@ export interface SessionLike {
   vault?: { search(q: string, n: number): Promise<any[]> };
   lens?: any;
   lastEditedPath?: string;
+  lastTurnDebug?: {
+    requestedMode: string;
+    selectedMode: string;
+    selectedModeSource: string;
+    classificationHint: string | null;
+    provider: string;
+    model: string;
+    runtimeRoute: boolean;
+    compactPrelude: boolean;
+    fastLaneToolless: boolean;
+    fastLaneSlimTools?: boolean;
+    promptBytes?: number;
+    toolSchemaBytes?: number;
+    toolSchemaTokens?: number;
+    toolCount?: number;
+  };
+  captureOn?: (filePath?: string) => Promise<string>;
+  captureOff?: () => void;
+  captureLast?: (filePath?: string) => Promise<string>;
+  captureSetRedact?: (enabled: boolean) => void;
+  captureGetRedact?: () => boolean;
+  captureOpen?: () => string | null;
+  capturePath?: string;
+  rollback?: () => { preview: string; removedMessages: number } | null;
+  listCheckpoints?: () => Array<{ messageCount: number; createdAt: number; preview: string }>;
+  hookManager?: {
+    getSnapshot: () => any;
+  };
   reset(): void;
 }
 

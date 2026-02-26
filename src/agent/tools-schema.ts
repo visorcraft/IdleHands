@@ -1,5 +1,6 @@
 import { SYS_CONTEXT_SCHEMA } from '../sys/context.js';
 import type { ToolSchema } from '../types.js';
+import { isLspTool, isMutationTool, isReadOnlyTool } from './tool-policy.js';
 
 const obj = (properties: Record<string, any>, required: string[] = []) => ({
   type: 'object',
@@ -17,12 +18,22 @@ const int = (min?: number, max?: number) => ({
 
 const SCHEMA_CACHE = new Map<string, ToolSchema[]>();
 
+/**
+ * Tools that are read-only / lightweight — kept in the fast-lane slim schema.
+ * Everything else (write, edit, patch, insert, undo, spawn) is omitted.
+ */
+const FAST_LANE_TOOLS = new Set([
+  'read_file', 'read_files', 'list_dir', 'search_files', 'exec',
+  'vault_search',
+]);
+
 function cacheKey(opts?: {
   activeVaultTools?: boolean;
   passiveVault?: boolean;
   sysMode?: boolean;
   lspTools?: boolean;
   allowSpawnTask?: boolean;
+  slimFast?: boolean;
 }): string {
   return [
     opts?.activeVaultTools ? 'a1' : 'a0',
@@ -30,6 +41,7 @@ function cacheKey(opts?: {
     opts?.sysMode ? 's1' : 's0',
     opts?.lspTools ? 'l1' : 'l0',
     opts?.allowSpawnTask === false ? 'sp0' : 'sp1',
+    opts?.slimFast ? 'sf1' : 'sf0',
   ].join('|');
 }
 
@@ -40,6 +52,8 @@ export function buildToolsSchema(opts?: {
   mcpTools?: ToolSchema[];
   lspTools?: boolean;
   allowSpawnTask?: boolean;
+  /** When true, only include read-only/lightweight tools for fast-lane turns. */
+  slimFast?: boolean;
 }): ToolSchema[] {
   const key = cacheKey(opts);
   const canUseCache = !opts?.mcpTools?.length;
@@ -109,7 +123,7 @@ export function buildToolsSchema(opts?: {
       function: {
         name: 'write_file',
         description:
-          'Write file (atomic, backup). Existing non-empty files require overwrite=true (or force=true).',
+          'Write file (atomic, backup). Prefer edit_range/apply_patch for edits to existing files; use write_file mainly for new files or intentional full rewrites. Existing non-empty files require overwrite=true (or force=true).',
         parameters: obj({ path: str(), content: str(), overwrite: bool(), force: bool() }, [
           'path',
           'content',
@@ -333,8 +347,125 @@ export function buildToolsSchema(opts?: {
     schemas.push(...opts.mcpTools);
   }
 
+  // Fast-lane slim: keep only read-only / lightweight tools to reduce token overhead.
+  const final = opts?.slimFast
+    ? schemas.filter((t) => FAST_LANE_TOOLS.has(t.function.name))
+    : schemas;
+
   if (canUseCache) {
-    SCHEMA_CACHE.set(key, schemas);
+    SCHEMA_CACHE.set(key, final);
   }
-  return schemas;
+  return final;
+}
+
+/**
+ * Optional context used to append short, high-signal hints to tool descriptions.
+ */
+export type ToolSchemaContext = {
+  /** Most recent tool action. */
+  lastTool?: string;
+  /** Recent tool names (ordered oldest -> newest). */
+  recentTools?: string[];
+  /** Recent file-like paths referenced by tools (ordered oldest -> newest). */
+  recentPaths?: string[];
+};
+
+function dedupeKeepTail(values: string[], max: number): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = (values[i] ?? '').trim();
+    if (!v || seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+    if (out.length >= max) break;
+  }
+  return out.reverse();
+}
+
+function shortenPath(value: string): string {
+  const v = value.trim();
+  if (!v) return v;
+  if (v.length <= 38) return v;
+  const tail = v.slice(-35);
+  return `…${tail}`;
+}
+
+function contextHints(name: string, ctx: ToolSchemaContext): string[] {
+  const lastTool = ctx.lastTool;
+  const recentTools = dedupeKeepTail(ctx.recentTools ?? [], 8);
+  const rawRecentPaths = dedupeKeepTail(ctx.recentPaths ?? [], 4);
+  const recentPaths = rawRecentPaths.map(shortenPath);
+
+  const hints: string[] = [];
+
+  // Focus continuity: if we just read, encourage minimal edits next.
+  if (name === 'read_file' || name === 'read_files' || name === 'list_dir') {
+    if (isMutationTool(lastTool ?? '')) {
+      hints.push('You recently edited files; read the target file to refresh current content first.');
+    }
+    if (recentPaths.length > 0) {
+      hints.push(`Recent targets: ${recentPaths.join(', ')}`);
+    }
+    if (isMutationTool(name)) {
+      // no-op
+    }
+  } else if (name === 'search_files') {
+    if (recentPaths.length > 0) {
+      hints.push(`Prefer ${recentPaths[0]} style scope before broad scans.`);
+    }
+  } else if (isReadOnlyTool(name) && isLspTool(name)) {
+    hints.push('Use only where symbol/location context is needed after opening the target file.');
+  } else if (isMutationTool(name)) {
+    const lastReadPath = recentTools.includes('read_file')
+      ? (rawRecentPaths[0] ?? '')
+      : rawRecentPaths.at(-1) ?? '';
+
+    if (lastReadPath) {
+      hints.push(`Recent-file continuation likely: target ${shortenPath(lastReadPath)} first.`);
+    }
+
+    if (recentTools.includes('read_file') || recentTools.includes('read_files')) {
+      hints.push('Scope edits from recent reads; avoid broad rewrites.');
+    } else {
+      hints.push('Read the exact target file first, then apply the smallest edit needed.');
+    }
+  } else if (name === 'exec') {
+    if (recentTools.includes('exec')) {
+      hints.push('Avoid re-running identical commands without new context from the previous result.');
+    }
+    if (isMutationTool(lastTool ?? '')) {
+      hints.push('After file edits, run targeted checks (test/lint) if possible.');
+    }
+  }
+
+  return hints.filter(Boolean).slice(0, 2);
+}
+
+/**
+ * Return a tool schema array with extra context-specific description hints.
+ * This always deep-clones schemas to avoid mutating cached schema lists.
+ */
+export function applyContextAwareToolDescriptions(
+  schemas: ToolSchema[],
+  context?: ToolSchemaContext
+): ToolSchema[] {
+  if (!context || (!context.lastTool && (!context.recentTools?.length || context.recentTools.length === 0) && (!context.recentPaths?.length || context.recentPaths.length === 0))) {
+    return schemas;
+  }
+
+  return schemas.map((schema) => {
+    const name = schema.function.name;
+    const hints = contextHints(name, context);
+    if (!hints.length) return schema;
+
+    const desc = schema.function.description?.trim() ?? '';
+    return {
+      ...schema,
+      function: {
+        ...schema.function,
+        description: `${desc} Context: ${hints.join(' ')}`,
+      },
+    };
+  });
 }
