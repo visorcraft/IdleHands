@@ -2268,10 +2268,11 @@ export async function createSession(opts: {
     const emitToolCall = async (
       id: string,
       name: string,
-      args: Record<string, unknown>
+      args: Record<string, unknown>,
+      phase: ToolCallEvent['phase'] = 'executing'
     ): Promise<void> => {
       if (!hasOnToolCall && !hooksEnabled) return;
-      const call: ToolCallEvent = { id, name, args };
+      const call: ToolCallEvent = { id, name, args, phase };
       if (hasOnToolCall) hookObj.onToolCall?.(call);
       if (hooksEnabled) {
         await hookManager.emit('tool_call', { askId, turn: turns, call });
@@ -2627,6 +2628,7 @@ export async function createSession(opts: {
     const toolLoopWarningKeys = new Set<string>();
     let forceToollessRecoveryTurn = false;
     let toollessRecoveryUsed = false;
+    const streamedToolCallPreviews = new Set<string>();
 
     // ── Security: credential leak detection + prompt injection guard ──
     const leakDetector = new LeakDetector();
@@ -3057,6 +3059,38 @@ export async function createSession(opts: {
                 requestId: `r${reqCounter}`,
                 onToken: hookObj.onToken,
                 onFirstDelta,
+                onToolCallDelta: (delta: {
+                  index: number;
+                  id?: string;
+                  name?: string;
+                  argumentsSoFar?: string;
+                }) => {
+                  const name = typeof delta?.name === 'string' ? delta.name : '';
+                  if (!name) return;
+
+                  const id = typeof delta?.id === 'string' && delta.id.trim().length
+                    ? delta.id
+                    : `stream_call_${delta.index}`;
+                  const previewKey = `${turns}:${id}:${name}`;
+                  if (streamedToolCallPreviews.has(previewKey)) return;
+                  streamedToolCallPreviews.add(previewKey);
+
+                  let parsedArgs: Record<string, unknown> = {};
+                  const rawArgs =
+                    typeof delta.argumentsSoFar === 'string' ? delta.argumentsSoFar.trim() : '';
+                  if (rawArgs) {
+                    try {
+                      const parsed = parseJsonArgs(rawArgs);
+                      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                        parsedArgs = parsed as Record<string, unknown>;
+                      }
+                    } catch {
+                      // partial JSON chunks are expected during streaming
+                    }
+                  }
+
+                  void emitToolCall(id, name, parsedArgs, 'planned');
+                },
               };
 
               if (primaryUsesRuntimeModel && primaryRoute?.model) {

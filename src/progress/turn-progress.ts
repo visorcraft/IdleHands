@@ -327,6 +327,14 @@ export class TurnProgressController {
 
   private onToolCall(ev: ToolCallEvent): void {
     this.markActivity();
+
+    if (ev.phase === 'planned') {
+      const summary = this.toolSummary(ev);
+      this.appendToolLine(`… planned ${ev.name}: ${summary}`);
+      this.emit('tool_call', true);
+      return;
+    }
+
     this.phase = 'executing';
     this.activeTool = {
       name: ev.name,
