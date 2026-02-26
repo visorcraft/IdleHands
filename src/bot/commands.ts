@@ -30,6 +30,7 @@ import {
   diffCommand,
   costCommand,
   metricsCommand,
+  mcpDiscoverCommand,
   dirShowCommand,
   approvalShowCommand,
   approvalSetCommand,
@@ -470,6 +471,17 @@ export async function handleCheckpoints({ ctx, sessions }: CommandContext): Prom
     return;
   }
   await reply(ctx, checkpointsCommand(managed as unknown as ManagedLike));
+}
+
+export async function handleMcpDiscover({ ctx, sessions }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const managed = sessions.get(chatId);
+  if (!managed) {
+    await ctx.reply('No active session.');
+    return;
+  }
+  await reply(ctx, await mcpDiscoverCommand(managed as unknown as ManagedLike));
 }
 
 export async function handleMetrics({ ctx, sessions }: CommandContext): Promise<void> {

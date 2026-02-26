@@ -51,6 +51,7 @@ export { budgetCommand } from './budget-command.js';
 export { diffCommand } from './diff-command.js';
 export { costCommand } from './cost-command.js';
 export { metricsCommand } from './metrics-command.js';
+export { mcpDiscoverCommand } from './mcp-discover-command.js';
 export {
   antonCommand,
   antonHelpCommand,

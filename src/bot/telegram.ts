@@ -51,6 +51,7 @@ import {
   handleDiff,
   handleCost,
   handleMetrics,
+  handleMcpDiscover,
   handleVault,
   handleAnton,
   handleAgent,
@@ -434,6 +435,7 @@ export async function startTelegramBot(
   bot.command('diff', (ctx) => handleDiff(cmdCtx(ctx)));
   bot.command('cost', (ctx) => handleCost(cmdCtx(ctx)));
   bot.command('metrics', (ctx) => handleMetrics(cmdCtx(ctx)));
+  bot.command('mcp_discover', (ctx) => handleMcpDiscover(cmdCtx(ctx)));
   bot.command('vault', (ctx) => handleVault(cmdCtx(ctx)));
   bot.command('anton', (ctx) => handleAnton(cmdCtx(ctx)));
   bot.command('agent', (ctx) => handleAgent(cmdCtx(ctx)));
