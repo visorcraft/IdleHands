@@ -1,5 +1,6 @@
 import { SYS_CONTEXT_SCHEMA } from '../sys/context.js';
 import type { ToolSchema } from '../types.js';
+import { isLspTool, isMutationTool, isReadOnlyTool } from './tool-policy.js';
 
 const obj = (properties: Record<string, any>, required: string[] = []) => ({
   type: 'object',
@@ -355,4 +356,116 @@ export function buildToolsSchema(opts?: {
     SCHEMA_CACHE.set(key, final);
   }
   return final;
+}
+
+/**
+ * Optional context used to append short, high-signal hints to tool descriptions.
+ */
+export type ToolSchemaContext = {
+  /** Most recent tool action. */
+  lastTool?: string;
+  /** Recent tool names (ordered oldest -> newest). */
+  recentTools?: string[];
+  /** Recent file-like paths referenced by tools (ordered oldest -> newest). */
+  recentPaths?: string[];
+};
+
+function dedupeKeepTail(values: string[], max: number): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = (values[i] ?? '').trim();
+    if (!v || seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+    if (out.length >= max) break;
+  }
+  return out.reverse();
+}
+
+function shortenPath(value: string): string {
+  const v = value.trim();
+  if (!v) return v;
+  if (v.length <= 38) return v;
+  const tail = v.slice(-35);
+  return `…${tail}`;
+}
+
+function contextHints(name: string, ctx: ToolSchemaContext): string[] {
+  const lastTool = ctx.lastTool;
+  const recentTools = dedupeKeepTail(ctx.recentTools ?? [], 8);
+  const rawRecentPaths = dedupeKeepTail(ctx.recentPaths ?? [], 4);
+  const recentPaths = rawRecentPaths.map(shortenPath);
+
+  const hints: string[] = [];
+
+  // Focus continuity: if we just read, encourage minimal edits next.
+  if (name === 'read_file' || name === 'read_files' || name === 'list_dir') {
+    if (isMutationTool(lastTool ?? '')) {
+      hints.push('You recently edited files; read the target file to refresh current content first.');
+    }
+    if (recentPaths.length > 0) {
+      hints.push(`Recent targets: ${recentPaths.join(', ')}`);
+    }
+    if (isMutationTool(name)) {
+      // no-op
+    }
+  } else if (name === 'search_files') {
+    if (recentPaths.length > 0) {
+      hints.push(`Prefer ${recentPaths[0]} style scope before broad scans.`);
+    }
+  } else if (isReadOnlyTool(name) && isLspTool(name)) {
+    hints.push('Use only where symbol/location context is needed after opening the target file.');
+  } else if (isMutationTool(name)) {
+    const lastReadPath = recentTools.includes('read_file')
+      ? (rawRecentPaths[0] ?? '')
+      : rawRecentPaths.at(-1) ?? '';
+
+    if (lastReadPath) {
+      hints.push(`Recent-file continuation likely: target ${shortenPath(lastReadPath)} first.`);
+    }
+
+    if (recentTools.includes('read_file') || recentTools.includes('read_files')) {
+      hints.push('Scope edits from recent reads; avoid broad rewrites.');
+    } else {
+      hints.push('Read the exact target file first, then apply the smallest edit needed.');
+    }
+  } else if (name === 'exec') {
+    if (recentTools.includes('exec')) {
+      hints.push('Avoid re-running identical commands without new context from the previous result.');
+    }
+    if (isMutationTool(lastTool ?? '')) {
+      hints.push('After file edits, run targeted checks (test/lint) if possible.');
+    }
+  }
+
+  return hints.filter(Boolean).slice(0, 2);
+}
+
+/**
+ * Return a tool schema array with extra context-specific description hints.
+ * This always deep-clones schemas to avoid mutating cached schema lists.
+ */
+export function applyContextAwareToolDescriptions(
+  schemas: ToolSchema[],
+  context?: ToolSchemaContext
+): ToolSchema[] {
+  if (!context || (!context.lastTool && (!context.recentTools?.length || context.recentTools.length === 0) && (!context.recentPaths?.length || context.recentPaths.length === 0))) {
+    return schemas;
+  }
+
+  return schemas.map((schema) => {
+    const name = schema.function.name;
+    const hints = contextHints(name, context);
+    if (!hints.length) return schema;
+
+    const desc = schema.function.description?.trim() ?? '';
+    return {
+      ...schema,
+      function: {
+        ...schema.function,
+        description: `${desc} Context: ${hints.join(' ')}`,
+      },
+    };
+  });
 }
