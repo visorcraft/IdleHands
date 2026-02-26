@@ -123,11 +123,17 @@ export function buildToolsSchema(opts?: {
       function: {
         name: 'write_file',
         description:
-          'Write file (atomic, backup). Prefer edit_range/apply_patch for edits to existing files; use write_file mainly for new files or intentional full rewrites. Existing non-empty files require overwrite=true (or force=true).',
-        parameters: obj({ path: str(), content: str(), overwrite: bool(), force: bool() }, [
-          'path',
-          'content',
-        ]),
+          'Write file (atomic, backup). Prefer edit_range/apply_patch for edits to existing files; use write_file mainly for new files or intentional full rewrites. Existing non-empty files require overwrite=true (or force=true). Set normalize_escaped_newlines=true to convert literal "\\n" sequences in content into real newlines when needed.',
+        parameters: obj(
+          {
+            path: str(),
+            content: str(),
+            overwrite: bool(),
+            force: bool(),
+            normalize_escaped_newlines: bool(),
+          },
+          ['path', 'content']
+        ),
       },
     },
     {
@@ -167,20 +173,30 @@ export function buildToolsSchema(opts?: {
       type: 'function',
       function: {
         name: 'edit_file',
-        description: 'Legacy exact replace (requires old_text). Prefer apply_patch/edit_range.',
-        parameters: obj({ path: str(), old_text: str(), new_text: str(), replace_all: bool() }, [
-          'path',
-          'old_text',
-          'new_text',
-        ]),
+        description:
+          'Legacy exact replace (requires old_text). Prefer apply_patch/edit_range. Set normalize_escaped_newlines=true to normalize escaped line-break sequences in old_text/new_text before matching/replacing.',
+        parameters: obj(
+          {
+            path: str(),
+            old_text: str(),
+            new_text: str(),
+            replace_all: bool(),
+            normalize_escaped_newlines: bool(),
+          },
+          ['path', 'old_text', 'new_text']
+        ),
       },
     },
     {
       type: 'function',
       function: {
         name: 'insert_file',
-        description: 'Insert text at line (0=prepend, -1=append).',
-        parameters: obj({ path: str(), line: int(), text: str() }, ['path', 'line', 'text']),
+        description:
+          'Insert text at line (0=prepend, -1=append). Escaped newline sequences in text are normalized by default; set normalize_escaped_newlines=false to preserve literal backslash sequences.',
+        parameters: obj(
+          { path: str(), line: int(), text: str(), normalize_escaped_newlines: bool() },
+          ['path', 'line', 'text']
+        ),
       },
     },
 

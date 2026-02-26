@@ -113,6 +113,26 @@ describe('write_file', () => {
     assert.equal(content, 'deep');
   });
 
+  it('normalizes escaped newlines when explicitly requested', async () => {
+    const out = await write_file(ctx, {
+      path: 'normalized-write.txt',
+      content: 'alpha\\nbeta',
+      normalize_escaped_newlines: true,
+    });
+    const content = await fs.readFile(path.join(tmpDir, 'normalized-write.txt'), 'utf8');
+    assert.equal(content, 'alpha\nbeta');
+    assert.match(out, /normalized escaped newline/i);
+  });
+
+  it('preserves literal escaped newlines by default', async () => {
+    await write_file(ctx, {
+      path: 'literal-write.txt',
+      content: 'alpha\\nbeta',
+    });
+    const content = await fs.readFile(path.join(tmpDir, 'literal-write.txt'), 'utf8');
+    assert.equal(content, 'alpha\\nbeta');
+  });
+
   it('preserves file permissions', async () => {
     const p = path.join(tmpDir, 'exec.sh');
     await fs.writeFile(p, '#!/bin/bash\necho hi');
@@ -200,6 +220,19 @@ describe('edit_file', () => {
     await edit_file(ctx, { path: 'edit.txt', old_text: 'hello', new_text: 'goodbye' });
     const content = await fs.readFile(path.join(tmpDir, 'edit.txt'), 'utf8');
     assert.equal(content, 'goodbye world');
+  });
+
+  it('normalizes escaped newlines in old/new text when requested', async () => {
+    await fs.writeFile(path.join(tmpDir, 'edit-normalized.txt'), 'one\ntwo\n', 'utf8');
+    const out = await edit_file(ctx, {
+      path: 'edit-normalized.txt',
+      old_text: 'one\\ntwo',
+      new_text: 'alpha\\nbeta',
+      normalize_escaped_newlines: true,
+    });
+    const content = await fs.readFile(path.join(tmpDir, 'edit-normalized.txt'), 'utf8');
+    assert.equal(content, 'alpha\nbeta\n');
+    assert.match(out, /normalized escaped newline/i);
   });
 
   it('errors with helpful message on mismatch', async () => {
@@ -419,6 +452,30 @@ describe('insert_file', () => {
     await insert_file(ctx, { path: 'ins2.txt', line: 0, text: 'first' });
     const content = await fs.readFile(path.join(tmpDir, 'ins2.txt'), 'utf8');
     assert.ok(content.startsWith('first'));
+  });
+
+  it('normalizes escaped newlines in insert text by default', async () => {
+    await fs.writeFile(path.join(tmpDir, 'ins-normalized.txt'), 'head\n', 'utf8');
+    const out = await insert_file(ctx, {
+      path: 'ins-normalized.txt',
+      line: -1,
+      text: 'tail1\\ntail2',
+    });
+    const content = await fs.readFile(path.join(tmpDir, 'ins-normalized.txt'), 'utf8');
+    assert.equal(content, 'head\ntail1\ntail2\n');
+    assert.match(out, /normalized escaped newline/i);
+  });
+
+  it('preserves literal escaped newlines when normalize_escaped_newlines=false', async () => {
+    await fs.writeFile(path.join(tmpDir, 'ins-literal.txt'), 'head\n', 'utf8');
+    await insert_file(ctx, {
+      path: 'ins-literal.txt',
+      line: -1,
+      text: 'tail1\\ntail2',
+      normalize_escaped_newlines: false,
+    });
+    const content = await fs.readFile(path.join(tmpDir, 'ins-literal.txt'), 'utf8');
+    assert.equal(content, 'head\ntail1\\ntail2\n');
   });
 
   it('preserves CRLF line endings', async () => {

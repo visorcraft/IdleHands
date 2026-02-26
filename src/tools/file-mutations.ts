@@ -15,13 +15,36 @@ import { snapshotBeforeEdit } from './sys-notes.js';
 import { mutationReadback } from './text-utils.js';
 import { atomicWrite, backupFile } from './undo.js';
 
+function normalizeEscapedLineBreaks(
+  input: string,
+  opts?: { enabled?: boolean; onlyWhenNoRealNewlines?: boolean }
+): { text: string; normalized: boolean } {
+  const enabled = opts?.enabled !== false;
+  if (!enabled) return { text: input, normalized: false };
+
+  const hasLiteralEscapedNewlines = input.includes('\\n') || input.includes('\\r');
+  const hasRealNewlines = input.includes('\n') || input.includes('\r');
+  if (!hasLiteralEscapedNewlines) return { text: input, normalized: false };
+  if (opts?.onlyWhenNoRealNewlines !== false && hasRealNewlines) {
+    return { text: input, normalized: false };
+  }
+
+  const next = input
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\t/g, '\t')
+    .replace(/\\"/g, '"');
+  return { text: next, normalized: next !== input };
+}
+
 export async function writeFileTool(ctx: any, args: any): Promise<string> {
   const p = resolvePath(ctx, args?.path);
   const absCwd = path.resolve(ctx.cwd);
   const redactedPath = redactPath(p, absCwd);
   const raw = args?.content;
   const contentWasObject = raw != null && typeof raw === 'object';
-  const content =
+  let content =
     typeof raw === 'string' ? raw : contentWasObject ? JSON.stringify(raw, null, 2) : undefined;
   if (contentWasObject) {
     console.warn(
@@ -30,6 +53,13 @@ export async function writeFileTool(ctx: any, args: any): Promise<string> {
   }
   if (!p) throw new Error('write_file: missing path');
   if (content == null) throw new Error('write_file: missing content (got ' + typeof raw + ')');
+
+  const normalizeEscaped = args?.normalize_escaped_newlines === true;
+  const normalizedContent = normalizeEscapedLineBreaks(content, {
+    enabled: normalizeEscaped,
+    onlyWhenNoRealNewlines: true,
+  });
+  content = normalizedContent.text;
 
   const overwrite = Boolean(args?.overwrite ?? args?.force);
   enforceMutationWithinCwd('write_file', p, ctx);
@@ -87,7 +117,10 @@ export async function writeFileTool(ctx: any, args: any): Promise<string> {
       : mutationReadback(content, 0, 20) +
         '\n...\n' +
         mutationReadback(content, contentLines.length - 10, contentLines.length);
-  return `wrote ${redactedPath} (${Buffer.byteLength(content, 'utf8')} bytes)${replayNote}${cwdWarning}${readback}`;
+  const normalizationNote = normalizedContent.normalized
+    ? '\n[normalized escaped newline sequences in content]'
+    : '';
+  return `wrote ${redactedPath} (${Buffer.byteLength(content, 'utf8')} bytes)${normalizationNote}${replayNote}${cwdWarning}${readback}`;
 }
 
 export async function insertFileTool(ctx: any, args: any): Promise<string> {
@@ -96,7 +129,7 @@ export async function insertFileTool(ctx: any, args: any): Promise<string> {
   const redactedPath = redactPath(p, absCwd);
   const line = Number(args?.line);
   const rawText = args?.text;
-  const text =
+  let text =
     typeof rawText === 'string'
       ? rawText
       : rawText != null && typeof rawText === 'object'
@@ -105,6 +138,13 @@ export async function insertFileTool(ctx: any, args: any): Promise<string> {
   if (!p) throw new Error('insert_file: missing path');
   if (!Number.isFinite(line)) throw new Error('insert_file: missing/invalid line');
   if (text == null) throw new Error('insert_file: missing text (got ' + typeof rawText + ')');
+
+  const normalizeEscaped = args?.normalize_escaped_newlines !== false;
+  const normalizedText = normalizeEscapedLineBreaks(text, {
+    enabled: normalizeEscaped,
+    onlyWhenNoRealNewlines: true,
+  });
+  text = normalizedText.text;
 
   enforceMutationWithinCwd('insert_file', p, ctx);
   const pathVerdict = checkPathSafety(p);
@@ -144,7 +184,10 @@ export async function insertFileTool(ctx: any, args: any): Promise<string> {
 
     const cwdWarning = checkCwdWarning('insert_file', p, ctx);
     const readback = mutationReadback(out, 0, out.split(/\r?\n/).length);
-    return `inserted into ${redactedPath} at 0${replayNote}${cwdWarning}${readback}`;
+    const normalizationNote = normalizedText.normalized
+      ? '\n[normalized escaped newline sequences in text]'
+      : '';
+    return `inserted into ${redactedPath} at 0${normalizationNote}${replayNote}${cwdWarning}${readback}`;
   }
 
   const lines = beforeText.split(/\r?\n/);
@@ -171,7 +214,10 @@ export async function insertFileTool(ctx: any, args: any): Promise<string> {
   const cwdWarning = checkCwdWarning('insert_file', p, ctx);
   const insertEndLine = idx + insertLines.length;
   const readback = mutationReadback(out, idx, insertEndLine);
-  return `inserted into ${redactedPath} at ${idx}${replayNote}${cwdWarning}${readback}`;
+  const normalizationNote = normalizedText.normalized
+    ? '\n[normalized escaped newline sequences in text]'
+    : '';
+  return `inserted into ${redactedPath} at ${idx}${normalizationNote}${replayNote}${cwdWarning}${readback}`;
 }
 
 export async function editFileTool(ctx: any, args: any): Promise<string> {
@@ -179,14 +225,14 @@ export async function editFileTool(ctx: any, args: any): Promise<string> {
   const absCwd = path.resolve(ctx.cwd);
   const redactedPath = redactPath(p, absCwd);
   const rawOld = args?.old_text;
-  const oldText =
+  let oldText =
     typeof rawOld === 'string'
       ? rawOld
       : rawOld != null && typeof rawOld === 'object'
         ? JSON.stringify(rawOld, null, 2)
         : undefined;
   const rawNew = args?.new_text;
-  const newText =
+  let newText =
     typeof rawNew === 'string'
       ? rawNew
       : rawNew != null && typeof rawNew === 'object'
@@ -196,6 +242,18 @@ export async function editFileTool(ctx: any, args: any): Promise<string> {
   if (!p) throw new Error('edit_file: missing path');
   if (oldText == null) throw new Error('edit_file: missing old_text');
   if (newText == null) throw new Error('edit_file: missing new_text');
+
+  const normalizeEscaped = args?.normalize_escaped_newlines === true;
+  const normalizedOld = normalizeEscapedLineBreaks(oldText, {
+    enabled: normalizeEscaped,
+    onlyWhenNoRealNewlines: true,
+  });
+  const normalizedNew = normalizeEscapedLineBreaks(newText, {
+    enabled: normalizeEscaped,
+    onlyWhenNoRealNewlines: true,
+  });
+  oldText = normalizedOld.text;
+  newText = normalizedNew.text;
 
   enforceMutationWithinCwd('edit_file', p, ctx);
   const pathVerdict = checkPathSafety(p);
@@ -275,7 +333,10 @@ export async function editFileTool(ctx: any, args: any): Promise<string> {
   const editStartLine = next.slice(0, idx).split(/\r?\n/).length - 1;
   const editEndLine = editStartLine + newText.split(/\r?\n/).length;
   const readback = mutationReadback(next, editStartLine, editEndLine);
-  return `edited ${redactedPath} (replace_all=${replaceAll})${replayNote}${cwdWarning}${readback}`;
+  const normalizationNote = normalizedOld.normalized || normalizedNew.normalized
+    ? '\n[normalized escaped newline sequences in edit_file text]'
+    : '';
+  return `edited ${redactedPath} (replace_all=${replaceAll})${normalizationNote}${replayNote}${cwdWarning}${readback}`;
 }
 
 export async function editRangeTool(ctx: any, args: any): Promise<string> {
