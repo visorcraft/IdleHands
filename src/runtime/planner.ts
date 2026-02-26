@@ -284,6 +284,19 @@ export function plan(
   }
 
   const steps: PlanStep[] = [];
+
+  // Preflight first: fail fast if the model file does not exist on target host(s)
+  // before touching any currently-running runtime.
+  for (const host of targetHosts) {
+    steps.push({
+      kind: 'verify_model_source',
+      host_id: host.id,
+      command: `test -f ${shellEscape(resolvedModel.source)}`,
+      timeout_sec: 10,
+      description: `Verify model source exists on ${host.id}`,
+    });
+  }
+
   const stopAdded = new Set<string>();
 
   const addStopStep = (hostId: string, description: string) => {
