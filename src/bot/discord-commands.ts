@@ -40,6 +40,11 @@ import {
   subagentsSetCommand,
   changesCommand,
   undoCommand,
+  rollbackCommand,
+  checkpointsCommand,
+  budgetCommand,
+  diffCommand,
+  costCommand,
   vaultCommand,
   agentCommand,
   agentsCommand,
@@ -391,6 +396,31 @@ export async function handleTextCommand(
 
   if (content === '/undo') {
     await send(await undoCommand(m));
+    return true;
+  }
+
+  if (content === '/rollback') {
+    await send(rollbackCommand(m));
+    return true;
+  }
+
+  if (content === '/checkpoints') {
+    await send(checkpointsCommand(m));
+    return true;
+  }
+
+  if (content === '/budget') {
+    await send(budgetCommand(m));
+    return true;
+  }
+
+  if (content === '/diff') {
+    await send(diffCommand(m));
+    return true;
+  }
+
+  if (content === '/cost') {
+    await send(costCommand(m));
     return true;
   }
 

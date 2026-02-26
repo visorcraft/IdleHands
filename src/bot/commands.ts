@@ -24,6 +24,11 @@ import {
   watchdogCommand,
   captureSetCommand,
   captureShowCommand,
+  rollbackCommand,
+  checkpointsCommand,
+  budgetCommand,
+  diffCommand,
+  costCommand,
   dirShowCommand,
   approvalShowCommand,
   approvalSetCommand,
@@ -442,6 +447,61 @@ export async function handleUndo({ ctx, sessions }: CommandContext): Promise<voi
     return;
   }
   await reply(ctx, await undoCommand(managed as unknown as ManagedLike));
+}
+
+export async function handleRollback({ ctx, sessions }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const managed = sessions.get(chatId);
+  if (!managed) {
+    await ctx.reply('No active session.');
+    return;
+  }
+  await reply(ctx, rollbackCommand(managed as unknown as ManagedLike));
+}
+
+export async function handleCheckpoints({ ctx, sessions }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const managed = sessions.get(chatId);
+  if (!managed) {
+    await ctx.reply('No active session.');
+    return;
+  }
+  await reply(ctx, checkpointsCommand(managed as unknown as ManagedLike));
+}
+
+export async function handleCost({ ctx, sessions }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const managed = sessions.get(chatId);
+  if (!managed) {
+    await ctx.reply('No active session.');
+    return;
+  }
+  await reply(ctx, costCommand(managed as unknown as ManagedLike));
+}
+
+export async function handleDiff({ ctx, sessions }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const managed = sessions.get(chatId);
+  if (!managed) {
+    await ctx.reply('No active session.');
+    return;
+  }
+  await reply(ctx, diffCommand(managed as unknown as ManagedLike));
+}
+
+export async function handleBudget({ ctx, sessions }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const managed = sessions.get(chatId);
+  if (!managed) {
+    await ctx.reply('No active session.');
+    return;
+  }
+  await reply(ctx, budgetCommand(managed as unknown as ManagedLike));
 }
 
 export async function handleVault({ ctx, sessions }: CommandContext): Promise<void> {
