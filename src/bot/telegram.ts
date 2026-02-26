@@ -52,6 +52,7 @@ import {
   handleCost,
   handleMetrics,
   handleMcpDiscover,
+  handleHooks,
   handleVault,
   handleAnton,
   handleAgent,
@@ -436,6 +437,7 @@ export async function startTelegramBot(
   bot.command('cost', (ctx) => handleCost(cmdCtx(ctx)));
   bot.command('metrics', (ctx) => handleMetrics(cmdCtx(ctx)));
   bot.command('mcp_discover', (ctx) => handleMcpDiscover(cmdCtx(ctx)));
+  bot.command('hooks', (ctx) => handleHooks(cmdCtx(ctx)));
   bot.command('vault', (ctx) => handleVault(cmdCtx(ctx)));
   bot.command('anton', (ctx) => handleAnton(cmdCtx(ctx)));
   bot.command('agent', (ctx) => handleAgent(cmdCtx(ctx)));
@@ -622,6 +624,10 @@ export async function startTelegramBot(
     { command: 'changes', description: 'Files modified this session' },
     { command: 'undo', description: 'Undo last edit' },
     { command: 'vault', description: 'Search vault entries' },
+    { command: 'cost', description: 'Show session cost estimate' },
+    { command: 'metrics', description: 'Show session metrics' },
+    { command: 'mcp_discover', description: 'Discover MCP servers' },
+    { command: 'hooks', description: 'Inspect hook ecosystem status' },
     { command: 'hosts', description: 'List runtime hosts' },
     { command: 'backends', description: 'List runtime backends' },
     { command: 'models', description: 'List runtime models' },

@@ -47,6 +47,7 @@ import {
   costCommand,
   metricsCommand,
   mcpDiscoverCommand,
+  hooksCommand,
   vaultCommand,
   agentCommand,
   agentsCommand,
@@ -433,6 +434,12 @@ export async function handleTextCommand(
 
   if (content === '/mcp_discover') {
     await send(await mcpDiscoverCommand(m));
+    return true;
+  }
+
+  if (content === '/hooks' || content.startsWith('/hooks ')) {
+    const arg = content.replace(/^\/hooks\s*/i, '').trim();
+    await send(hooksCommand(m, arg));
     return true;
   }
 
