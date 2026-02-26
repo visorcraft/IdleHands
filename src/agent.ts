@@ -61,6 +61,8 @@ import { PromptGuard } from './security/prompt-guard.js';
 import { ResponseCache } from './agent/response-cache.js';
 import { resilientCall } from './agent/resilient-provider.js';
 import { ToolLoopGuard } from './agent/tool-loop-guard.js';
+import { CaptureManager } from './agent/capture.js';
+import { ClientPool } from './agent/client-pool.js';
 import { isLspTool, isMutationTool, isReadOnlyTool, planModeSummary } from './agent/tool-policy.js';
 import { buildToolsSchema } from './agent/tools-schema.js';
 import { OpenAIClient } from './client.js';
@@ -1569,100 +1571,34 @@ export async function createSession(opts: {
   };
   let lastModelsProbeMs = 0;
 
-  const capturesDir = path.join(stateDir(), 'captures');
-  let captureEnabled = false;
-  let captureRedactEnabled = true; // redact API keys/tokens in captures by default
-  let capturePath: string | undefined;
-  let lastCaptureRecord: any | null = null;
-  const routedClients = new Map<string, OpenAIClient>();
-  const probedEndpoints = new Set<string>();
-
+  const capture = new CaptureManager(stateDir());
   const normalizeEndpoint = (endpoint: string): string => endpoint.trim().replace(/\/+$/, '');
 
-  const defaultCapturePath = () => {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    return path.join(capturesDir, `${stamp}.jsonl`);
-  };
+  const clientPool = new ClientPool({
+    primary: client as any,
+    primaryEndpoint: cfg.endpoint,
+    apiKey: opts.apiKey,
+    cfg,
+    capture,
+    ClientCtor: OpenAIClient as any,
+  });
 
-  const redactCaptureRecord = (record: any): any => {
-    if (!captureRedactEnabled) return record;
-    const redacted = JSON.parse(JSON.stringify(record));
-    // Redact authorization headers, API keys, bearer tokens
-    const redactObj = (obj: any) => {
-      if (!obj || typeof obj !== 'object') return;
-      for (const key of Object.keys(obj)) {
-        const lower = key.toLowerCase();
-        if (lower === 'authorization' || lower === 'api-key' || lower === 'x-api-key') {
-          obj[key] = '[REDACTED]';
-        } else if (typeof obj[key] === 'object') {
-          redactObj(obj[key]);
-        }
-      }
-    };
-    redactObj(redacted);
-    return redacted;
-  };
-
-  const appendCaptureRecord = async (record: any, outPath: string) => {
-    await fs.mkdir(path.dirname(outPath), { recursive: true });
-    const safe = redactCaptureRecord(record);
-    await fs.appendFile(outPath, JSON.stringify(safe) + '\n', 'utf8');
-  };
-
+  // Thin wrapper used by setEndpoint when primary client is replaced.
   const applyClientRuntimeOptions = (target: OpenAIClient) => {
-    if (typeof (target as any).setVerbose === 'function') {
-      (target as any).setVerbose(cfg.verbose);
-    }
-    if (typeof cfg.response_timeout === 'number' && cfg.response_timeout > 0) {
-      target.setResponseTimeout(cfg.response_timeout);
-    }
-    if (
-      typeof (target as any).setConnectionTimeout === 'function' &&
-      typeof cfg.connection_timeout === 'number' &&
-      cfg.connection_timeout > 0
-    ) {
-      (target as any).setConnectionTimeout(cfg.connection_timeout);
-    }
-    if (
-      typeof (target as any).setInitialConnectionCheck === 'function' &&
-      typeof cfg.initial_connection_check === 'boolean'
-    ) {
-      (target as any).setInitialConnectionCheck(cfg.initial_connection_check);
-    }
-    if (
-      typeof (target as any).setInitialConnectionProbeTimeout === 'function' &&
-      typeof cfg.initial_connection_timeout === 'number' &&
-      cfg.initial_connection_timeout > 0
-    ) {
-      (target as any).setInitialConnectionProbeTimeout(cfg.initial_connection_timeout);
-    }
+    if (typeof (target as any).setVerbose === 'function') (target as any).setVerbose(cfg.verbose);
+    if (typeof cfg.response_timeout === 'number' && cfg.response_timeout > 0) target.setResponseTimeout(cfg.response_timeout);
+    if (typeof (target as any).setConnectionTimeout === 'function' && typeof cfg.connection_timeout === 'number' && cfg.connection_timeout > 0) (target as any).setConnectionTimeout(cfg.connection_timeout);
+    if (typeof (target as any).setInitialConnectionCheck === 'function' && typeof cfg.initial_connection_check === 'boolean') (target as any).setInitialConnectionCheck(cfg.initial_connection_check);
+    if (typeof (target as any).setInitialConnectionProbeTimeout === 'function' && typeof cfg.initial_connection_timeout === 'number' && cfg.initial_connection_timeout > 0) (target as any).setInitialConnectionProbeTimeout(cfg.initial_connection_timeout);
   };
 
   const attachCaptureHook = (target: OpenAIClient) => {
     if (typeof (target as any).setExchangeHook !== 'function') return;
-    (target as any).setExchangeHook(async (record: any) => {
-      lastCaptureRecord = record;
-      if (!captureEnabled) return;
-      const outFile = capturePath || defaultCapturePath();
-      capturePath = outFile;
-      await appendCaptureRecord(record, outFile);
-    });
+    (target as any).setExchangeHook(capture.createExchangeHook());
   };
 
-  const getClientForEndpoint = (endpoint?: string): OpenAIClient => {
-    if (!endpoint) return client;
-    const normalized = normalizeEndpoint(endpoint);
-    if (!normalized || normalized === normalizeEndpoint(cfg.endpoint)) return client;
-
-    const existing = routedClients.get(normalized);
-    if (existing) return existing;
-
-    const routed = new OpenAIClient(normalized, opts.apiKey, cfg.verbose);
-    applyClientRuntimeOptions(routed);
-    attachCaptureHook(routed);
-    routedClients.set(normalized, routed);
-    return routed;
-  };
+  const getClientForEndpoint = (endpoint?: string): OpenAIClient =>
+    clientPool.getForEndpoint(endpoint) as unknown as OpenAIClient;
 
   let runtimeRoutingModules:
     | {
@@ -1946,8 +1882,8 @@ export async function createSession(opts: {
 
     applyClientRuntimeOptions(client);
 
-    routedClients.clear();
-    probedEndpoints.clear();
+    clientPool.setPrimary(client as any);
+    clientPool.reset();
     wireCaptureHook();
 
     modelsList = normalizeModelsResponse(await client.models());
@@ -1960,37 +1896,12 @@ export async function createSession(opts: {
     setModel(chosen);
   };
 
-  const captureOn = async (filePath?: string): Promise<string> => {
-    const target = filePath?.trim() ? path.resolve(filePath) : defaultCapturePath();
-    await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.appendFile(target, '', 'utf8');
-    captureEnabled = true;
-    capturePath = target;
-    return target;
-  };
-
-  const captureOff = () => {
-    captureEnabled = false;
-  };
-
-  const captureSetRedact = (enabled: boolean) => {
-    captureRedactEnabled = enabled;
-  };
-
-  const captureGetRedact = () => captureRedactEnabled;
-
-  const captureOpen = (): string | null => {
-    return capturePath || null;
-  };
-
-  const captureLast = async (filePath?: string): Promise<string> => {
-    if (!lastCaptureRecord) {
-      throw new Error('No captured request/response pair is available yet.');
-    }
-    const target = filePath?.trim() ? path.resolve(filePath) : capturePath || defaultCapturePath();
-    await appendCaptureRecord(lastCaptureRecord, target);
-    return target;
-  };
+  const captureOn = (filePath?: string) => capture.on(filePath);
+  const captureOff = () => capture.off();
+  const captureSetRedact = (enabled: boolean) => capture.setRedact(enabled);
+  const captureGetRedact = () => capture.getRedact();
+  const captureOpen = () => capture.open();
+  const captureLast = (filePath?: string) => capture.last(filePath);
 
   const listMcpServers = (): McpServerStatus[] => {
     return mcpManager?.listServers() ?? [];
@@ -2026,7 +1937,7 @@ export async function createSession(opts: {
   const close = async () => {
     await mcpManager?.close().catch(() => {});
     await lspManager?.close().catch(() => {});
-    routedClients.clear();
+    await clientPool.closeAll();
     vault?.close();
     lens?.close();
   };
@@ -2375,7 +2286,7 @@ export async function createSession(opts: {
         await (client as any).probeConnection();
         initialConnectionProbeDone = true;
         if (typeof (client as any).getEndpoint === 'function') {
-          probedEndpoints.add(normalizeEndpoint((client as any).getEndpoint()));
+          clientPool.markProbed((client as any).getEndpoint());
         }
       }
     }
@@ -3100,16 +3011,8 @@ export async function createSession(opts: {
                     }]) {
                   const routeEndpoint = target.endpoint;
                   const activeClient = getClientForEndpoint(routeEndpoint);
-                  const endpointKey = routeEndpoint ? normalizeEndpoint(routeEndpoint) : undefined;
-                  if (endpointKey && !probedEndpoints.has(endpointKey)) {
-                    if (typeof (activeClient as any).probeConnection === 'function') {
-                      try {
-                        await (activeClient as any).probeConnection();
-                      } catch {
-                        // best-effort: if probe fails we still try the call
-                      }
-                      probedEndpoints.add(endpointKey);
-                    }
+                  if (routeEndpoint) {
+                    await clientPool.probeIfNeeded(routeEndpoint);
                   }
 
                   const routeModel = target.model || model;
@@ -5000,7 +4903,7 @@ export async function createSession(opts: {
     captureGetRedact,
     captureOpen,
     get capturePath() {
-      return capturePath;
+      return capture.path;
     },
     getSystemPrompt: () =>
       messages[0]?.role === 'system' ? String(messages[0].content) : activeSystemPromptBase,
