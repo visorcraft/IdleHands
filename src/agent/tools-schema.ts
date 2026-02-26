@@ -76,7 +76,7 @@ export function buildToolsSchema(opts?: {
       function: {
         name: 'read_file',
         description:
-          'Read a bounded slice of a file. Never repeat an identical call consecutively; reuse the prior result.',
+          'Read a file (or a slice with offset/limit). Omit limit to read the maximum allowed lines. Never repeat an identical call consecutively; reuse the prior result.',
         parameters: obj(
           {
             path: str(),
@@ -87,7 +87,7 @@ export function buildToolsSchema(opts?: {
             format: { type: 'string', enum: ['plain', 'numbered', 'sparse'] },
             max_bytes: int(256, 20_000),
           },
-          ['path', 'limit']
+          ['path']
         ),
       },
     },
@@ -111,7 +111,7 @@ export function buildToolsSchema(opts?: {
                   format: { type: 'string', enum: ['plain', 'numbered', 'sparse'] },
                   max_bytes: int(256, 20_000),
                 },
-                ['path', 'limit']
+                ['path']
               ),
             },
           },
