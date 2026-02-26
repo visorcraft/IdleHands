@@ -1,6 +1,6 @@
 {
   "name": "@visorcraft/idlehands",
-  "version": "2.2.24",
+  "version": "2.2.25",
   "type": "module",
   "description": "Local-first coding agent CLI for OpenAI-compatible endpoints",
   "license": "MIT",
