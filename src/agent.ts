@@ -65,7 +65,7 @@ import { CaptureManager } from './agent/capture.js';
 import { ClientPool } from './agent/client-pool.js';
 import { ConversationBranch } from './agent/conversation-branch.js';
 import { isLspTool, isMutationTool, isReadOnlyTool, planModeSummary } from './agent/tool-policy.js';
-import { buildToolsSchema } from './agent/tools-schema.js';
+import { applyContextAwareToolDescriptions, buildToolsSchema } from './agent/tools-schema.js';
 import { OpenAIClient } from './client.js';
 import { loadProjectContext } from './context.js';
 import { loadGitContext, isGitDirty, stashWorkingTree } from './git.js';
@@ -563,6 +563,86 @@ export async function createSession(opts: {
       slimFast,
     });
 
+  const collectToolContext = () => {
+    const recentTools = recentToolUsage.map((row) => row.tool);
+    const recentPaths = recentToolUsage.flatMap((row) => row.paths);
+
+    const dedupeRecent = (items: string[], max: number) => {
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i];
+        if (seen.has(item)) continue;
+        seen.add(item);
+        out.push(item);
+        if (out.length >= max) break;
+      }
+      return out.reverse();
+    };
+
+    return {
+      lastTool: recentTools[recentTools.length - 1],
+      recentTools: dedupeRecent(recentTools, 12),
+      recentPaths: dedupeRecent(recentPaths, 8),
+    };
+  };
+
+  const extractToolPaths = (toolName: string, args: Record<string, unknown>) => {
+    const out: string[] = [];
+    const add = (value: unknown) => {
+      if (typeof value !== 'string') return;
+      const v = value.trim();
+      if (!v) return;
+      out.push(v);
+    };
+
+    if (!args || typeof args !== 'object') return out;
+
+    if (toolName === 'read_files') {
+      const reqs = args.requests;
+      if (Array.isArray(reqs)) {
+        for (const r of reqs) {
+          if (r && typeof r === 'object' && 'path' in (r as any)) {
+            add((r as any).path);
+          }
+        }
+      }
+    }
+
+    if (toolName === 'search_files' || toolName === 'list_dir' || toolName === 'read_file') {
+      add(args.path);
+    }
+
+    if (toolName === 'exec' && typeof args.cwd === 'string') {
+      add(args.cwd);
+    }
+
+    if (
+      (toolName === 'edit_range' ||
+        toolName === 'write_file' ||
+        toolName === 'edit_file' ||
+        toolName === 'insert_file' ||
+        toolName === 'lsp_diagnostics' ||
+        toolName === 'lsp_symbols' ||
+        toolName === 'lsp_hover' ||
+        toolName === 'lsp_definition' ||
+        toolName === 'lsp_references') &&
+      typeof args.path === 'string'
+    ) {
+      add(args.path);
+    }
+
+    return out;
+  };
+
+  const recordToolUsageForHints = (toolName: string, args: Record<string, unknown>) => {
+    const paths = extractToolPaths(toolName, args);
+    recentToolUsage.push({
+      tool: toolName,
+      paths,
+    });
+    if (recentToolUsage.length > 60) recentToolUsage.shift();
+  };
   const vault = vaultEnabled
     ? (opts.runtime?.vault ??
       new VaultStore({
@@ -802,6 +882,7 @@ export async function createSession(opts: {
     messages = [{ role: 'system', content: effective }];
     sessionMetaPending = sessionMeta;
     lastEditedPath = undefined;
+    recentToolUsage.length = 0;
     initialConnectionProbeDone = false;
     mcpToolsLoaded = !mcpLazySchemaMode;
     routeHysteresis.reset();
@@ -836,6 +917,9 @@ export async function createSession(opts: {
   let initialConnectionProbeDone = false;
   let lastEditedPath: string | undefined;
   let lastTurnTransaction: EditTransaction | undefined;
+
+  // Context for adaptive tool schema hints (recent tool actions and paths).
+  const recentToolUsage: Array<{ tool: string; paths: string[] }> = [];
 
   // Plan mode state (Phase 8)
   let planSteps: PlanStep[] = [];
@@ -2889,10 +2973,14 @@ export async function createSession(opts: {
             const forceToollessByRouting = fastLaneToolless && turns === 1;
             // On fast-lane subsequent turns, slim the schema to read-only tools.
             const useSlimFast = !forceToollessByRouting && fastLaneSlimTools && turns > 1;
+            const schemaContext = collectToolContext();
             const toolsForTurn =
               cfg.no_tools || forceToollessRecoveryTurn || forceToollessByRouting
                 ? []
-                : getToolsSchema(useSlimFast).filter((t) => !suppressedTools.has(t.function.name));
+                : applyContextAwareToolDescriptions(
+                    getToolsSchema(useSlimFast).filter((t) => !suppressedTools.has(t.function.name)),
+                    schemaContext
+                  );
             const toolChoiceForTurn =
               cfg.no_tools || forceToollessRecoveryTurn || forceToollessByRouting ? 'none' : 'auto';
 
@@ -3810,15 +3898,12 @@ export async function createSession(opts: {
               throw new Error(`unknown tool: ${name}`);
 
             // Keep parsed args by call-id so we can digest/archive tool outputs with context.
-            toolArgsByCallId.set(
-              callId,
-              args && typeof args === 'object' && !Array.isArray(args) ? args : {}
-            );
-            toolLoopGuard.registerCall(
-              name,
-              args && typeof args === 'object' && !Array.isArray(args) ? args : {},
-              callId
-            );
+            const parsedArgs = args && typeof args === 'object' && !Array.isArray(args)
+              ? args
+              : {};
+            toolLoopGuard.registerCall(name, parsedArgs, callId);
+            toolArgsByCallId.set(callId, parsedArgs);
+            recordToolUsageForHints(name, parsedArgs as Record<string, unknown>);
 
             // Pre-dispatch argument validation.
             // - Required params
