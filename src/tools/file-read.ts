@@ -17,13 +17,11 @@ export async function readFileTool(ctx: ReadToolContext, args: any): Promise<str
   const offset = args?.offset != null ? Number(args.offset) : undefined;
 
   const rawLimit = args?.limit != null ? Number(args.limit) : undefined;
+  const defaultLimit = (ctx.maxReadLines != null && ctx.maxReadLines > 0) ? ctx.maxReadLines : 200;
   let limit =
     Number.isFinite(rawLimit as number) && (rawLimit as number) > 0
-      ? Math.max(1, Math.floor(rawLimit as number))
-      : 200;
-  if (ctx.maxReadLines != null && ctx.maxReadLines > 0) {
-    limit = Math.min(limit, ctx.maxReadLines);
-  }
+      ? Math.min(Math.max(1, Math.floor(rawLimit as number)), defaultLimit)
+      : defaultLimit;
 
   const search = typeof args?.search === 'string' ? args.search : undefined;
 
