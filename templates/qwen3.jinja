@@ -16,7 +16,7 @@
         {{- "\n" }}
         {{- tool | tojson }}
     {%- endfor %}
-    {{- "\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n" }}
+    {{- "\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>\n\nYou can call MULTIPLE functions in a single response. Use one <tool_call> block per function:\n<tool_call>\n{\"name\": \"read_file\", \"arguments\": {\"path\": \"/src/foo.ts\"}}\n</tool_call>\n<tool_call>\n{\"name\": \"read_file\", \"arguments\": {\"path\": \"/src/bar.ts\"}}\n</tool_call>\nAlways batch independent calls together — do NOT call them one at a time across separate turns.<|im_end|>\n" }}
 {%- else %}
     {%- if messages[0].role == 'system' %}
         {{- '<|im_start|>system\n' + messages[0].content + '<|im_end|>\n' }}

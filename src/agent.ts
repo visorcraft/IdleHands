@@ -3194,6 +3194,7 @@ export async function createSession(opts: {
                     : {}),
                   ...(frequencyPenalty && { frequency_penalty: frequencyPenalty }),
                   ...(presencePenalty && { presence_penalty: presencePenalty }),
+                  ...(harness.toolCalls.parallelCalls && { parallel_tool_calls: true }),
                 },
                 signal: ac.signal,
                 requestId: `r${reqCounter}`,
