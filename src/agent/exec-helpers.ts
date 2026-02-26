@@ -142,7 +142,11 @@ export function normalizeExecCommandForSig(command: string): string {
  * Returns a redirect message if detected, or null if not a sed-as-read pattern.
  */
 export function detectSedAsRead(command: string): string | null {
-  const cmd = String(command || '').trim();
+  let cmd = String(command || '').trim();
+  if (!cmd) return null;
+
+  // Strip leading cd && chains
+  cmd = cmd.replace(/^(\s*cd\s+[^;&|]+\s*(?:&&|;)\s*)+/i, '').trim();
   if (!cmd) return null;
 
   // Match: sed -n 'START,ENDp' FILE  (with optional quotes around the range)
@@ -200,7 +204,11 @@ export function extractGrepPattern(command: string): { pattern: string; paths: s
  * Does NOT match `tail file | grep` (log tailing) — only pure file reads.
  */
 export function detectCatHeadTailAsRead(command: string): string | null {
-  const cmd = String(command || '').trim();
+  let cmd = String(command || '').trim();
+  if (!cmd) return null;
+
+  // Strip leading cd && chains
+  cmd = cmd.replace(/^(\s*cd\s+[^;&|]+\s*(?:&&|;)\s*)+/i, '').trim();
   if (!cmd) return null;
 
   // Detect cat FILE | head -N | tail -M (manual file pagination)
@@ -271,7 +279,11 @@ export function detectCatHeadTailAsRead(command: string): string | null {
  * Returns the filter string or null.
  */
 export function extractTestFilter(command: string): string | null {
-  const cmd = String(command || '').trim();
+  let cmd = String(command || '').trim();
+  if (!cmd) return null;
+
+  // Strip leading cd && chains
+  cmd = cmd.replace(/^(\s*cd\s+[^;&|]+\s*(?:&&|;)\s*)+/i, '').trim();
   if (!cmd) return null;
 
   // php artisan test --filter=NAME or --filter NAME
@@ -321,7 +333,11 @@ export function extractGrepTargetFile(command: string): string | null {
  * Returns the log file path or null if not a log-reading command.
  */
 export function extractLogFilePath(command: string): string | null {
-  const cmd = String(command || '').trim();
+  let cmd = String(command || '').trim();
+  if (!cmd) return null;
+
+  // Strip leading cd && chains
+  cmd = cmd.replace(/^(\s*cd\s+[^;&|]+\s*(?:&&|;)\s*)+/i, '').trim();
   if (!cmd) return null;
 
   // Match tail -N FILE, grep PATTERN FILE where FILE looks like a log
