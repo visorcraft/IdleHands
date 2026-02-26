@@ -34,6 +34,7 @@ function cacheKey(opts?: {
   lspTools?: boolean;
   allowSpawnTask?: boolean;
   slimFast?: boolean;
+  maxReadLines?: number;
 }): string {
   return [
     opts?.activeVaultTools ? 'a1' : 'a0',
@@ -42,6 +43,7 @@ function cacheKey(opts?: {
     opts?.lspTools ? 'l1' : 'l0',
     opts?.allowSpawnTask === false ? 'sp0' : 'sp1',
     opts?.slimFast ? 'sf1' : 'sf0',
+    `rl${opts?.maxReadLines ?? 240}`,
   ].join('|');
 }
 
@@ -54,7 +56,10 @@ export function buildToolsSchema(opts?: {
   allowSpawnTask?: boolean;
   /** When true, only include read-only/lightweight tools for fast-lane turns. */
   slimFast?: boolean;
+  /** Maximum lines the model can request via read_file limit parameter. Default: 240. */
+  maxReadLines?: number;
 }): ToolSchema[] {
+  const readLineMax = opts?.maxReadLines ?? 240;
   const key = cacheKey(opts);
   const canUseCache = !opts?.mcpTools?.length;
   if (canUseCache) {
@@ -76,7 +81,7 @@ export function buildToolsSchema(opts?: {
           {
             path: str(),
             offset: int(1, 1_000_000),
-            limit: int(1, 240),
+            limit: int(1, readLineMax),
             search: str(),
             context: int(0, 80),
             format: { type: 'string', enum: ['plain', 'numbered', 'sparse'] },
@@ -100,7 +105,7 @@ export function buildToolsSchema(opts?: {
                 {
                   path: str(),
                   offset: int(1, 1_000_000),
-                  limit: int(1, 240),
+                  limit: int(1, readLineMax),
                   search: str(),
                   context: int(0, 80),
                   format: { type: 'string', enum: ['plain', 'numbered', 'sparse'] },
