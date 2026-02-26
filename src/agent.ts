@@ -10,6 +10,9 @@ import { AgentLoopBreak } from './agent/errors.js';
 import {
   execRcShouldSignalFailure,
   looksLikeReadOnlyExecCommand,
+  normalizeExecCommandForSig,
+  detectSedAsRead,
+  extractGrepPattern,
   readOnlyExecCacheable,
   withCachedExecObservationHint,
   withReplayedExecHint,
@@ -2622,6 +2625,9 @@ export async function createSession(opts: {
     // Same-search detection: track search= params across read_file calls
     const searchTermFiles = new Map<string, Set<string>>(); // search term → set of file paths
 
+    // Widening grep pattern detection: track grep patterns across exec calls
+    const grepPatternPaths = new Map<string, Set<string>>(); // grep pattern → set of paths searched
+
     // identical tool call signature counts across this ask() run
     const sigCounts = new Map<string, number>();
     const toolNameByCallId = new Map<string, string>();
@@ -3650,6 +3656,7 @@ export async function createSession(opts: {
               lastEditedPath = absPath;
               mutationVersion++;
               suppressedTools.clear(); // file changed, re-enable all tools
+              toolLoopGuard.invalidateFileContentCache(absPath);
             },
           });
 
@@ -4093,6 +4100,39 @@ export async function createSession(opts: {
                 throw new Error(`exec: ${reason} — command: ${args.command}`);
               }
             }
+
+            // ── Exec anti-pattern detection: sed-as-read and widening grep ──
+            if (name === 'exec' && typeof args.command === 'string') {
+              // Detect sed -n 'N,Mp' used as a substitute for read_file
+              const sedRedirect = detectSedAsRead(args.command);
+              if (sedRedirect) {
+                await emitToolCall(callId, name, args);
+                await emitToolResult({
+                  id: callId,
+                  name,
+                  success: false,
+                  summary: 'use read_file instead of sed',
+                  result: '',
+                });
+                return { id: callId, content: sedRedirect };
+              }
+
+              // Track widening grep patterns (same search string, expanding paths)
+              const grepInfo = extractGrepPattern(args.command);
+              if (grepInfo) {
+                const key = grepInfo.pattern.toLowerCase();
+                if (!grepPatternPaths.has(key)) grepPatternPaths.set(key, new Set());
+                for (const p of grepInfo.paths) grepPatternPaths.get(key)!.add(p);
+                if (grepPatternPaths.get(key)!.size >= 3) {
+                  messages.push({
+                    role: 'user' as const,
+                    content:
+                      `[system] You have searched for "${grepInfo.pattern}" across ${grepPatternPaths.get(key)!.size} different paths. ` +
+                      `Start with the broadest scope next time: search_files({ pattern: "${grepInfo.pattern}", path: "." })`,
+                  });
+                }
+              }
+            }
             if (isMutationTool(name) && typeof args.path === 'string') {
               const absPath = args.path.startsWith('/')
                 ? args.path
@@ -4138,7 +4178,7 @@ export async function createSession(opts: {
                 });
                 return {
                   id: callId,
-                  content: `STOP: Read budget exhausted (${cumulativeReadOnlyCalls}/${READ_BUDGET_HARD} calls). Do NOT read more files. Use search_files or exec: grep -rn "pattern" path/ to find what you need.`,
+                  content: `STOP: Read budget exhausted (${cumulativeReadOnlyCalls}/${READ_BUDGET_HARD} calls). Do NOT read more files. Use search_files(pattern, path) to find what you need.`,
                 };
               }
 
@@ -4165,7 +4205,7 @@ export async function createSession(opts: {
                   });
                   return {
                     id: callId,
-                    content: `STOP: Directory scan detected — you've read ${uniqueCount} unique files from ${parentDir}/. Use search_files(pattern, '${parentDir}') or exec: grep -rn "pattern" ${parentDir}/ instead of reading files individually.`,
+                    content: `STOP: Directory scan detected — you've read ${uniqueCount} unique files from ${parentDir}/. Use search_files(pattern, '${parentDir}') instead of reading files individually.`,
                   };
                 }
               }
@@ -4186,7 +4226,7 @@ export async function createSession(opts: {
                   });
                   return {
                     id: callId,
-                    content: `STOP: You've searched ${searchTermFiles.get(key)!.size} files for "${searchTerm}" one at a time. This is what search_files does in one call. Use: search_files(pattern="${searchTerm}", path=".") or exec: grep -rn "${searchTerm}" .`,
+                    content: `STOP: You've searched ${searchTermFiles.get(key)!.size} files for "${searchTerm}" one at a time. This is what search_files does in one call. Use: search_files(pattern="${searchTerm}", path=".")`,
                   };
                 }
               }
@@ -4272,6 +4312,21 @@ export async function createSession(opts: {
               if (cached) {
                 content = withReplayedExecHint(cached);
                 reusedCachedReadOnlyExec = true; // skip re-execution below
+              }
+            }
+
+            // Per-file content cache: catches non-consecutive re-reads of unchanged files.
+            // This fires even when the consecutive-repeat detector misses (interleaved calls).
+            if (name === 'read_file' && !reusedCachedReadOnlyExec && !reusedCachedReadTool) {
+              const fileReplay = await toolLoopGuard.getFileContentCache(
+                name,
+                args as Record<string, unknown>,
+                ctx.cwd
+              );
+              if (fileReplay) {
+                content = fileReplay;
+                reusedCachedReadTool = true;
+                cumulativeReadOnlyCalls++; // still counts toward budget
               }
             }
 
@@ -4405,6 +4460,18 @@ export async function createSession(opts: {
                   const baseCwd =
                     typeof (args as any)?.cwd === 'string' ? String((args as any).cwd) : ctx.cwd;
                   await toolLoopGuard.storeReadCache(
+                    name,
+                    args as Record<string, unknown>,
+                    baseCwd,
+                    content
+                  );
+                }
+
+                // Store in per-file content cache for non-consecutive re-read detection
+                if (name === 'read_file' && typeof content === 'string' && !content.startsWith('ERROR:')) {
+                  const baseCwd =
+                    typeof (args as any)?.cwd === 'string' ? String((args as any).cwd) : ctx.cwd;
+                  await toolLoopGuard.storeFileContentCache(
                     name,
                     args as Record<string, unknown>,
                     baseCwd,
@@ -4796,7 +4863,7 @@ export async function createSession(opts: {
               const callId = resolveCallId(tc);
               results.push({
                 id: callId,
-                content: `STOP: Per-turn read limit (${READ_ONLY_PER_TURN_CAP}). Use search_files or exec with grep instead of reading files one by one.`,
+                content: `STOP: Per-turn read limit (${READ_ONLY_PER_TURN_CAP}). Use search_files(pattern, path) instead of reading files one by one.`,
               });
             }
             if (cfg.verbose) {
