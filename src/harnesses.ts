@@ -108,7 +108,7 @@ const HARNESS: Harness[] = [
       parallelCalls: true,
       retryOnMalformed: 3,
     },
-    quirks: { ...DEFAULT_QUIRKS, readBudget: 12 },
+    quirks: { ...DEFAULT_QUIRKS, readBudget: 20 },
     systemPromptSuffix:
       'Prefer apply_patch or edit_range for most edits. Use write_file for full rewrites, and use edit_file only for exact old_text replacement when necessary.\nWhen answering questions about code, search first (search_files or grep), then read only the relevant files. Never scan an entire directory by reading files one by one.\nEmit multiple tool calls in a single response when possible (e.g., read 3 files together with read_files, not one read_file at a time).\nNever use sed/awk via exec to read file sections. Use read_file with offset/limit instead.\nPrefer search_files over exec grep — it is faster and produces structured results.\nAfter a test passes, stop and report the result. Do not re-run the same test without making code changes first.\nWhen searching for a string, start at the broadest reasonable scope (project root or relevant subtree). Do not search a single file first and then widen — search broadly once.\nAfter reading a file, remember its contents. Do not re-read the same file unless you have edited it since the last read.',
   },

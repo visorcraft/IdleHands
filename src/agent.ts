@@ -2618,8 +2618,14 @@ export async function createSession(opts: {
 
     // Read-only tool call budgets (§ anti-scan guardrails)
     const READ_ONLY_PER_TURN_CAP = 6;
-    const READ_BUDGET_WARN = 15;
     const READ_BUDGET_HARD = harness.quirks.readBudget ?? 20;
+    // Warn before hard-stop; scales for smaller custom budgets (e.g. 12 for qwen3-coder).
+    const READ_BUDGET_WARN =
+      READ_BUDGET_HARD > 1 ? Math.max(1, Math.min(15, READ_BUDGET_HARD - 2)) : 0;
+    // Only count file-reading tools toward the cumulative read budget.
+    // search_files is intentionally excluded so the model can still narrow scope.
+    const isBudgetedReadTool = (toolName: string) =>
+      toolName === 'read_file' || toolName === 'read_files' || toolName === 'list_dir';
     let cumulativeReadOnlyCalls = 0;
 
     // Directory scan detection: track unique file paths per parent dir.
@@ -4266,10 +4272,7 @@ export async function createSession(opts: {
               }
             }
 
-            if (name === 'read_file' || name === 'read_files') {
-              const filePath = typeof args.path === 'string' ? args.path : '';
-              const searchTerm = typeof args.search === 'string' ? args.search : '';
-
+            if (isBudgetedReadTool(name)) {
               // Fix 1: Hard cumulative budget — refuse reads once hard cap is reached.
               // Count only actual executed read-only calls (not cache replays), so this check
               // blocks the next call exactly at the configured cap.
@@ -4287,6 +4290,11 @@ export async function createSession(opts: {
                   content: `STOP: Read budget exhausted (${cumulativeReadOnlyCalls}/${READ_BUDGET_HARD} calls). Do NOT read more files. Use search_files(pattern, path) to find what you need.`,
                 };
               }
+            }
+
+            if (name === 'read_file' || name === 'read_files') {
+              const filePath = typeof args.path === 'string' ? args.path : '';
+              const searchTerm = typeof args.search === 'string' ? args.search : '';
 
               // Fix 2: Directory scan detection — counts unique files per dir (re-reads are OK)
               if (filePath) {
@@ -4768,13 +4776,9 @@ export async function createSession(opts: {
               result: content,
             });
 
-            // Count only actual read-only executions toward cumulative read budget.
+            // Count only actual file-read executions toward cumulative read budget.
             // Cached/replayed read observations should not consume budget.
-            if (
-              isReadOnlyToolDynamic(name) &&
-              !reusedCachedReadTool &&
-              !reusedCachedReadOnlyExec
-            ) {
+            if (isBudgetedReadTool(name) && !reusedCachedReadTool && !reusedCachedReadOnlyExec) {
               cumulativeReadOnlyCalls += 1;
             }
 
@@ -5104,8 +5108,9 @@ export async function createSession(opts: {
           // Warn zone: append warnings to each read result when approaching the hard cap
           if (
             !readBudgetWarned &&
-            cumulativeReadOnlyCalls > READ_BUDGET_WARN &&
-            cumulativeReadOnlyCalls <= READ_BUDGET_HARD
+            READ_BUDGET_WARN > 0 &&
+            cumulativeReadOnlyCalls >= READ_BUDGET_WARN &&
+            cumulativeReadOnlyCalls < READ_BUDGET_HARD
           ) {
             readBudgetWarned = true;
             messages.push({
