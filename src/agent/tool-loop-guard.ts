@@ -116,6 +116,20 @@ export class ToolLoopGuard {
       return hashToolCall(toolName, { paths }).signature;
     }
 
+    // For edit tools, normalize to just the path so that editing the same file
+    // with different content is detected as a loop (symptom chasing pattern).
+    if (
+      (toolName === 'edit_file' || toolName === 'write_file' || toolName === 'edit_range' || toolName === 'insert_file') &&
+      typeof args.path === 'string'
+    ) {
+      return hashToolCall(toolName, { path: args.path }).signature;
+    }
+
+    // For apply_patch, normalize to the list of files
+    if (toolName === 'apply_patch' && Array.isArray(args.files)) {
+      return hashToolCall(toolName, { files: args.files }).signature;
+    }
+
     // For exec calls, normalize the command by stripping trailing output-filter
     // pipes so that `cmd 2>&1 | tail -15` and `cmd 2>&1 | tail -50` produce
     // the same signature for loop detection purposes.
