@@ -33,10 +33,33 @@ export interface ResponseCacheOptions {
   maxEntries?: number;
 }
 
+export interface ResponseCacheStats {
+  /** Number of entries currently in cache */
+  entries: number;
+  /** Total hits from database (persisted) */
+  totalHits: number;
+  /** Runtime: total lookups this session */
+  lookups: number;
+  /** Runtime: cache hits this session */
+  hits: number;
+  /** Runtime: cache misses this session */
+  misses: number;
+  /** Runtime: entries evicted this session */
+  evictions: number;
+  /** Runtime: hit rate (hits/lookups) */
+  hitRate: number;
+}
+
 export class ResponseCache {
   private db: DatabaseSync;
   private ttlMinutes: number;
   private maxEntries: number;
+  
+  // Runtime metrics (not persisted, reset on restart)
+  private lookups = 0;
+  private hits = 0;
+  private misses = 0;
+  private evictions = 0;
 
   constructor(options: ResponseCacheOptions) {
     this.ttlMinutes = options.ttlMinutes ?? 60;
@@ -81,13 +104,17 @@ export class ResponseCache {
    * Look up a cached response. Returns null on miss or expired entry.
    */
   get(model: string, systemPrompt: string, userPrompt: string): string | null {
+    this.lookups++;
     const key = this.computeKey(model, systemPrompt, userPrompt);
 
     const row = this.db.prepare(
       `SELECT response, created_at FROM response_cache WHERE prompt_hash = ?`
     ).get(key) as { response: string; created_at: string } | undefined;
 
-    if (!row) return null;
+    if (!row) {
+      this.misses++;
+      return null;
+    }
 
     // Check TTL
     const createdAt = new Date(row.created_at).getTime();
@@ -95,6 +122,7 @@ export class ResponseCache {
     if (now - createdAt > this.ttlMinutes * 60 * 1000) {
       // Expired — delete and return miss
       this.db.prepare('DELETE FROM response_cache WHERE prompt_hash = ?').run(key);
+      this.misses++;
       return null;
     }
 
@@ -103,6 +131,7 @@ export class ResponseCache {
       `UPDATE response_cache SET accessed_at = ?, hit_count = hit_count + 1 WHERE prompt_hash = ?`
     ).run(nowIso(), key);
 
+    this.hits++;
     return row.response;
   }
 
@@ -128,7 +157,8 @@ export class ResponseCache {
   private evict(): void {
     // Remove expired entries
     const cutoff = new Date(Date.now() - this.ttlMinutes * 60 * 1000).toISOString();
-    this.db.prepare('DELETE FROM response_cache WHERE created_at < ?').run(cutoff);
+    const expiredResult = this.db.prepare('DELETE FROM response_cache WHERE created_at < ?').run(cutoff);
+    this.evictions += Number(expiredResult.changes);
 
     // Enforce max entries (LRU eviction)
     const count = (this.db.prepare('SELECT COUNT(*) as c FROM response_cache').get() as { c: number }).c;
@@ -139,17 +169,25 @@ export class ResponseCache {
           SELECT prompt_hash FROM response_cache ORDER BY accessed_at ASC LIMIT ?
         )`
       ).run(excess);
+      this.evictions += excess;
     }
   }
 
   /**
-   * Get cache statistics.
+   * Get cache statistics including runtime metrics.
    */
-  stats(): { entries: number; totalHits: number } {
+  stats(): ResponseCacheStats {
     const row = this.db.prepare(
       'SELECT COUNT(*) as entries, COALESCE(SUM(hit_count), 0) as totalHits FROM response_cache'
     ).get() as { entries: number; totalHits: number };
-    return row;
+    return {
+      ...row,
+      lookups: this.lookups,
+      hits: this.hits,
+      misses: this.misses,
+      evictions: this.evictions,
+      hitRate: this.lookups > 0 ? this.hits / this.lookups : 0,
+    };
   }
 
   /**

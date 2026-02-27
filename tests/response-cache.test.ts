@@ -79,3 +79,36 @@ describe('ResponseCache', () => {
     assert.strictEqual(cache.get('m', 's', 'p1'), null);
   });
 });
+
+describe('ResponseCache runtime metrics', () => {
+  it('tracks lookups, hits, and misses', () => {
+    cache.set('m', 's', 'p1', 'r1');
+    cache.get('m', 's', 'p1'); // hit
+    cache.get('m', 's', 'p2'); // miss
+    cache.get('m', 's', 'p1'); // hit
+    cache.get('m', 's', 'p3'); // miss
+
+    const stats = cache.stats();
+    assert.strictEqual(stats.lookups, 4);
+    assert.strictEqual(stats.hits, 2);
+    assert.strictEqual(stats.misses, 2);
+    assert.strictEqual(stats.hitRate, 0.5);
+  });
+
+  it('tracks evictions', () => {
+    const smallCache = new ResponseCache({ cacheDir, ttlMinutes: 60, maxEntries: 2 });
+    smallCache.set('m', 's', 'p1', 'r1');
+    smallCache.set('m', 's', 'p2', 'r2');
+    smallCache.set('m', 's', 'p3', 'r3'); // Should evict p1
+
+    const stats = smallCache.stats();
+    assert.strictEqual(stats.evictions, 1);
+    assert.strictEqual(stats.entries, 2);
+  });
+
+  it('returns zero hitRate when no lookups', () => {
+    const stats = cache.stats();
+    assert.strictEqual(stats.lookups, 0);
+    assert.strictEqual(stats.hitRate, 0);
+  });
+});
