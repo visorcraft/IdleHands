@@ -15,7 +15,7 @@ import {
   type ToolLoopDetectionResult,
   type ToolCallRecord,
 } from './tool-loop-detection.js';
-import { normalizeExecCommandForSig } from './exec-helpers.js';
+import { normalizeExecCommandForSig, normalizeTestCommandForSig } from './exec-helpers.js';
 
 type ReadCacheEntry = {
   content: string;
@@ -130,10 +130,16 @@ export class ToolLoopGuard {
       return hashToolCall(toolName, { files: args.files }).signature;
     }
 
-    // For exec calls, normalize the command by stripping trailing output-filter
-    // pipes so that `cmd 2>&1 | tail -15` and `cmd 2>&1 | tail -50` produce
-    // the same signature for loop detection purposes.
+    // For exec calls, normalize the command for loop detection.
+    // 1. Test commands: normalize to framework + filter (e.g., "php artisan test --filter=Foo")
+    // 2. General commands: strip trailing output-filter pipes (tail/head/grep)
     if (toolName === 'exec' && typeof args.command === 'string') {
+      // Try test command normalization first (more specific)
+      const testNormalized = normalizeTestCommandForSig(args.command);
+      if (testNormalized) {
+        return hashToolCall(toolName, { command: testNormalized }).signature;
+      }
+      // Fall back to general exec normalization
       const normalized = normalizeExecCommandForSig(args.command);
       if (normalized !== args.command) {
         const normalizedArgs = { ...args, command: normalized };
@@ -142,7 +148,6 @@ export class ToolLoopGuard {
     }
     return hashToolCall(toolName, args).signature;
   }
-
 
   prepareTurn(toolCalls: ToolCall[]): PreparedTurn {
     const uniqueCalls: ToolCall[] = [];

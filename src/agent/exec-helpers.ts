@@ -399,3 +399,80 @@ export function extractFilePathFromReadCommand(command: string): string | null {
 
   return null;
 }
+
+/**
+ * Normalize test commands for loop detection.
+ * Extracts the test framework and filter/target so that running the same test
+ * repeatedly with different output options is detected as a loop.
+ * 
+ * Examples:
+ *   "php artisan test --filter=FooTest 2>&1 | tail -20" → "php artisan test --filter=FooTest"
+ *   "npm test -- --grep=\"bar\"" → "npm test --grep=\"bar\""
+ *   "pytest tests/test_foo.py -v" → "pytest tests/test_foo.py"
+ *   "go test ./... -run TestBar" → "go test -run TestBar"
+ * 
+ * Returns the normalized command or the original if not a recognized test command.
+ */
+export function normalizeTestCommandForSig(command: string): string | null {
+  let cmd = String(command || "").trim();
+  if (!cmd) return null;
+
+  // Strip leading cd && chains
+  cmd = cmd.replace(/^(\s*cd\s+[^;&|]+\s*(?:&&|;)\s*)+/i, "").trim();
+  if (!cmd) return null;
+
+  // First apply the general exec normalization (strips tail/head/grep pipes)
+  cmd = normalizeExecCommandForSig(cmd);
+
+  // PHP/Laravel: php artisan test --filter=X
+  const phpMatch = cmd.match(
+    /^\s*(php\s+artisan\s+test)\s+(--filter[=\s]+\S+)/i
+  );
+  if (phpMatch) {
+    return `${phpMatch[1]} ${phpMatch[2]}`.trim();
+  }
+
+  // PHPUnit: phpunit --filter X or vendor/bin/phpunit --filter X
+  const phpunitMatch = cmd.match(
+    /^\s*((?:vendor\/bin\/)?phpunit)\s+.*?(--filter[=\s]+\S+)/i
+  );
+  if (phpunitMatch) {
+    return `${phpunitMatch[1]} ${phpunitMatch[2]}`.trim();
+  }
+
+  // Jest/npm test: npm test -- --grep="X" or npx jest --testNamePattern=X
+  const npmTestMatch = cmd.match(
+    /^\s*(npm\s+test|npx\s+jest)\s+.*?(--(?:grep|testNamePattern|testPathPattern)[=\s]+\S+)/i
+  );
+  if (npmTestMatch) {
+    return `${npmTestMatch[1]} ${npmTestMatch[2]}`.trim();
+  }
+
+  // Pytest: pytest path/test.py or pytest -k "pattern"
+  const pytestMatch = cmd.match(
+    /^\s*(pytest)\s+(?:.*?(-k\s+\S+)|(\S+\.py\b))/i
+  );
+  if (pytestMatch) {
+    const target = pytestMatch[2] || pytestMatch[3];
+    return `pytest ${target}`.trim();
+  }
+
+  // Go test: go test ./... -run TestX
+  const goTestMatch = cmd.match(
+    /^\s*(go\s+test)\s+.*?(-run\s+\S+)/i
+  );
+  if (goTestMatch) {
+    return `${goTestMatch[1]} ${goTestMatch[2]}`.trim();
+  }
+
+  // Cargo test: cargo test test_name
+  const cargoMatch = cmd.match(
+    /^\s*(cargo\s+test)\s+(\S+)/i
+  );
+  if (cargoMatch && !cargoMatch[2].startsWith("-")) {
+    return `${cargoMatch[1]} ${cargoMatch[2]}`.trim();
+  }
+
+  // Not a recognized test command
+  return null;
+}
