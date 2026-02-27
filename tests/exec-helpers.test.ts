@@ -3,6 +3,7 @@ import assert from "node:assert";
 import {
   normalizeExecCommandForSig,
   normalizeTestCommandForSig,
+  detectAwkAsRead,
 } from "../dist/agent/exec-helpers.js";
 
 describe("normalizeExecCommandForSig", () => {
@@ -107,4 +108,75 @@ describe("normalizeTestCommandForSig", () => {
       assert.strictEqual(result, "php artisan test --filter=FooTest");
     });
   });
+
+  it("normalizes awk NR range commands to collapse different ranges on same file", () => {
+    const a = normalizeExecCommandForSig(
+      "cd /home/user/project && awk 'NR>=285 && NR<=300' tests/FooTest.php"
+    );
+    const b = normalizeExecCommandForSig(
+      "cd /home/user/project && awk 'NR>=285 && NR<=320' tests/FooTest.php"
+    );
+    const c = normalizeExecCommandForSig(
+      "cd /home/user/project && awk 'NR>=292 && NR<=305' tests/FooTest.php"
+    );
+    assert.strictEqual(a, b, "different awk ranges on same file should produce same sig");
+    assert.strictEqual(b, c, "different awk ranges on same file should produce same sig");
+    assert.ok(a.includes("tests/FooTest.php"), "should preserve file path");
+  });
+
+  it("normalizes sed -n range commands to collapse different ranges on same file", () => {
+    const a = normalizeExecCommandForSig(
+      "cd /tmp && sed -n '10,20p' foo.ts"
+    );
+    const b = normalizeExecCommandForSig(
+      "cd /tmp && sed -n '50,100p' foo.ts"
+    );
+    assert.strictEqual(a, b, "different sed ranges on same file should produce same sig");
+    assert.ok(a.includes("foo.ts"), "should preserve file path");
+  });
+
+  it("does not normalize awk commands that are not range-reads", () => {
+    const a = normalizeExecCommandForSig("awk '{print $1}' file.txt");
+    assert.ok(!a.includes("<range>"), "non-range awk should not be normalized");
+  });
+});
+
+describe("detectAwkAsRead", () => {
+  it("detects awk NR range pattern and redirects to read_file", () => {
+    const result = detectAwkAsRead(
+      "cd /home/user/project && awk 'NR>=285 && NR<=300' tests/FooTest.php"
+    );
+    assert.ok(result !== null, "should detect awk range pattern");
+    assert.ok(result.includes("read_file"), "should suggest read_file");
+    assert.ok(result.includes("offset: 285"), "should include correct offset");
+    assert.ok(result.includes("limit: 16"), "should include correct limit");
+  });
+
+  it("detects awk NR>= without upper bound", () => {
+    const result = detectAwkAsRead("awk 'NR>=100' myfile.ts");
+    assert.ok(result !== null, "should detect awk NR>= pattern");
+    assert.ok(result.includes("offset: 100"), "should include correct offset");
+  });
+
+  it("detects awk NR== single line", () => {
+    const result = detectAwkAsRead("awk 'NR==42' myfile.ts");
+    assert.ok(result !== null, "should detect awk NR== pattern");
+    assert.ok(result.includes("offset: 42"), "should include correct offset");
+    assert.ok(result.includes("limit: 1"), "should include limit 1");
+  });
+
+  it("returns null for non-range awk commands", () => {
+    assert.strictEqual(detectAwkAsRead("awk '{print $1}' file.txt"), null);
+    assert.strictEqual(detectAwkAsRead("ls -la"), null);
+    assert.strictEqual(detectAwkAsRead(""), null);
+  });
+
+  it("handles cd prefix chains", () => {
+    const result = detectAwkAsRead(
+      "cd /home/user/project && awk 'NR>=10 && NR<=20' src/main.ts"
+    );
+    assert.ok(result !== null, "should detect with cd prefix");
+    assert.ok(result.includes("src/main.ts"), "should include file path");
+  });
+
 });

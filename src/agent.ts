@@ -12,6 +12,7 @@ import {
   looksLikeReadOnlyExecCommand,
   normalizeExecCommandForSig,
   detectSedAsRead,
+  detectAwkAsRead,
   extractGrepPattern,
   detectCatHeadTailAsRead,
   extractFilePathFromReadCommand,
@@ -3879,15 +3880,35 @@ export async function createSession(opts: {
             } else {
               stagnantTurns++;
             }
-            if (stagnantTurns >= 3 && totalToolCallsThisAsk >= 10 && !stagnationWarned) {
-              stagnationWarned = true;
-              messages.push({
-                role: 'system',
-                content:
-                  '[stagnation detected] You have repeated the same actions for 3 turns with no new progress. ' +
-                  'STOP and reassess your approach. Try a different strategy, or if you are stuck, ' +
-                  'summarize what you have tried and ask for guidance.',
-              } as ChatMessage);
+            if (stagnantTurns >= 3 && totalToolCallsThisAsk >= 10) {
+              // Escalating stagnation response:
+              // - First warning at 3 turns: soft nudge
+              // - Re-warn every 3 turns: increasingly urgent
+              // - At 6+ turns: force toolless recovery
+              const stagnationPhase = Math.floor(stagnantTurns / 3);
+              if (stagnantTurns === 3 && !stagnationWarned) {
+                stagnationWarned = true;
+                messages.push({
+                  role: 'system',
+                  content:
+                    '[stagnation detected] You have repeated the same actions for 3 turns with no new progress. ' +
+                    'STOP and reassess your approach. Try a different strategy, or if you are stuck, ' +
+                    'summarize what you have tried and ask for guidance.',
+                } as ChatMessage);
+              } else if (stagnantTurns >= 6 && stagnantTurns % 3 === 0) {
+                // Re-fire every 3 stagnant turns with escalating urgency
+                messages.push({
+                  role: 'system',
+                  content:
+                    `[stagnation critical] You have been stuck for ${stagnantTurns} consecutive turns ` +
+                    'doing the same thing. Your tools are being disabled for the next turn. ' +
+                    'You MUST explain what is blocking you and propose a completely different approach.',
+                } as ChatMessage);
+                shouldForceToollessRecovery = true;
+              } else if (stagnantTurns >= 6 && !shouldForceToollessRecovery) {
+                // Between escalation points, still force recovery if stuck long enough
+                shouldForceToollessRecovery = true;
+              }
             }
           }
 
@@ -4304,6 +4325,20 @@ export async function createSession(opts: {
                   result: '',
                 });
                 return { id: callId, content: sedRedirect };
+              }
+
+              // Detect awk 'NR>=M && NR<=N' used as a substitute for read_file
+              const awkRedirect = detectAwkAsRead(args.command);
+              if (awkRedirect) {
+                await emitToolCall(callId, name, args);
+                await emitToolResult({
+                  id: callId,
+                  name,
+                  success: false,
+                  summary: 'use read_file instead of awk',
+                  result: '',
+                });
+                return { id: callId, content: awkRedirect };
               }
 
               // Track widening grep patterns (same search string, expanding paths)
