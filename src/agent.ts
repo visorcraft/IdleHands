@@ -14,6 +14,7 @@ import {
   detectSedAsRead,
   extractGrepPattern,
   detectCatHeadTailAsRead,
+  extractFilePathFromReadCommand,
   extractTestFilter,
   extractGrepTargetFile,
   extractLogFilePath,
@@ -57,6 +58,7 @@ import {
   parseToolCallsFromContent,
   getMissingRequiredParams,
   getArgValidationIssues,
+  stripUnknownArgs,
   stripMarkdownFences,
   parseJsonArgs,
 } from './agent/tool-calls.js';
@@ -82,6 +84,7 @@ import {
   stripThinking,
   estimateTokensFromMessages,
   estimateToolSchemaTokens,
+  rollingCompressToolResults,
 } from './history.js';
 import { truncateToolResultContent } from './agent/context-budget.js';
 import { HookManager, loadHookPlugins } from './hooks/index.js';
@@ -2682,6 +2685,15 @@ export async function createSession(opts: {
     let readBudgetWarned = false;
     let noToolNudgeUsed = false;
 
+    // ── Edited paths tracking (#4) ──
+    // Track files that have been successfully edited, for compression of prior reads.
+    const editedPaths = new Set<string>();
+
+    // ── Stagnation detection (#3) ──
+    // Track turns where no novel action (new signature) occurs.
+    let stagnantTurns = 0;
+    let stagnationWarned = false;
+
     // ── Per-file mutation spiral detection ──
     // Track how many times the same file is mutated within a single ask().
     // When a file is edited too many times it usually means the model is in a
@@ -2735,7 +2747,8 @@ export async function createSession(opts: {
     });
     const toolLoopWarningKeys = new Set<string>();
     let forceToollessRecoveryTurn = false;
-    let toollessRecoveryUsed = false;
+    let toollessRecoveryCount = 0;
+    const MAX_TOOLLESS_RECOVERIES = 3;
     const streamedToolCallPreviews = new Set<string>();
     const streamedToolCallPreviewScores = new Map<string, number>();
 
@@ -2910,7 +2923,24 @@ export async function createSession(opts: {
 
         const compactionStartMs = Date.now();
         await runCompactionWithLock('auto context-budget compaction', async () => {
-          const beforeMsgs = messages;
+          let beforeMsgs = messages;
+
+          // Rolling compression: shrink old read_file/read_files/exec results
+          const rolling = rollingCompressToolResults({
+            messages: beforeMsgs,
+            freshCount: cfg.rolling_compress_fresh_count ?? cfg.compact_min_tail ?? 12,
+            maxChars: cfg.rolling_compress_max_chars ?? 1500,
+            toolNameByCallId,
+            toolArgsByCallId,
+            editedPaths,
+          });
+          if (rolling.compressedCount > 0) {
+            beforeMsgs = rolling.messages;
+            if (cfg.verbose) {
+              console.error(`[rolling-compress] ${rolling.compressedCount} results, ~${Math.ceil(rolling.charsSaved / 4)} tokens freed`);
+            }
+          }
+
           const beforeTokens = estimateTokensCached(beforeMsgs);
           const compacted = enforceContextBudget({
             messages: beforeMsgs,
@@ -3787,6 +3817,27 @@ export async function createSession(opts: {
             }
           }
 
+          // ── Stagnation detection (#3): check for novel actions ──
+          {
+            const hasNovelAction = [...turnSigs].some(sig => !sigCounts.has(sig));
+            if (hasNovelAction) {
+              stagnantTurns = 0;
+              stagnationWarned = false;
+            } else {
+              stagnantTurns++;
+            }
+            if (stagnantTurns >= 3 && totalToolCallsThisAsk >= 10 && !stagnationWarned) {
+              stagnationWarned = true;
+              messages.push({
+                role: 'system',
+                content:
+                  '[stagnation detected] You have repeated the same actions for 3 turns with no new progress. ' +
+                  'STOP and reassess your approach. Try a different strategy, or if you are stuck, ' +
+                  'summarize what you have tried and ask for guidance.',
+              } as ChatMessage);
+            }
+          }
+
           // Track whether a mutation happened since a given signature was last seen.
           // (Tool-loop is single-threaded across turns; this is safe to keep in-memory.)
 
@@ -3932,13 +3983,11 @@ export async function createSession(opts: {
                 } as ChatMessage);
               }
 
-              // At consec >= 3: poison the result (don't execute, return error).
-              // At consec >= 4: also suppress the tool from the schema entirely.
+              // At consec >= 3: poison this specific signature (don't execute, return error).
+              // The tool itself stays in the schema so the model can call it with
+              // different arguments (e.g. read a different file or different offset).
               if (consec >= 3) {
                 poisonedToolSigs.add(sig);
-                if (consec >= 4) {
-                  suppressedTools.add(toolName);
-                }
                 continue;
               }
 
@@ -3997,14 +4046,48 @@ export async function createSession(opts: {
           lastTurnSigs = turnSigs;
 
           if (shouldForceToollessRecovery) {
-            if (!toollessRecoveryUsed) {
-              console.error(`[tool-loop] Disabling tools for one recovery turn (turn=${turns})`);
+            if (toollessRecoveryCount < MAX_TOOLLESS_RECOVERIES) {
+              toollessRecoveryCount++;
+              console.error(
+                `[tool-loop] Recovery turn ${toollessRecoveryCount}/${MAX_TOOLLESS_RECOVERIES}` +
+                ` \u2014 disabling tools (turn=${turns})`
+              );
               forceToollessRecoveryTurn = true;
-              toollessRecoveryUsed = true;
+
+              // Reset loop state so the model gets a genuine fresh start after reflection.
+              // Without this, it immediately re-hits the same thresholds on the next turn.
+              consecutiveCounts.clear();
+              suppressedTools.clear();
+
+              // Escalating recovery messages — more urgent with each attempt
+              let recoveryContent: string;
+              if (toollessRecoveryCount === 1) {
+                recoveryContent =
+                  `[system] \u{1F6D1} Tool loop detected (recovery ${toollessRecoveryCount}/${MAX_TOOLLESS_RECOVERIES}). ` +
+                  `Tools are disabled for this turn. Before your next tool call, explain:\n` +
+                  `1. What you were trying to accomplish\n` +
+                  `2. Why your previous approach was not working\n` +
+                  `3. What different approach you will take next`;
+              } else if (toollessRecoveryCount === 2) {
+                recoveryContent =
+                  `[system] \u{1F6D1} Tool loop detected again (recovery ${toollessRecoveryCount}/${MAX_TOOLLESS_RECOVERIES}). ` +
+                  `You have already failed to break out of a loop once. ` +
+                  `You MUST take a fundamentally different approach:\n` +
+                  `- If you were editing a file repeatedly, try a completely different fix\n` +
+                  `- If you were reading the same file, use the content you already have\n` +
+                  `- If you were searching for something and not finding it, it may not exist\n` +
+                  `- Consider whether the task can be completed with what you already know`;
+              } else {
+                recoveryContent =
+                  `[system] \u{1F6D1} FINAL recovery attempt (${toollessRecoveryCount}/${MAX_TOOLLESS_RECOVERIES}). ` +
+                  `If you loop again, the session will be terminated.\n` +
+                  `Summarize what you know and either complete the task with what you have, ` +
+                  `or explain clearly what is blocking you so the user can intervene.`;
+              }
+
               messages.push({
                 role: 'user' as const,
-                content:
-                  '[system] 🛑 Tool loop detected. Tools disabled for this turn. Analyze the situation using existing results and explain what went wrong before continuing.',
+                content: recoveryContent,
               });
 
               await emitTurnEnd({
@@ -4022,10 +4105,12 @@ export async function createSession(opts: {
               continue;
             }
             console.error(
-              `[tool-loop] Recovery failed — model resumed looping after tools-disabled turn (turn=${turns})`
+              `[tool-loop] Recovery failed \u2014 model resumed looping after ` +
+              `${MAX_TOOLLESS_RECOVERIES} recovery turns (turn=${turns})`
             );
             throw new AgentLoopBreak(
-              'critical tool-loop persisted after one tools-disabled recovery turn. Stopping to avoid infinite loop.'
+              `critical tool-loop persisted after ${MAX_TOOLLESS_RECOVERIES} recovery turns. ` +
+              `Stopping to avoid infinite loop.`
             );
           }
 
@@ -4102,10 +4187,24 @@ export async function createSession(opts: {
             toolArgsByCallId.set(callId, parsedArgs);
             recordToolUsageForHints(name, parsedArgs as Record<string, unknown>);
 
+            // Auto-strip unknown parameters before validation (#1).
+            // This prevents hard errors from unknown keys while still
+            // reporting them as notes in the tool result.
+            let strippedArgKeys: string[] = [];
+            if (builtInFn || isSpawnTask) {
+              const strip = stripUnknownArgs(name, args as Record<string, unknown>);
+              if (strip.stripped.length > 0) {
+                strippedArgKeys = strip.stripped;
+                // Mutate args in-place so downstream code sees cleaned args
+                for (const k of strip.stripped) {
+                  delete (args as any)[k];
+                }
+              }
+            }
+
             // Pre-dispatch argument validation.
             // - Required params
             // - Type/range/enums
-            // - Unknown properties
             if (builtInFn || isSpawnTask) {
               const missing = getMissingRequiredParams(name, args);
               if (missing.length) {
@@ -4173,6 +4272,36 @@ export async function createSession(opts: {
               // Detect cat/head/tail used as a substitute for read_file
               const catRedirect = detectCatHeadTailAsRead(args.command);
               if (catRedirect) {
+                // Before returning a bare STOP, check if we have cached content
+                // for the target file. When read_file is poisoned for this path
+                // (deadlock scenario), serve the cached content so the model can
+                // make progress instead of looping on STOP messages.
+                const catReadPath = extractFilePathFromReadCommand(args.command);
+                if (catReadPath) {
+                  const cachedContent = await toolLoopGuard.getFileContentCache(
+                    'read_file',
+                    { path: catReadPath },
+                    ctx.cwd
+                  );
+                  if (cachedContent) {
+                    await emitToolCall(callId, name, args);
+                    await emitToolResult({
+                      id: callId,
+                      name,
+                      success: true,
+                      summary: 'served cached file content (read_file redirect)',
+                      result: '',
+                    });
+                    return {
+                      id: callId,
+                      content:
+                        '[system] Use read_file instead of shell commands for reading files. ' +
+                        'Here is the cached content you already have:\n\n' +
+                        cachedContent,
+                    };
+                  }
+                }
+
                 await emitToolCall(callId, name, args);
                 await emitToolResult({
                   id: callId,
@@ -4749,6 +4878,10 @@ export async function createSession(opts: {
               resultEvent.summary = `rc=${resultEvent.execRc} (command failed)`;
             }
 
+            // Append note about stripped unknown parameters (#1)
+            if (strippedArgKeys.length > 0) {
+              content += `\n[note: unknown parameters ${strippedArgKeys.join(", ")} were ignored]`;
+            }
             await emitToolResult(resultEvent);
 
             // Proactive LSP diagnostics after file mutations
@@ -4795,6 +4928,13 @@ export async function createSession(opts: {
             totalToolCallsThisAsk++;
             if (isMutationTool(name) && toolSuccess) {
               totalEditsThisAsk++;
+              // Track edited paths for acted-on read compression (#4)
+              if (typeof args.path === 'string') {
+                const absEditedPath = args.path.startsWith('/')
+                  ? args.path
+                  : path.resolve(projectDir, args.path);
+                editedPaths.add(absEditedPath);
+              }
             }
 
             // ── Per-file mutation spiral detection ──
@@ -4999,7 +5139,7 @@ export async function createSession(opts: {
           }
 
           if (harness.toolCalls.parallelCalls) {
-            // Models that support parallel calls: read-only in parallel, mutations sequential
+            // Models that support parallel calls: read-only in parallel, mutations by file (#7)
             const readonly = toolCallsArr.filter((tc) => isReadOnlyToolDynamic(tc.function.name));
             const others = toolCallsArr.filter((tc) => !isReadOnlyToolDynamic(tc.function.name));
 
@@ -5008,17 +5148,53 @@ export async function createSession(opts: {
             );
             results.push(...ro);
 
+            // Group mutations by target file path for parallel execution (#7).
+            // Mutations targeting the same file run sequentially within their group.
+            // Mutations targeting different files run in parallel.
+            // Non-file-targeting tools (exec, apply_patch) run sequentially first.
+            const sequential: typeof others = [];
+            const byFile = new Map<string, typeof others>();
             for (const tc of others) {
+              const target = getMutationTargetPath(tc, projectDir);
+              if (!target) {
+                sequential.push(tc);
+              } else {
+                const group = byFile.get(target) ?? [];
+                group.push(tc);
+                byFile.set(target, group);
+              }
+            }
+
+            // Run sequential group first (exec, apply_patch, etc.)
+            for (const tc of sequential) {
               if (ac.signal.aborted) break;
               try {
                 results.push(await runOne(tc));
               } catch (e: any) {
                 results.push(await catchToolError(e, tc));
-                if (isMutationTool(tc.function.name)) {
-                  // Fail-fast: after mutating tool failure, stop the remaining batch.
-                  break;
-                }
+                if (isMutationTool(tc.function.name)) break;
               }
+            }
+
+            // Run file-mutation groups in parallel
+            if (byFile.size > 0 && !ac.signal.aborted) {
+              const groupResults = await Promise.all(
+                [...byFile.values()].map(async (group) => {
+                  const groupRes: { id: string; content: string }[] = [];
+                  for (const tc of group) {
+                    if (ac.signal.aborted) break;
+                    try {
+                      groupRes.push(await runOne(tc));
+                    } catch (e: any) {
+                      groupRes.push(await catchToolError(e, tc));
+                      // Fail-fast within this file's group
+                      break;
+                    }
+                  }
+                  return groupRes;
+                })
+              );
+              for (const gr of groupResults) results.push(...gr);
             }
           } else {
             // Models with parallelCalls=false: run ALL calls sequentially (§4i).
@@ -5461,6 +5637,26 @@ export async function createSession(opts: {
     clearPlan,
     compactHistory,
   };
+}
+
+/**
+ * Extract the absolute file path targeted by a mutation tool call (#7).
+ * Returns null for apply_patch (multi-file), exec, and non-file tools.
+ */
+function getMutationTargetPath(tc: ToolCall, projectDir: string): string | null {
+  const name = tc.function?.name ?? '';
+  // apply_patch can target multiple files — treat as sequential
+  if (name === 'apply_patch' || name === 'exec') return null;
+
+  let raw: string | undefined;
+  try {
+    const args = JSON.parse(tc.function?.arguments ?? '{}');
+    raw = typeof args.path === 'string' ? args.path.trim() : undefined;
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  return raw.startsWith('/') ? raw : path.resolve(projectDir, raw);
 }
 
 export async function runAgent(opts: {

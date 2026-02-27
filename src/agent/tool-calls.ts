@@ -896,3 +896,32 @@ function parseGlmStyleToolCalls(content: string): ToolCall[] | null {
   return calls.length > 0 ? calls : null;
 }
 
+
+// ============================================================================
+// Auto-strip unknown tool parameters (#1)
+// ============================================================================
+
+/**
+ * Strip unknown parameters from tool args before validation.
+ * Uses TOOL_ALLOWED_KEYS to identify valid keys per tool.
+ * Returns the cleaned args and a list of stripped keys.
+ * For unknown tool names, returns args unchanged.
+ */
+export function stripUnknownArgs(
+  toolName: string,
+  args: Record<string, unknown>
+): { cleaned: Record<string, unknown>; stripped: string[] } {
+  const allowed = TOOL_ALLOWED_KEYS[toolName];
+  if (!allowed) return { cleaned: args, stripped: [] };
+
+  const stripped: string[] = [];
+  const cleaned: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) {
+    if (allowed.includes(k)) {
+      cleaned[k] = v;
+    } else {
+      stripped.push(k);
+    }
+  }
+  return { cleaned, stripped };
+}

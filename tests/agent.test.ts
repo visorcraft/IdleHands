@@ -922,13 +922,15 @@ describe('harness behavioral wiring', () => {
     const session = await createSession({ config, runtime: { client: fakeClient } });
 
     // With loopsOnToolError=true, nemotron triggers recovery after 2nd turn with identical call
-    // (threshold=2) instead of the normal 3. After recovery turn still loops, it throws.
+    // (threshold=2) instead of the normal 3. Gets up to 3 recovery cycles before throwing.
     await assert.rejects(
       () => session.ask('do something'),
       /tool-loop.*recovery|Tool loop detected/
     );
-    // Should break after recovery attempt (a few more calls than before, but still bounded)
-    assert.ok(calls <= 6, `expected early break but got ${calls} calls`);
+    // With 3 recovery cycles (each resets loop counters), the model gets more chances
+    // to self-correct before the session is terminated. Each cycle: 1 looping call +
+    // 1 toolless recovery turn. Total bounded by: initial(2) + 3*(1+1) + final(1) = ~9.
+    assert.ok(calls <= 12, `expected bounded break but got ${calls} calls`);
   });
 
   it('reuses cached output for repeated read-only exec observations instead of hard-breaking', async () => {
@@ -1064,7 +1066,7 @@ describe('harness behavioral wiring', () => {
         (m: any) =>
           m.role === 'tool' &&
           typeof m.content === 'string' &&
-          m.content.includes('[CACHE HIT] File unchanged since previous read.')
+          m.content.includes('[CACHE HIT]')
       );
       assert.equal(sawCachedHint, true, 'expected cached read hint in tool output');
     } finally {
