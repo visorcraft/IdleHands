@@ -6,6 +6,7 @@
  * - Plan confirmations (approve/reject all, approve single step)
  * - Timeout auto-reject
  * - Idempotent callback handling (ignore duplicates)
+ * - Action dispatching for retry_fast, retry_heavy, cancel, etc.
  */
 
 import type { Bot } from 'grammy';
@@ -20,6 +21,12 @@ import type {
 import { randomId } from '../utils.js';
 
 import { escapeHtml } from './format.js';
+
+/**
+ * Action callback handler signature for handling interactive actions.
+ * Allows the provider to delegate action handling to a shared dispatcher.
+ */
+export type ActionCallbackHandler = (actionType: string, data: string) => Promise<boolean>;
 
 type PendingSingle = {
   kind: 'single';
@@ -63,12 +70,24 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
   private batchFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly BATCH_WINDOW_MS = 100;
 
+  // Optional action handler for shared action dispatch
+  private actionHandler?: ActionCallbackHandler;
+
   constructor(
     private bot: Bot,
     private chatId: number,
-    private timeoutSec: number = 300
+    private timeoutSec: number = 300,
+    actionHandler?: ActionCallbackHandler
   ) {
     this.sid = randomId(3);
+    this.actionHandler = actionHandler;
+  }
+
+  /**
+   * Set the action handler for delegated action processing.
+   */
+  setActionHandler(handler: ActionCallbackHandler): void {
+    this.actionHandler = handler;
   }
 
   async confirm(opts: ConfirmRequest): Promise<boolean> {
@@ -269,6 +288,16 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
 
   /** Handle callback query data. Returns true if handled by this provider. */
   async handleCallback(data: string): Promise<boolean> {
+    // First, check for action callbacks (action:<type>)
+    if (data.startsWith('action:')) {
+      const actionType = data.slice('action:'.length);
+      if (this.actionHandler) {
+        const handled = await this.actionHandler(actionType, data);
+        if (handled) return true;
+      }
+      // Fall through to default handling if no action handler or not handled
+    }
+
     // Format: c:<sid>:<aid>:a|r|d OR p:<sid>:<aid>:aa|ra|sN
     const parts = data.split(':');
     if (parts.length !== 4) return false;
@@ -389,5 +418,3 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
       .catch(() => {});
   }
 }
-
-// escapeHtml imported from ./format.js
