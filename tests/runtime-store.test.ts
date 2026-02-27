@@ -170,6 +170,19 @@ describe('runtime store', () => {
     assert.throws(() => validateRuntimes(cfg), /unknown template variable/i);
   });
 
+  it('validateRuntimes() accepts model thinking_mode values', () => {
+    const cfg = baseConfig();
+    cfg.models[0].thinking_mode = 'no_think' as any;
+    const out = validateRuntimes(cfg);
+    assert.equal(out.models[0].thinking_mode, 'no_think');
+  });
+
+  it('validateRuntimes() rejects invalid model thinking_mode values', () => {
+    const cfg = baseConfig();
+    cfg.models[0].thinking_mode = 'turbo_think' as any;
+    assert.throws(() => validateRuntimes(cfg), /thinking_mode/i);
+  });
+
   it('redactConfig() removes all sensitive fields', () => {
     const cfg = baseConfig();
     cfg.hosts[0].connection.password = 'secret';

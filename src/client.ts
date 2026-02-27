@@ -380,6 +380,8 @@ export class OpenAIClient {
   sanitizeRequest(body: any) {
     delete body.store;
     delete body.reasoning_effort;
+    const thinkingMode = body.thinking_mode as 'default' | 'think' | 'no_think' | undefined;
+    delete body.thinking_mode;
     // Keep stream_options for streaming calls (used for include_usage on SSE),
     // but strip it from non-stream requests for compatibility.
     if (!body.stream) delete body.stream_options;
@@ -387,6 +389,19 @@ export class OpenAIClient {
     if (Array.isArray(body.messages)) {
       for (const m of body.messages) {
         if (m?.role === 'developer') m.role = 'system';
+      }
+
+      if (thinkingMode === 'think' || thinkingMode === 'no_think') {
+        const directive = thinkingMode === 'no_think' ? '/no_think' : '/think';
+        for (let i = body.messages.length - 1; i >= 0; i--) {
+          const m = body.messages[i];
+          if (m?.role !== 'user' || typeof m.content !== 'string') continue;
+          const text = String(m.content);
+          if (!text.startsWith('/no_think') && !text.startsWith('/think')) {
+            m.content = `${directive}\n${text}`;
+          }
+          break;
+        }
       }
     }
 

@@ -4,7 +4,13 @@ import path from 'node:path';
 import { atomicWrite } from '../tools.js';
 import { configDir, shellEscape } from '../utils.js';
 
-import type { RuntimesConfig, RuntimeHost, RuntimeBackend, RuntimeModel } from './types.js';
+import type {
+  RuntimesConfig,
+  RuntimeHost,
+  RuntimeBackend,
+  RuntimeModel,
+  ModelThinkingMode,
+} from './types.js';
 
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_ID_LEN = 64;
@@ -261,6 +267,7 @@ function validateModel(raw: unknown, index: number): RuntimeModel {
       'launch',
       'runtime_defaults',
       'chat_template',
+      'thinking_mode',
       'split_policy',
     ],
     `models[${index}]`
@@ -334,6 +341,17 @@ function validateModel(raw: unknown, index: number): RuntimeModel {
       ? undefined
       : assertString(raw.chat_template, `models[${index}].chat_template`);
 
+  let thinking_mode: ModelThinkingMode | undefined;
+  if (raw.thinking_mode != null) {
+    const mode = assertString(raw.thinking_mode, `models[${index}].thinking_mode`);
+    if (mode !== 'default' && mode !== 'think' && mode !== 'no_think') {
+      throw new Error(
+        `models[${index}].thinking_mode: expected "default", "think", or "no_think"`
+      );
+    }
+    thinking_mode = mode;
+  }
+
   return {
     id,
     display_name,
@@ -344,6 +362,7 @@ function validateModel(raw: unknown, index: number): RuntimeModel {
     launch,
     runtime_defaults,
     chat_template,
+    thinking_mode,
     split_policy: raw.split_policy as any,
   };
 }
