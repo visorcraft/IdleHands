@@ -135,6 +135,17 @@ function isRecoverablePreflightReviewError(errMsg: string): boolean {
   );
 }
 
+function withAntonThinkingDirective(prompt: string): string {
+  const trimmed = prompt.trimStart();
+  if (trimmed.startsWith('/no_think') || trimmed.startsWith('/think')) return prompt;
+  return `/no_think\n${prompt}`;
+}
+
+async function antonAsk(session: AgentSession, prompt: string, hooks?: any): Promise<any> {
+  const effectivePrompt = withAntonThinkingDirective(prompt);
+  return hooks ? session.ask(effectivePrompt, hooks) : session.ask(effectivePrompt);
+}
+
 /**
  * Try to read a file's contents for injection into retry context.
  * Returns null if file doesn't exist or is too large.
@@ -655,7 +666,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
 
             let discoveryTimeoutHandle: NodeJS.Timeout;
             const discoveryRes = await Promise.race([
-              preflightSession.ask(discoveryPrompt).finally(() => clearTimeout(discoveryTimeoutHandle)),
+              antonAsk(preflightSession, discoveryPrompt).finally(() => clearTimeout(discoveryTimeoutHandle)),
               new Promise<never>((_, reject) => {
                 discoveryTimeoutHandle = setTimeout(() => {
                   try {
@@ -682,7 +693,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               if (/preflight-json-missing-object|preflight-discovery-invalid/i.test(parseErrMsg)) {
                 emitStage('planning', '⚠️ Discovery output invalid, requesting forced decision...');
                 try {
-                  const forceRes = await preflightSession.ask(FORCE_DISCOVERY_DECISION_PROMPT);
+                  const forceRes = await antonAsk(preflightSession, FORCE_DISCOVERY_DECISION_PROMPT);
                   const forceTokens = preflightSession.usage.prompt + preflightSession.usage.completion - discoveryTokens;
                   discoveryTokens += forceTokens;
                   totalTokens += forceTokens;
@@ -702,10 +713,11 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               // actually verify anything — force it to re-examine with tools.
               if (discoveryRes.toolCalls === 0) {
                 emitStage('planning', '⚠️ Discovery claims complete but made no tool calls — forcing verification...');
-                const verifyRes = await preflightSession.ask(
+                const verifyRes = await antonAsk(
+                  preflightSession,
                   'You claimed this task is already complete, but you did not use any tools to verify. ' +
-                  'Please use tools (read files, check code, run tests) to actually confirm the task is done. ' +
-                  'Then respond with your discovery JSON again.'
+                    'Please use tools (read files, check code, run tests) to actually confirm the task is done. ' +
+                    'Then respond with your discovery JSON again.'
                 );
                 const verifyTokens = preflightSession.usage.prompt + preflightSession.usage.completion - discoveryTokens;
                 discoveryTokens += verifyTokens;
@@ -744,7 +756,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
             // actually write the file before we even check the filesystem.
             if (discoveryRes.toolCalls === 0) {
               emitStage('planning', '⚠️ Discovery returned filename but made no tool calls — forcing write...');
-              const writeRes = await preflightSession.ask(
+              const writeRes = await antonAsk(
+                preflightSession,
                 buildDiscoveryRewritePrompt(discovery.filename, 'file was never written (no tool calls)')
               );
               const writeTokens =
@@ -783,7 +796,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                     'planning',
                     `⚠️ Discovery returned filename but file is invalid (${reason}). Asking model to rewrite plan file...`
                   );
-                  const rewriteRes = await preflightSession.ask(
+                  const rewriteRes = await antonAsk(
+                    preflightSession,
                     buildDiscoveryRewritePrompt(planPath, reason)
                   );
                   const rewriteTokens =
@@ -972,7 +986,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               const reviewPrompt = buildRequirementsReviewPrompt(reviewPlanFile);
               let reviewTimeoutHandle: NodeJS.Timeout;
               const reviewRes = await Promise.race([
-                preflightSession.ask(reviewPrompt).finally(() => clearTimeout(reviewTimeoutHandle)),
+                antonAsk(preflightSession, reviewPrompt).finally(() => clearTimeout(reviewTimeoutHandle)),
                 new Promise<never>((_, reject) => {
                   reviewTimeoutHandle = setTimeout(() => {
                     try {
@@ -998,7 +1012,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                 if (/preflight-json-missing-object|preflight-review-invalid/i.test(parseErrMsg)) {
                   emitStage('runtime_preflight', '⚠️ Review output invalid, requesting forced decision...');
                   try {
-                    const forceRes = await preflightSession.ask(FORCE_REVIEW_DECISION_PROMPT);
+                    const forceRes = await antonAsk(preflightSession, FORCE_REVIEW_DECISION_PROMPT);
                     const forceTokens = preflightSession.usage.prompt + preflightSession.usage.completion - reviewTokens;
                     reviewTokens += forceTokens;
                     totalTokens += forceTokens;
@@ -1033,7 +1047,8 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                       'runtime_preflight',
                       `⚠️ Requirements review returned filename but file is invalid (${reason}). Asking model to rewrite plan file...`
                     );
-                    const rewriteRes = await preflightSession.ask(
+                    const rewriteRes = await antonAsk(
+                      preflightSession,
                       buildReviewRewritePrompt(reviewedPlanPath, reason)
                     );
                     const rewriteTokens =
@@ -1342,7 +1357,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
               : 0;
           while (true) {
             try {
-              result = await session.ask(prompt, askHooks as any);
+              result = await antonAsk(session, prompt, askHooks as any);
               break;
             } catch (e) {
               // Auto-recover and explicitly report tool-loop outcomes.
@@ -1434,7 +1449,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                 'verifying',
                 '⚠️ Agent omitted structured result. Requesting format-only recovery...'
               );
-              const repaired = await session.ask(STRUCTURED_RESULT_RECOVERY_PROMPT);
+              const repaired = await antonAsk(session, STRUCTURED_RESULT_RECOVERY_PROMPT);
               iterationsUsed += repaired.turns;
               agentResult = parseAntonResult(repaired.text);
               tokensUsed = session.usage.prompt + session.usage.completion;
@@ -1547,7 +1562,7 @@ export async function runAnton(opts: RunAntonOpts): Promise<AntonRunResult> {
                     const session = await createSessionFn(verifyConfig, apiKey);
                     return {
                       ask: async (prompt: string) => {
-                        const result = await session.ask(prompt);
+                        const result = await antonAsk(session, prompt);
                         return result.text;
                       },
                       close: () => session.close(),
