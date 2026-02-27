@@ -68,6 +68,8 @@ export interface ModelRuntimeDefaults {
   max_tokens?: number;
 }
 
+export type ModelThinkingMode = 'default' | 'think' | 'no_think';
+
 export interface RuntimeModel {
   id: string;
   display_name: string;
@@ -80,6 +82,13 @@ export interface RuntimeModel {
   /** Chat template override for llama-server. If it ends in .jinja or contains a path separator,
    *  passed as --chat-template-file; otherwise passed as --chat-template (built-in name like "chatml"). */
   chat_template?: string;
+  /**
+   * Per-model default thinking directive applied to chat requests.
+   * - "default": do not inject a directive
+   * - "think": prepend /think to the latest user message
+   * - "no_think": prepend /no_think to the latest user message
+   */
+  thinking_mode?: ModelThinkingMode;
   split_policy?: any | null; // Phase D only
 }
 
@@ -124,6 +133,7 @@ export interface ResolvedModel {
   launch: ModelLaunch;
   runtime_defaults?: ModelRuntimeDefaults;
   chat_template?: string;
+  thinking_mode?: ModelThinkingMode;
 }
 
 export type PlanStepKind =

@@ -1788,6 +1788,7 @@ export async function createSession(opts: {
     | null = null;
   let runtimeRoutingUnavailable = false;
   let runtimeModelIdsCache: Set<string> | null = null;
+  let runtimeModelThinkingModeCache: Map<string, 'default' | 'think' | 'no_think' | undefined> | null = null;
 
   const loadRuntimeRoutingModules = async () => {
     if (runtimeRoutingUnavailable) return null;
@@ -1818,9 +1819,15 @@ export async function createSession(opts: {
       runtimeModelIdsCache = new Set(
         runtimes.models.filter((m) => m.enabled !== false).map((m) => m.id)
       );
+      runtimeModelThinkingModeCache = new Map(
+        runtimes.models
+          .filter((m) => m.enabled !== false)
+          .map((m) => [m.id, m.thinking_mode] as const)
+      );
       return runtimeModelIdsCache;
     } catch {
       runtimeModelIdsCache = new Set();
+      runtimeModelThinkingModeCache = new Map();
       return runtimeModelIdsCache;
     }
   };
@@ -1831,6 +1838,11 @@ export async function createSession(opts: {
 
     const runtimes = await mods.store.loadRuntimes();
     runtimeModelIdsCache = new Set(runtimes.models.filter((m) => m.enabled !== false).map((m) => m.id));
+    runtimeModelThinkingModeCache = new Map(
+      runtimes.models
+        .filter((m) => m.enabled !== false)
+        .map((m) => [m.id, m.thinking_mode] as const)
+    );
 
     const modelExists = runtimes.models.some((m) => m.enabled !== false && m.id === runtimeModelId);
     if (!modelExists) {
@@ -1873,6 +1885,42 @@ export async function createSession(opts: {
 
   const wireCaptureHook = () => {
     attachCaptureHook(client);
+  };
+
+  const getRuntimeModelThinkingMode = async (
+    runtimeModelId: string
+  ): Promise<'default' | 'think' | 'no_think' | undefined> => {
+    if (!runtimeModelThinkingModeCache) {
+      await loadRuntimeModelIds();
+    }
+    return runtimeModelThinkingModeCache?.get(runtimeModelId);
+  };
+
+  const applyThinkingDirectiveToMessages = (
+    input: ChatMessage[],
+    mode: 'default' | 'think' | 'no_think' | undefined
+  ): ChatMessage[] => {
+    if (!mode || mode === 'default') return input;
+
+    const directive = mode === 'no_think' ? '/no_think' : '/think';
+    let lastUserIdx = -1;
+    for (let i = input.length - 1; i >= 0; i--) {
+      if (input[i]?.role === 'user') {
+        lastUserIdx = i;
+        break;
+      }
+    }
+    if (lastUserIdx < 0) return input;
+
+    const target = input[lastUserIdx];
+    if (!target || typeof target.content !== 'string') return input;
+
+    const text = String(target.content);
+    if (text.startsWith('/no_think') || text.startsWith('/think')) return input;
+
+    const cloned = input.slice();
+    cloned[lastUserIdx] = { ...target, content: `${directive}\n${text}` } as ChatMessage;
+    return cloned;
   };
 
   wireCaptureHook();
@@ -3209,8 +3257,13 @@ export async function createSession(opts: {
             }
 
             if (!resp) {
+              const runtimeThinkingMode = primaryUsesRuntimeModel && primaryRoute?.model
+                ? await getRuntimeModelThinkingMode(primaryRoute.model)
+                : undefined;
+              const effectiveMessages = applyThinkingDirectiveToMessages(messages, runtimeThinkingMode);
+
               const chatOptsBase = {
-                messages,
+                messages: effectiveMessages,
                 tools: toolsForTurn,
                 tool_choice: toolChoiceForTurn,
                 temperature,

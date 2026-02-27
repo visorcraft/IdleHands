@@ -330,6 +330,25 @@ describe('OpenAIClient request sanitization', () => {
     assert.equal(clean.tools[0].function.parameters.strict, undefined);
   });
 
+  it('applies thinking_mode directive to the latest user message', () => {
+    const client: any = new OpenAIClient('http://example.invalid/v1', undefined, false);
+
+    const clean = client.sanitizeRequest({
+      model: 'fake',
+      thinking_mode: 'no_think',
+      messages: [
+        { role: 'system', content: 's' },
+        { role: 'user', content: 'first' },
+        { role: 'assistant', content: 'a' },
+        { role: 'user', content: 'latest' },
+      ],
+    });
+
+    assert.equal(clean.thinking_mode, undefined);
+    assert.equal(clean.messages[3].content, '/no_think\nlatest');
+    assert.equal(clean.messages[1].content, 'first');
+  });
+
   it('keeps stream_options for streaming requests and enables include_usage by default', () => {
     const client: any = new OpenAIClient('http://example.invalid/v1', undefined, false);
 
