@@ -13,6 +13,7 @@ function models(count: number) {
     id: `model-${i + 1}`,
     display_name: `Very Long Runtime Model Name ${i + 1} That Might Be Verbose`,
     enabled: true,
+    thinking_mode: i === 1 ? 'no_think' : 'default',
   }));
 }
 
@@ -72,6 +73,7 @@ describe('runtime model picker helpers', () => {
     assert.ok(text.includes('Filter: "qwen coder"'));
     assert.ok(text.includes('02. ★'));
     assert.ok(text.includes('id: model-2'));
+    assert.ok(text.includes('thinking: no_think'));
     assert.ok(text.includes('Tap a number button below to switch.'));
   });
 

@@ -2,6 +2,7 @@ export type RuntimeModelLike = {
   id: string;
   display_name: string;
   enabled?: boolean;
+  thinking_mode?: 'default' | 'think' | 'no_think';
 };
 
 export type RuntimeModelPickerItem = {
@@ -9,6 +10,7 @@ export type RuntimeModelPickerItem = {
   id: string;
   displayName: string;
   isActive: boolean;
+  thinkingMode?: 'default' | 'think' | 'no_think';
 };
 
 export type RuntimeModelPickerPage = {
@@ -76,6 +78,7 @@ export function buildRuntimeModelPickerPage(
     id: m.id,
     displayName: m.display_name,
     isActive: !!activeId && m.id === activeId,
+    thinkingMode: m.thinking_mode,
   }));
 
   return {
@@ -117,6 +120,9 @@ export function formatRuntimeModelPickerText(
         `${String(item.ordinal).padStart(2, '0')}. ${marker} ${truncateLabel(item.displayName, maxDisplayName)}`
       );
       lines.push(`    id: ${truncateLabel(item.id, maxModelId)}`);
+      if (item.thinkingMode && item.thinkingMode !== 'default') {
+        lines.push(`    thinking: ${item.thinkingMode}`);
+      }
     }
   }
 
