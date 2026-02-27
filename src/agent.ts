@@ -892,7 +892,7 @@ export async function createSession(opts: {
           );
           console.error(`\x1b[33m  Consider using a different model or updating llama.cpp.\x1b[0m`);
         }
-      } catch {}
+      } catch { /* JSON parse may fail on malformed LLM output */ }
     }
   }
   // Phase 9: sys-eager — inject full system snapshot into first message
@@ -3646,7 +3646,7 @@ export async function createSession(opts: {
               if (argStr.length > 2) {
                 try {
                   argCount = Object.keys(parseJsonArgs(argStr)).length;
-                } catch {}
+                } catch { /* JSON parse may fail on malformed LLM output */ }
               }
               if (!byName.has(n)) byName.set(n, []);
               byName.get(n)!.push({ tc, argCount });
@@ -4853,7 +4853,7 @@ export async function createSession(opts: {
                     toolSuccess = false;
                   }
                 }
-              } catch {}
+              } catch { /* JSON parse may fail on malformed LLM output */ }
             } else if (name === 'search_files') {
               const lines = content.split('\n').filter(Boolean);
               if (lines.length > 0) resultEvent.searchMatches = lines.slice(0, 20);
@@ -4870,7 +4870,7 @@ export async function createSession(opts: {
                     resultEvent.diff = generateMinimalDiff(before, after, cps[0].filePath);
                   }
                 }
-              } catch {}
+              } catch { /* JSON parse may fail on malformed LLM output */ }
             }
 
             resultEvent.success = toolSuccess;
@@ -5045,7 +5045,7 @@ export async function createSession(opts: {
                 let parsedArgs: any = {};
                 try {
                   parsedArgs = parseJsonArgs(tc.function.arguments ?? '{}');
-                } catch {}
+                } catch { /* JSON parse may fail on malformed LLM output */ }
                 const cmd =
                   tc.function.name === 'exec'
                     ? String(parsedArgs?.command ?? '')
