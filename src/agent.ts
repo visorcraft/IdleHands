@@ -58,6 +58,7 @@ import {
   parseToolCallsFromContent,
   getMissingRequiredParams,
   getArgValidationIssues,
+  stripUnknownArgs,
   stripMarkdownFences,
   parseJsonArgs,
 } from './agent/tool-calls.js';
@@ -2684,6 +2685,15 @@ export async function createSession(opts: {
     let readBudgetWarned = false;
     let noToolNudgeUsed = false;
 
+    // ── Edited paths tracking (#4) ──
+    // Track files that have been successfully edited, for compression of prior reads.
+    const editedPaths = new Set<string>();
+
+    // ── Stagnation detection (#3) ──
+    // Track turns where no novel action (new signature) occurs.
+    let stagnantTurns = 0;
+    let stagnationWarned = false;
+
     // ── Per-file mutation spiral detection ──
     // Track how many times the same file is mutated within a single ask().
     // When a file is edited too many times it usually means the model is in a
@@ -2921,6 +2931,8 @@ export async function createSession(opts: {
             freshCount: cfg.rolling_compress_fresh_count ?? cfg.compact_min_tail ?? 12,
             maxChars: cfg.rolling_compress_max_chars ?? 1500,
             toolNameByCallId,
+            toolArgsByCallId,
+            editedPaths,
           });
           if (rolling.compressedCount > 0) {
             beforeMsgs = rolling.messages;
@@ -3805,6 +3817,27 @@ export async function createSession(opts: {
             }
           }
 
+          // ── Stagnation detection (#3): check for novel actions ──
+          {
+            const hasNovelAction = [...turnSigs].some(sig => !sigCounts.has(sig));
+            if (hasNovelAction) {
+              stagnantTurns = 0;
+              stagnationWarned = false;
+            } else {
+              stagnantTurns++;
+            }
+            if (stagnantTurns >= 3 && totalToolCallsThisAsk >= 10 && !stagnationWarned) {
+              stagnationWarned = true;
+              messages.push({
+                role: 'system',
+                content:
+                  '[stagnation detected] You have repeated the same actions for 3 turns with no new progress. ' +
+                  'STOP and reassess your approach. Try a different strategy, or if you are stuck, ' +
+                  'summarize what you have tried and ask for guidance.',
+              } as ChatMessage);
+            }
+          }
+
           // Track whether a mutation happened since a given signature was last seen.
           // (Tool-loop is single-threaded across turns; this is safe to keep in-memory.)
 
@@ -4154,10 +4187,24 @@ export async function createSession(opts: {
             toolArgsByCallId.set(callId, parsedArgs);
             recordToolUsageForHints(name, parsedArgs as Record<string, unknown>);
 
+            // Auto-strip unknown parameters before validation (#1).
+            // This prevents hard errors from unknown keys while still
+            // reporting them as notes in the tool result.
+            let strippedArgKeys: string[] = [];
+            if (builtInFn || isSpawnTask) {
+              const strip = stripUnknownArgs(name, args as Record<string, unknown>);
+              if (strip.stripped.length > 0) {
+                strippedArgKeys = strip.stripped;
+                // Mutate args in-place so downstream code sees cleaned args
+                for (const k of strip.stripped) {
+                  delete (args as any)[k];
+                }
+              }
+            }
+
             // Pre-dispatch argument validation.
             // - Required params
             // - Type/range/enums
-            // - Unknown properties
             if (builtInFn || isSpawnTask) {
               const missing = getMissingRequiredParams(name, args);
               if (missing.length) {
@@ -4831,6 +4878,10 @@ export async function createSession(opts: {
               resultEvent.summary = `rc=${resultEvent.execRc} (command failed)`;
             }
 
+            // Append note about stripped unknown parameters (#1)
+            if (strippedArgKeys.length > 0) {
+              content += `\n[note: unknown parameters ${strippedArgKeys.join(", ")} were ignored]`;
+            }
             await emitToolResult(resultEvent);
 
             // Proactive LSP diagnostics after file mutations
@@ -4877,6 +4928,13 @@ export async function createSession(opts: {
             totalToolCallsThisAsk++;
             if (isMutationTool(name) && toolSuccess) {
               totalEditsThisAsk++;
+              // Track edited paths for acted-on read compression (#4)
+              if (typeof args.path === 'string') {
+                const absEditedPath = args.path.startsWith('/')
+                  ? args.path
+                  : path.resolve(projectDir, args.path);
+                editedPaths.add(absEditedPath);
+              }
             }
 
             // ── Per-file mutation spiral detection ──
@@ -5081,7 +5139,7 @@ export async function createSession(opts: {
           }
 
           if (harness.toolCalls.parallelCalls) {
-            // Models that support parallel calls: read-only in parallel, mutations sequential
+            // Models that support parallel calls: read-only in parallel, mutations by file (#7)
             const readonly = toolCallsArr.filter((tc) => isReadOnlyToolDynamic(tc.function.name));
             const others = toolCallsArr.filter((tc) => !isReadOnlyToolDynamic(tc.function.name));
 
@@ -5090,17 +5148,53 @@ export async function createSession(opts: {
             );
             results.push(...ro);
 
+            // Group mutations by target file path for parallel execution (#7).
+            // Mutations targeting the same file run sequentially within their group.
+            // Mutations targeting different files run in parallel.
+            // Non-file-targeting tools (exec, apply_patch) run sequentially first.
+            const sequential: typeof others = [];
+            const byFile = new Map<string, typeof others>();
             for (const tc of others) {
+              const target = getMutationTargetPath(tc, projectDir);
+              if (!target) {
+                sequential.push(tc);
+              } else {
+                const group = byFile.get(target) ?? [];
+                group.push(tc);
+                byFile.set(target, group);
+              }
+            }
+
+            // Run sequential group first (exec, apply_patch, etc.)
+            for (const tc of sequential) {
               if (ac.signal.aborted) break;
               try {
                 results.push(await runOne(tc));
               } catch (e: any) {
                 results.push(await catchToolError(e, tc));
-                if (isMutationTool(tc.function.name)) {
-                  // Fail-fast: after mutating tool failure, stop the remaining batch.
-                  break;
-                }
+                if (isMutationTool(tc.function.name)) break;
               }
+            }
+
+            // Run file-mutation groups in parallel
+            if (byFile.size > 0 && !ac.signal.aborted) {
+              const groupResults = await Promise.all(
+                [...byFile.values()].map(async (group) => {
+                  const groupRes: { id: string; content: string }[] = [];
+                  for (const tc of group) {
+                    if (ac.signal.aborted) break;
+                    try {
+                      groupRes.push(await runOne(tc));
+                    } catch (e: any) {
+                      groupRes.push(await catchToolError(e, tc));
+                      // Fail-fast within this file's group
+                      break;
+                    }
+                  }
+                  return groupRes;
+                })
+              );
+              for (const gr of groupResults) results.push(...gr);
             }
           } else {
             // Models with parallelCalls=false: run ALL calls sequentially (§4i).
@@ -5543,6 +5637,26 @@ export async function createSession(opts: {
     clearPlan,
     compactHistory,
   };
+}
+
+/**
+ * Extract the absolute file path targeted by a mutation tool call (#7).
+ * Returns null for apply_patch (multi-file), exec, and non-file tools.
+ */
+function getMutationTargetPath(tc: ToolCall, projectDir: string): string | null {
+  const name = tc.function?.name ?? '';
+  // apply_patch can target multiple files — treat as sequential
+  if (name === 'apply_patch' || name === 'exec') return null;
+
+  let raw: string | undefined;
+  try {
+    const args = JSON.parse(tc.function?.arguments ?? '{}');
+    raw = typeof args.path === 'string' ? args.path.trim() : undefined;
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  return raw.startsWith('/') ? raw : path.resolve(projectDir, raw);
 }
 
 export async function runAgent(opts: {

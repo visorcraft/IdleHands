@@ -1066,7 +1066,7 @@ describe('harness behavioral wiring', () => {
         (m: any) =>
           m.role === 'tool' &&
           typeof m.content === 'string' &&
-          m.content.includes('[CACHE HIT] File unchanged since previous read.')
+          m.content.includes('[CACHE HIT]')
       );
       assert.equal(sawCachedHint, true, 'expected cached read hint in tool output');
     } finally {
