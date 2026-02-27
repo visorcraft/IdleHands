@@ -403,6 +403,11 @@ export class OpenAIClient {
           break;
         }
       }
+
+      // For llama-server: enforce thinking mode at API level (not just prompt injection)
+      if (thinkingMode === 'no_think') {
+        body.reasoning_format = 'none';
+      }
     }
 
     if (body.max_completion_tokens != null && body.max_tokens == null) {
