@@ -134,6 +134,37 @@ export function normalizeExecCommandForSig(command: string): string {
     prev = cmd;
   }
 
+  // Normalize awk/sed range-read commands to collapse different line ranges
+  // targeting the same file into one signature. This prevents the model from
+  // defeating loop detection by tweaking NR ranges on the same file.
+  {
+    // Strip leading cd && chains for analysis
+    const stripped = cmd.replace(/^(\s*cd\s+[^;&|]+\s*(?:&&|;)\s*)+/i, '').trim();
+
+    // awk 'NR>=M && NR<=N' FILE  or  awk 'NR>=M' FILE
+    const awkMatch = stripped.match(
+      /^\s*awk\s+['"]NR\s*>=\s*\d+(?:\s*&&\s*NR\s*<=\s*\d+)?['"]\s+(.+)$/i
+    );
+    if (awkMatch) {
+      const file = awkMatch[1].trim().replace(/['"]$/g, '');
+      // Preserve the cd prefix but normalize the awk range
+      const cdPrefix = cmd.slice(0, cmd.length - stripped.length);
+      cmd = cdPrefix + 'awk <range> ' + file;
+      return cmd;
+    }
+
+    // sed -n 'M,Np' FILE
+    const sedMatch = stripped.match(
+      /^\s*sed\s+-n\s+['"]?\d+,\d+p['"]?\s+(.+)$/i
+    );
+    if (sedMatch) {
+      const file = sedMatch[1].trim().replace(/['"]$/g, '');
+      const cdPrefix = cmd.slice(0, cmd.length - stripped.length);
+      cmd = cdPrefix + 'sed -n <range> ' + file;
+      return cmd;
+    }
+  }
+
   return cmd;
 }
 
@@ -165,6 +196,65 @@ export function detectSedAsRead(command: string): string | null {
     `  read_file({ path: "${filePath}", offset: ${startLine}, limit: ${limit} })\n` +
     `This is faster, tracked by the read budget, and avoids unnecessary exec calls.`
   );
+}
+
+/**
+ * Detect `awk 'NR>=M && NR<=N' file` patterns used as a substitute for read_file.
+ * Returns a redirect message if detected, or null if not an awk-as-read pattern.
+ */
+export function detectAwkAsRead(command: string): string | null {
+  let cmd = String(command || '').trim();
+  if (!cmd) return null;
+
+  // Strip leading cd && chains
+  cmd = cmd.replace(/^(\s*cd\s+[^;&|]+\s*(?:&&|;)\s*)+/i, '').trim();
+  if (!cmd) return null;
+
+  // Match: awk 'NR>=START && NR<=END' FILE
+  const matchRange = cmd.match(
+    /^\s*awk\s+['"]NR\s*>=\s*(\d+)\s*&&\s*NR\s*<=\s*(\d+)['"]\s+(.+?)(?:\s*\|.*)?$/i
+  );
+  if (matchRange) {
+    const startLine = parseInt(matchRange[1], 10);
+    const endLine = parseInt(matchRange[2], 10);
+    const filePath = matchRange[3].trim().replace(/['"]$/g, '');
+    const limit = endLine - startLine + 1;
+    return (
+      `STOP: Do not use awk to read file sections. Use read_file instead:\n` +
+      `  read_file({ path: "${filePath}", offset: ${startLine}, limit: ${limit} })\n` +
+      `This is faster, tracked by the read budget, and avoids unnecessary exec calls.`
+    );
+  }
+
+  // Match: awk 'NR>=START' FILE (no upper bound)
+  const matchFrom = cmd.match(
+    /^\s*awk\s+['"]NR\s*>=\s*(\d+)['"]\s+(.+?)(?:\s*\|.*)?$/i
+  );
+  if (matchFrom) {
+    const startLine = parseInt(matchFrom[1], 10);
+    const filePath = matchFrom[2].trim().replace(/['"]$/g, '');
+    return (
+      `STOP: Do not use awk to read file sections. Use read_file instead:\n` +
+      `  read_file({ path: "${filePath}", offset: ${startLine}, limit: 100 })\n` +
+      `This is faster, tracked by the read budget, and avoids unnecessary exec calls.`
+    );
+  }
+
+  // Match: awk 'NR==LINE' FILE (single line)
+  const matchSingle = cmd.match(
+    /^\s*awk\s+['"]NR\s*==\s*(\d+)['"]\s+(.+?)(?:\s*\|.*)?$/i
+  );
+  if (matchSingle) {
+    const line = parseInt(matchSingle[1], 10);
+    const filePath = matchSingle[2].trim().replace(/['"]$/g, '');
+    return (
+      `STOP: Do not use awk to read single lines. Use read_file instead:\n` +
+      `  read_file({ path: "${filePath}", offset: ${line}, limit: 1 })\n` +
+      `This is faster, tracked by the read budget, and avoids unnecessary exec calls.`
+    );
+  }
+
+  return null;
 }
 
 /**
