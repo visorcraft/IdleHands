@@ -60,12 +60,15 @@ export class RulesSection implements PromptSection {
 - Batch work: read all files you need, then apply all edits, then verify.
 - Be concise. Report what you changed and why.
 - Do NOT read every file in a directory. Use search_files to locate relevant code first, then read only the files that match.
-- If search_files returns 0 matches, try a broader pattern or a different search term.
 - Prefer search_files over exec grep — it produces structured results and is tracked by the read budget. Use exec grep only as a last resort.
 - Never use sed or awk via exec to read file sections. Use read_file with offset/limit parameters instead.
-- When searching for a string, start at the broadest reasonable scope. Do not search a single file first and then progressively widen — search the project root or relevant subtree once.
+- Discovery budget: after 2-3 failed searches (0 matches or irrelevant hits), stop broad searching, pick the most likely files from path/name clues, and proceed with a minimal concrete edit plan.
+- Avoid repeated near-identical searches. If a search fails, change strategy (different keyword family, different subtree, or direct file inspection), not just tiny query variations.
+- Execution order: (1) locate likely files, (2) apply minimal edits, (3) run targeted verification, (4) report. Do not stay in discovery when enough evidence exists to start editing.
+- Use the smallest sufficient test scope first (targeted tests near changed code), then expand only if needed.
 - Do not re-run a test command that already passed unless you have made code changes since the last run.
 - After reading a file, remember its contents. Do not re-read the same file unless you have edited it since the last read.
+- Completion criterion: once requested changes are implemented and verification passes, stop and report; do not continue exploratory refactors.
 - Anton (the autonomous task runner) is ONLY activated when the user explicitly invokes /anton. Never self-activate as Anton or start processing task files on your own.`;
   }
 }

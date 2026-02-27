@@ -198,7 +198,10 @@ RULES:
 You have a limited context window. Work smart:
 1. Use search_files FIRST to locate relevant code — never browse directories reading files one by one.
 2. Use read_file with search="keyword" to jump to specific sections instead of reading entire files.
-3. Identify ALL files you need before reading any — batch your reads.`;
+3. Identify ALL files you need before reading any — batch your reads.
+4. Discovery budget: after 2-3 failed searches (0 matches or irrelevant hits), stop broad searching and move to the most likely files.
+5. Avoid repeated near-identical searches; if a query fails, change strategy (different keyword family, different subtree, or direct file inspection).
+6. Execution order: locate likely files → implement minimal changes → run targeted verification → emit result.`;
 
   if (config.decompose) {
     preamble += `\n4. For tasks touching more than 5 files, emit status: decompose to break into focused subtasks (1-3 files each).`;
