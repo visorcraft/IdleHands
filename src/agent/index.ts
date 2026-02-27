@@ -46,3 +46,10 @@ export * from "./tool-loop-guard.js";
 export * from "./tool-name-alias.js";
 export * from "./tool-policy.js";
 export * from "./tools-schema.js";
+
+// Speed optimization modules
+export * from "./file-prefetch.js";
+export * from "./query-classifier-fast.js";
+export * from "./predictive-compaction.js";
+export * from "./schema-optimizer.js";
+export * from "./read-ahead-buffer.js";
