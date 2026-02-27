@@ -404,9 +404,14 @@ export class OpenAIClient {
         }
       }
 
-      // For llama-server: enforce thinking mode at API level (not just prompt injection)
+      // For llama-server/OpenAI-compatible backends: enforce thinking mode at API level
+      // (not just prompt injection). Some servers require `enable_thinking=false` and
+      // reject assistant-prefill otherwise.
       if (thinkingMode === 'no_think') {
         body.reasoning_format = 'none';
+        body.enable_thinking = false;
+      } else if (thinkingMode === 'think') {
+        body.enable_thinking = true;
       }
     }
 
