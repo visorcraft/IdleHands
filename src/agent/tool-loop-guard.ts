@@ -104,6 +104,18 @@ export class ToolLoopGuard {
   }
 
   computeSignature(toolName: string, args: Record<string, unknown>): string {
+    // For read_file calls, normalize to just the path so that reading the same
+    // file with different offset/limit/search params is detected as a loop.
+    if (toolName === 'read_file' && typeof args.path === 'string') {
+      return hashToolCall(toolName, { path: args.path }).signature;
+    }
+
+    // Same for read_files - normalize each request to just path
+    if (toolName === 'read_files' && Array.isArray(args.requests)) {
+      const paths = (args.requests as Array<{ path?: string }>).map((r) => r?.path).filter(Boolean);
+      return hashToolCall(toolName, { paths }).signature;
+    }
+
     // For exec calls, normalize the command by stripping trailing output-filter
     // pipes so that `cmd 2>&1 | tail -15` and `cmd 2>&1 | tail -50` produce
     // the same signature for loop detection purposes.
@@ -116,6 +128,7 @@ export class ToolLoopGuard {
     }
     return hashToolCall(toolName, args).signature;
   }
+
 
   prepareTurn(toolCalls: ToolCall[]): PreparedTurn {
     const uniqueCalls: ToolCall[] = [];
