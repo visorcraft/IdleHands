@@ -2766,6 +2766,32 @@ export async function createSession(opts: {
     >();
     const READ_FILE_CACHE_TOOLS = new Set(['read_file', 'read_files', 'list_dir']);
 
+    const configuredPerTool = Object.fromEntries(
+      Object.entries(cfg.tool_loop_detection?.per_tool ?? {}).map(([tool, policy]) => [
+        tool,
+        {
+          warningThreshold: policy?.warning_threshold,
+          criticalThreshold: policy?.critical_threshold,
+          globalCircuitBreakerThreshold: policy?.global_circuit_breaker_threshold,
+          detectors: {
+            genericRepeat: policy?.detectors?.generic_repeat,
+            knownPollNoProgress: policy?.detectors?.known_poll_no_progress,
+            pingPong: policy?.detectors?.ping_pong,
+          },
+        },
+      ])
+    ) as Record<string, any>;
+
+    // Default hardening for search-driven loopiness: detect repeated near-identical
+    // search_files calls earlier unless user explicitly overrides per-tool config.
+    if (!configuredPerTool.search_files) {
+      configuredPerTool.search_files = {
+        warningThreshold: 2,
+        criticalThreshold: 4,
+        globalCircuitBreakerThreshold: 6,
+      };
+    }
+
     const toolLoopGuard = new ToolLoopGuard({
       enabled: cfg.tool_loop_detection?.enabled,
       historySize: cfg.tool_loop_detection?.history_size,
@@ -2778,21 +2804,7 @@ export async function createSession(opts: {
         knownPollNoProgress: cfg.tool_loop_detection?.detectors?.known_poll_no_progress,
         pingPong: cfg.tool_loop_detection?.detectors?.ping_pong,
       },
-      perTool: Object.fromEntries(
-        Object.entries(cfg.tool_loop_detection?.per_tool ?? {}).map(([tool, policy]) => [
-          tool,
-          {
-            warningThreshold: policy?.warning_threshold,
-            criticalThreshold: policy?.critical_threshold,
-            globalCircuitBreakerThreshold: policy?.global_circuit_breaker_threshold,
-            detectors: {
-              genericRepeat: policy?.detectors?.generic_repeat,
-              knownPollNoProgress: policy?.detectors?.known_poll_no_progress,
-              pingPong: policy?.detectors?.ping_pong,
-            },
-          },
-        ])
-      ),
+      perTool: configuredPerTool,
     });
     const toolLoopWarningKeys = new Set<string>();
     let forceToollessRecoveryTurn = false;

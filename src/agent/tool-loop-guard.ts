@@ -17,6 +17,12 @@ import {
 } from './tool-loop-detection.js';
 import { normalizeExecCommandForSig, normalizeTestCommandForSig } from './exec-helpers.js';
 
+function normalizeSearchPatternForSig(raw: string): string {
+  const tokens = (raw.toLowerCase().match(/[a-z0-9_]+/g) ?? []).filter((t) => t.length >= 2);
+  if (!tokens.length) return raw.trim().toLowerCase();
+  return [...new Set(tokens)].sort().join('|');
+}
+
 type ReadCacheEntry = {
   content: string;
   paths: string[];
@@ -128,6 +134,20 @@ export class ToolLoopGuard {
     // For apply_patch, normalize to the list of files
     if (toolName === 'apply_patch' && Array.isArray(args.files)) {
       return hashToolCall(toolName, { files: args.files }).signature;
+    }
+
+    // For search_files, normalize regex-like variations into a token signature
+    // so near-identical searches are treated as repeats (e.g. "a|b" vs "b|a").
+    if (toolName === 'search_files') {
+      const pathArg = typeof args.path === 'string' ? args.path.trim() : '.';
+      const includeArg = typeof args.include === 'string' ? args.include.trim() : '';
+      const patternArg = typeof args.pattern === 'string' ? args.pattern : '';
+      const normalizedPattern = normalizeSearchPatternForSig(patternArg);
+      return hashToolCall(toolName, {
+        path: pathArg,
+        include: includeArg,
+        pattern: normalizedPattern,
+      }).signature;
     }
 
     // For exec calls, normalize the command for loop detection.
