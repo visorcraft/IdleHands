@@ -358,3 +358,44 @@ export function extractLogFilePath(command: string): string | null {
 
   return null;
 }
+
+/**
+ * Extract the target file path from a cat/head/tail command.
+ * Used to look up cached content when the model falls back to shell
+ * commands after read_file is poisoned (deadlock prevention).
+ * Returns the file path or null if not a simple file read command.
+ */
+export function extractFilePathFromReadCommand(command: string): string | null {
+  let cmd = String(command || '').trim();
+  if (!cmd) return null;
+
+  // Strip leading cd && chains
+  cmd = cmd.replace(/^(\s*cd\s+[^;&|]+\s*(?:&&|;)\s*)+/i, '').trim();
+  if (!cmd) return null;
+
+  // cat FILE (no pipes)
+  const catMatch = cmd.match(/^\s*cat\s+(\S+)\s*$/i);
+  if (catMatch) {
+    return catMatch[1].replace(/['"]/g, '');
+  }
+
+  // head -N FILE or head -n N FILE
+  const headMatch = cmd.match(/^\s*head\s+(?:-n?\s*)?\d+\s+(\S+)\s*$/i);
+  if (headMatch) {
+    return headMatch[1].replace(/['"]/g, '');
+  }
+
+  // tail -N FILE (no pipes)
+  const tailMatch = cmd.match(/^\s*tail\s+(?:-n?\s*)?\d+\s+(\S+)\s*$/i);
+  if (tailMatch) {
+    return tailMatch[1].replace(/['"]/g, '');
+  }
+
+  // cat FILE | head -N (pagination pattern)
+  const catPipeMatch = cmd.match(/^\s*cat\s+(\S+)\s*\|\s*head/i);
+  if (catPipeMatch) {
+    return catPipeMatch[1].replace(/['"]/g, '');
+  }
+
+  return null;
+}

@@ -719,3 +719,215 @@ export function enforceContextBudgetEnhanced(opts: {
     },
   };
 }
+
+// ============================================================================
+// Test Output Compression (#6)
+// ============================================================================
+
+const TEST_OUTPUT_RE = /(FAIL|PASS|Tests?:|\u2713|\u2717|\u2714|\u2718|\d+ passing|\d+ failing)/;
+
+/** Detect if output looks like test runner output. */
+export function looksLikeTestOutput(output: string): boolean {
+  return TEST_OUTPUT_RE.test(output);
+}
+
+const PASSING_LINE_RE = /^\s*(\u2713|\u2714|ok \d+|PASS\s)/;
+const SUMMARY_LINE_RE = /^\s*(\d+ (passing|failing|pending|skipped|Tests?|test suites?)|Tests?:|Test Suites?:)/i;
+const FAILING_LINE_RE = /^\s*(\u2717|\u2718|not ok|FAIL\s|AssertionError|Error:|at\s)/;
+const ERROR_TRACE_RE = /^\s+(at |Error:|Caused by:|\^)/;
+
+/**
+ * Compress test output by stripping passing test lines while keeping
+ * failures, error traces, and summary lines. Prepends count of omitted lines.
+ */
+export function compressTestOutput(output: string, maxChars = 1500): string {
+  const lines = output.split('\n');
+  const kept: string[] = [];
+  let omittedPassing = 0;
+
+  for (const line of lines) {
+    if (PASSING_LINE_RE.test(line)) {
+      omittedPassing++;
+      continue;
+    }
+    if (FAILING_LINE_RE.test(line) || ERROR_TRACE_RE.test(line) || SUMMARY_LINE_RE.test(line)) {
+      kept.push(line);
+      continue;
+    }
+    // Skip consecutive blank lines
+    if (line.trim() === '' && kept.length > 0 && kept[kept.length - 1]?.trim() === '') {
+      continue;
+    }
+    kept.push(line);
+  }
+
+  let result = kept.join('\n');
+  if (omittedPassing > 0) {
+    result = `[${omittedPassing} passing tests omitted]\n` + result;
+  }
+
+  // Final truncation if still too large
+  if (result.length > maxChars) {
+    result = result.slice(0, maxChars - 60) + `\n... [truncated, ${output.length} chars total]`;
+  }
+
+  return result;
+}
+
+// ============================================================================
+// Rolling Compression of Old Tool Results
+// ============================================================================
+
+/**
+ * Compress an exec tool result, preserving rc and err fields intact.
+ * Only the `out` field is compressed via compressToolResult.
+ * Falls back to generic compression if content is not valid exec JSON.
+ */
+export function compressExecResult(content: string, maxChars = 1500): string {
+  try {
+    const parsed = JSON.parse(content);
+    if (typeof parsed === 'object' && parsed !== null && 'rc' in parsed) {
+      const compressed = {
+        rc: parsed.rc,
+        out: typeof parsed.out === 'string'
+          ? (looksLikeTestOutput(parsed.out)
+              ? compressTestOutput(parsed.out, maxChars - 200)
+              : compressToolResult(parsed.out, maxChars - 200))
+          : parsed.out,
+        err: parsed.err,
+      };
+      return JSON.stringify(compressed);
+    }
+  } catch {
+    // Not valid JSON — fall through to generic compression
+  }
+  return compressToolResult(content, maxChars);
+}
+
+const ROLLING_TARGET_TOOLS = new Set(['read_file', 'read_files', 'exec']);
+const ROLLING_MARKER = '\n[rolling-compressed]';
+
+/**
+ * Rolling compression: shrink old read_file/read_files/exec tool results
+ * beyond a "fresh window" of recent messages. Runs every turn before
+ * enforceContextBudget to slow context growth.
+ *
+ * Pure string manipulation — zero LLM cost.
+ */
+export function rollingCompressToolResults(opts: {
+  messages: ChatMessage[];
+  freshCount: number;
+  maxChars: number;
+  toolNameByCallId: Map<string, string>;
+  toolArgsByCallId?: Map<string, Record<string, unknown>>;
+  editedPaths?: Set<string>;
+}): { messages: ChatMessage[]; compressedCount: number; charsSaved: number } {
+  const { freshCount, maxChars, toolNameByCallId, toolArgsByCallId, editedPaths } = opts;
+  const messages = [...opts.messages];
+  const cutoff = messages.length - freshCount;
+  let compressedCount = 0;
+  let charsSaved = 0;
+
+  for (let i = 0; i < cutoff; i++) {
+    const msg = messages[i];
+    if (msg.role !== 'tool') continue;
+
+    const content = (msg as any).content;
+    if (typeof content !== 'string') continue;
+
+    // Skip already-compressed results
+    if (content.endsWith('[rolling-compressed]')) continue;
+
+    // Skip if already small enough
+    if (content.length <= maxChars) continue;
+
+    // Only target the exempted tools
+    const toolName = toolNameByCallId.get((msg as any).tool_call_id ?? '') ?? '';
+    if (!ROLLING_TARGET_TOOLS.has(toolName)) continue;
+
+    const before = content.length;
+    const compressed = toolName === 'exec'
+      ? compressExecResult(content, maxChars)
+      : compressToolResult(content, maxChars);
+
+    messages[i] = {
+      ...msg,
+      content: compressed + ROLLING_MARKER,
+    } as ChatMessage;
+
+    charsSaved += before - (compressed.length + ROLLING_MARKER.length);
+    compressedCount++;
+  }
+
+  // ── Second pass: deduplicate repeated file reads (#5) ──
+  // Group read_file tool messages (outside fresh window) by file path.
+  // Keep only the latest read per file; replace earlier reads with stubs.
+  if (toolArgsByCallId) {
+    // Collect read_file messages by path
+    const readsByPath = new Map<string, number[]>(); // path -> message indices
+    for (let i = 0; i < cutoff; i++) {
+      const msg = messages[i];
+      if (msg.role !== 'tool') continue;
+      const callId = (msg as any).tool_call_id ?? '';
+      const toolName = toolNameByCallId.get(callId) ?? '';
+      if (toolName !== 'read_file') continue;
+      const args = toolArgsByCallId.get(callId);
+      const filePath = typeof args?.path === 'string' ? args.path : '';
+      if (!filePath) continue;
+      const indices = readsByPath.get(filePath) ?? [];
+      indices.push(i);
+      readsByPath.set(filePath, indices);
+    }
+
+    // For each file with multiple reads, keep only the latest
+    for (const [filePath, indices] of readsByPath) {
+      if (indices.length <= 1) continue;
+      // Keep the last one, stub the rest
+      const toStub = indices.slice(0, -1);
+      for (const idx of toStub) {
+        const msg = messages[idx];
+        const oldContent = (msg as any).content;
+        if (typeof oldContent !== 'string') continue;
+        // Skip already-compressed, cache-hit, or short messages
+        if (oldContent.startsWith('[CACHE HIT]') || oldContent.startsWith('[previously read') || oldContent.startsWith('Error:')) continue;
+        const stub = `[previously read ${filePath} — see latest version in conversation]`;
+        if (oldContent.length > stub.length) {
+          charsSaved += oldContent.length - stub.length;
+          compressedCount++;
+          messages[idx] = { ...msg, content: stub } as ChatMessage;
+        }
+      }
+    }
+  }
+
+  // ── Third pass: compress acted-on reads (#4) ──
+  // If a file was subsequently edited, its prior read content is less valuable.
+  // Compress it to a short stub.
+  if (editedPaths && editedPaths.size > 0 && toolArgsByCallId) {
+    for (let i = 0; i < cutoff; i++) {
+      const msg = messages[i];
+      if (msg.role !== 'tool') continue;
+      const callId = (msg as any).tool_call_id ?? '';
+      const toolName = toolNameByCallId.get(callId) ?? '';
+      if (toolName !== 'read_file') continue;
+      const args = toolArgsByCallId.get(callId);
+      const filePath = typeof args?.path === 'string' ? args.path : '';
+      if (!filePath || !editedPaths.has(filePath)) continue;
+
+      const oldContent = (msg as any).content;
+      if (typeof oldContent !== 'string') continue;
+      // Skip if already stubbed by dedup pass
+      if (oldContent.startsWith('[previously read')) continue;
+      // Extract first line as header
+      const firstLine = oldContent.split('\n')[0]?.slice(0, 80) ?? filePath;
+      const stub = `${firstLine}\n[acted-on: file was subsequently edited]`;
+      if (oldContent.length > stub.length + 50) {
+        charsSaved += oldContent.length - stub.length;
+        compressedCount++;
+        messages[i] = { ...msg, content: stub } as ChatMessage;
+      }
+    }
+  }
+
+  return { messages, compressedCount, charsSaved };
+}

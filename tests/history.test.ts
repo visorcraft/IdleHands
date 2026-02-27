@@ -6,6 +6,9 @@ import {
   estimateTokensFromMessages,
   enforceContextBudget,
   estimateToolSchemaTokens,
+  looksLikeTestOutput,
+  compressTestOutput,
+  rollingCompressToolResults,
 } from '../dist/history.js';
 
 describe('stripThinking', () => {
@@ -260,4 +263,166 @@ describe('enforceContextBudget', () => {
       `large schema (${withLargeSchema.length}) should compact at least as aggressively as default (${withDefault.length})`
     );
   });
+
+describe('looksLikeTestOutput', () => {
+  it('detects mocha-style output', () => {
+    assert.ok(looksLikeTestOutput('  \u2713 should work\n  \u2713 should pass\n  2 passing'));
+  });
+
+  it('detects jest-style output', () => {
+    assert.ok(looksLikeTestOutput('Tests: 2 passed, 2 total'));
+  });
+
+  it('detects PASS/FAIL markers', () => {
+    assert.ok(looksLikeTestOutput('PASS src/foo.test.ts'));
+    assert.ok(looksLikeTestOutput('FAIL src/bar.test.ts'));
+  });
+
+  it('returns false for non-test output', () => {
+    assert.ok(!looksLikeTestOutput('hello world\nfoo bar'));
+    assert.ok(!looksLikeTestOutput('compiled successfully'));
+  });
+});
+
+describe('compressTestOutput', () => {
+  it('strips passing lines and keeps failures + summary', () => {
+    const input = [
+      '  \u2713 test a passes',
+      '  \u2713 test b passes',
+      '  \u2713 test c passes',
+      '  \u2717 test d fails',
+      '    Error: expected 1 to be 2',
+      '      at Context.<anonymous> (test.ts:10:5)',
+      '',
+      '  3 passing',
+      '  1 failing',
+    ].join('\n');
+    const result = compressTestOutput(input);
+    assert.ok(result.includes('[3 passing tests omitted]'));
+    assert.ok(!result.includes('test a passes'));
+    assert.ok(!result.includes('test b passes'));
+    assert.ok(result.includes('test d fails'));
+    assert.ok(result.includes('Error: expected'));
+    assert.ok(result.includes('3 passing'));
+    assert.ok(result.includes('1 failing'));
+  });
+
+  it('preserves all content when no passing lines', () => {
+    const input = '  \u2717 test fails\n    Error: oops\n  1 failing';
+    const result = compressTestOutput(input);
+    assert.ok(!result.includes('passing tests omitted'));
+    assert.ok(result.includes('test fails'));
+  });
+
+  it('truncates if result exceeds maxChars', () => {
+    const lines: string[] = [];
+    for (let i = 0; i < 200; i++) {
+      lines.push('  \u2717 failing test ' + i + ' with a long description');
+    }
+    const input = lines.join('\n');
+    const result = compressTestOutput(input, 500);
+    assert.ok(result.length <= 500);
+  });
+});
+
+
+describe('rollingCompressToolResults - read dedup (#5)', () => {
+  it('stubs earlier reads and keeps the latest read per file', () => {
+    const toolNameByCallId = new Map([
+      ['c1', 'read_file'],
+      ['c2', 'read_file'],
+      ['c3', 'read_file'],
+    ]);
+    const toolArgsByCallId = new Map<string, Record<string, unknown>>([
+      ['c1', { path: 'src/foo.ts' }],
+      ['c2', { path: 'src/foo.ts' }],
+      ['c3', { path: 'src/bar.ts' }],
+    ]);
+    const messages: any[] = [
+      { role: 'user', content: 'do something' },
+      { role: 'tool', tool_call_id: 'c1', content: 'A'.repeat(2000) },
+      { role: 'tool', tool_call_id: 'c2', content: 'B'.repeat(2000) },
+      { role: 'tool', tool_call_id: 'c3', content: 'C'.repeat(2000) },
+      { role: 'user', content: 'recent' },
+      { role: 'assistant', content: 'ok' },
+    ];
+
+    const result = rollingCompressToolResults({
+      messages,
+      freshCount: 2,
+      maxChars: 1500,
+      toolNameByCallId,
+      toolArgsByCallId,
+    });
+
+    // c1 (first read of foo.ts) should be stubbed
+    assert.ok(result.messages[1].content.includes('previously read src/foo.ts'));
+    // c2 (latest read of foo.ts) should NOT be stubbed (but may be compressed)
+    assert.ok(!result.messages[2].content.includes('previously read'));
+    // c3 (only read of bar.ts) should NOT be stubbed
+    assert.ok(!result.messages[3].content.includes('previously read'));
+    assert.ok(result.charsSaved > 0);
+  });
+
+  it('does nothing when toolArgsByCallId is not provided', () => {
+    const toolNameByCallId = new Map([['c1', 'read_file']]);
+    const messages: any[] = [
+      { role: 'tool', tool_call_id: 'c1', content: 'A'.repeat(2000) },
+      { role: 'user', content: 'recent' },
+      { role: 'assistant', content: 'ok' },
+    ];
+
+    const result = rollingCompressToolResults({
+      messages,
+      freshCount: 2,
+      maxChars: 1500,
+      toolNameByCallId,
+    });
+
+    // Should compress via standard path but not dedup (no args map)
+    assert.ok(!result.messages[0].content.includes('previously read'));
+  });
+});
+
+
+describe('rollingCompressToolResults - acted-on read compression (#4)', () => {
+  it('compresses reads for files that were subsequently edited', () => {
+    const toolNameByCallId = new Map([
+      ['c1', 'read_file'],
+      ['c2', 'read_file'],
+    ]);
+    const toolArgsByCallId = new Map<string, Record<string, unknown>>([
+      ['c1', { path: '/project/src/foo.ts' }],
+      ['c2', { path: '/project/src/bar.ts' }],
+    ]);
+    const editedPaths = new Set(['/project/src/foo.ts']);
+
+    const messages: any[] = [
+      { role: 'user', content: 'read files' },
+      { role: 'tool', tool_call_id: 'c1', content: 'line1 of foo\n' + 'x'.repeat(2000) },
+      { role: 'tool', tool_call_id: 'c2', content: 'line1 of bar\n' + 'y'.repeat(2000) },
+      { role: 'user', content: 'recent' },
+      { role: 'assistant', content: 'ok' },
+    ];
+
+    const result = rollingCompressToolResults({
+      messages,
+      freshCount: 2,
+      maxChars: 1500,
+      toolNameByCallId,
+      toolArgsByCallId,
+      editedPaths,
+    });
+
+    // foo.ts was edited — its read should be compressed to a stub
+    const fooMsg = result.messages[1].content;
+    assert.ok(fooMsg.includes('acted-on'), 'should have acted-on marker');
+    assert.ok(fooMsg.length < 200, 'acted-on stub should be short');
+
+    // bar.ts was NOT edited — should be compressed normally (not acted-on)
+    const barMsg = result.messages[2].content;
+    assert.ok(!barMsg.includes('acted-on'), 'bar.ts should not be acted-on');
+  });
+});
+
 });
