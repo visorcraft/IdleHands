@@ -151,7 +151,7 @@ function resolveGitHubToken(): string | null {
         if (m) return m[1].trim();
       }
     }
-  } catch {}
+  } catch { /* git config may not exist or be readable */ }
 
   return null;
 }
@@ -320,7 +320,7 @@ export async function dailyUpdateCheck(
         }
         return null;
       }
-    } catch {} // No file or parse error — proceed with check
+    } catch { /* config file may not exist */ } // No file or parse error — proceed with check
 
     const info = await checkForUpdate(currentVersion, source, opts);
 
@@ -544,7 +544,7 @@ export async function performUpgrade(currentVersion: string, source: InstallSour
     // Clear the update check cache so we don't nag
     try {
       await fs.unlink(UPDATE_CHECK_FILE);
-    } catch {}
+    } catch { /* file may not exist */ }
   } catch (e: any) {
     console.error(`\n✗ Upgrade failed: ${e?.message ?? String(e)}`);
 

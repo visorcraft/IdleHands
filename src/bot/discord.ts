@@ -329,10 +329,10 @@ When you escalate, your request will be re-run on a more capable model.`;
     s.antonLastLoopEvent = null;
     try {
       s.activeAbortController?.abort();
-    } catch {}
+    } catch { /* intentionally ignored: cleanup may fail if already disposed */ }
     try {
       s.session.cancel();
-    } catch {}
+    } catch { /* intentionally ignored: cleanup may fail if already disposed */ }
     sessions.delete(key);
   }
 
@@ -501,7 +501,7 @@ When you escalate, your request will be re-run on a more capable model.`;
           // Cancel current request, compact, and re-send
           try {
             managed.activeAbortController?.abort();
-          } catch {}
+          } catch { /* intentionally ignored: cleanup may fail if already disposed */ }
           managed.session
             .compactHistory({ force: true })
             .then((result) => {
@@ -711,14 +711,14 @@ When you escalate, your request will be re-run on a more capable model.`;
     managed.pendingQueue = [];
     try {
       managed.activeAbortController?.abort();
-    } catch {}
+    } catch { /* intentionally ignored: cleanup may fail if already disposed */ }
 
     // Preserve conversation history before destroying the old session
     const oldMessages = managed.session.messages.slice();
 
     try {
       managed.session.cancel();
-    } catch {}
+    } catch { /* intentionally ignored: cleanup may fail if already disposed */ }
 
     const session = await createSession({
       config: cfg,

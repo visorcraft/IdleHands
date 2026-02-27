@@ -1361,6 +1361,8 @@ export class TuiController {
 
     let cleaned = false;
 
+    // Cleanup catches are intentionally empty: process listeners may already be removed,
+    // stdin may be in various states, and session may already be closed.
     const cleanup = async () => {
       if (cleaned) return;
       cleaned = true;

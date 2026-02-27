@@ -346,10 +346,10 @@ When you escalate, your request will be re-run on a more capable model.`;
     managed.antonLastLoopEvent = null;
     try {
       managed.activeAbortController?.abort();
-    } catch {}
+    } catch { /* intentionally ignored: abort may already be triggered */ }
     try {
       managed.session.cancel();
-    } catch {}
+    } catch { /* intentionally ignored: abort may already be triggered */ }
 
     this.destroy(chatId);
     return { ok: true, message: '🔄 Session reset. Send a new message to start fresh.' };
@@ -374,10 +374,10 @@ When you escalate, your request will be re-run on a more capable model.`;
     managed.antonLastLoopEvent = null;
     try {
       managed.activeAbortController?.abort();
-    } catch {}
+    } catch { /* intentionally ignored: abort may already be triggered */ }
     try {
       managed.session.cancel();
-    } catch {}
+    } catch { /* intentionally ignored: abort may already be triggered */ }
     this.sessions.delete(chatId);
     return true;
   }
@@ -391,14 +391,14 @@ When you escalate, your request will be re-run on a more capable model.`;
     managed.pendingQueue = [];
     try {
       managed.activeAbortController?.abort();
-    } catch {}
+    } catch { /* intentionally ignored: abort may already be triggered */ }
 
     // Preserve conversation history before destroying the old session
     const oldMessages = managed.session.messages.slice();
 
     try {
       managed.session.cancel();
-    } catch {}
+    } catch { /* intentionally ignored: abort may already be triggered */ }
 
     const config: IdlehandsConfig = {
       ...managed.config,
