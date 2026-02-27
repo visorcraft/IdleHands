@@ -265,8 +265,10 @@ export class ToolLoopGuard {
     }
 
     this.telemetry.readCacheHits += 1;
+    const hints = getReadLoopHints(toolName, args);
+    const hintSuffix = hints.length > 0 ? ` Tip: ${hints[0]}` : "";
     return (
-      `[CACHE HIT] File unchanged since previous read — returning cached content. Do NOT re-read this file unless you edit it first.\n\n` +
+      `[CACHE HIT] File unchanged since previous read — returning cached content. Do NOT re-read this file unless you edit it first.${hintSuffix}\n\n` +
       cached.content
     );
   }
@@ -349,7 +351,7 @@ export class ToolLoopGuard {
     }
 
     this.telemetry.readCacheHits += 1;
-    return makeCacheReplayContent(toolName, cached.content);
+    return makeCacheReplayContent(toolName, cached.content, args);
   }
 
   async storeReadCache(
@@ -402,13 +404,15 @@ function makeCacheHint(toolName: string): string {
   return '[CACHE HIT] Resource unchanged since previous read. Replaying cached content below.';
 }
 
-function makeCacheReplayContent(toolName: string, content: string): string {
+function makeCacheReplayContent(toolName: string, content: string, args?: Record<string, unknown>): string {
   const MAX_REPLAY_CHARS = 16_000;
   const body =
     content.length > MAX_REPLAY_CHARS
       ? `${content.slice(0, MAX_REPLAY_CHARS)}\n[truncated cached replay: ${content.length - MAX_REPLAY_CHARS} chars omitted]`
       : content;
-  return `${makeCacheHint(toolName)}\n\n${body}`;
+  const hints = args ? getReadLoopHints(toolName, args) : [];
+  const hintSuffix = hints.length > 0 ? ` Tip: ${hints[0]}` : "";
+  return `${makeCacheHint(toolName)}${hintSuffix}\n\n${body}`;
 }
 
 function resolveWithCwd(baseCwd: string, p: string): string {

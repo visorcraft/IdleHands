@@ -100,4 +100,56 @@ describe('tool-loop-guard', () => {
     assert.equal(stats.telemetry.callsRegistered, 1);
     assert.equal(stats.telemetry.dedupedReplays, 1);
   });
+
+  it('cache hit messages include read loop hints for read_file', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'idlehands-hints-'));
+    const filePath = path.join(tmp, 'test.ts');
+
+    try {
+      await fs.writeFile(filePath, 'hello world\n', 'utf8');
+
+      const guard = new ToolLoopGuard();
+      const args = { path: filePath, limit: 50 };
+
+      // Store content in file content cache
+      await guard.storeFileContentCache('read_file', args, tmp, 'hello world\n');
+
+      // Get cached result -- should include hints
+      const cached = await guard.getFileContentCache('read_file', args, tmp);
+      assert.ok(cached, 'expected a cache hit');
+      assert.ok(cached.includes('[CACHE HIT]'), 'should have CACHE HIT prefix');
+      assert.ok(
+        cached.includes('offset=') || cached.includes('search='),
+        'should include navigation hints'
+      );
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('cache replay includes read loop hints for read_file', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'idlehands-replay-hints-'));
+    const filePath = path.join(tmp, 'replay.ts');
+
+    try {
+      await fs.writeFile(filePath, 'some content\n', 'utf8');
+
+      const guard = new ToolLoopGuard();
+      const args = { path: filePath, limit: 100 };
+
+      // Store in read cache
+      await guard.storeReadCache('read_file', args, tmp, 'some content\n');
+
+      // Get replay -- should include hints
+      const replay = await guard.getReadCacheReplay('read_file', args, tmp);
+      assert.ok(replay, 'expected a cache replay');
+      assert.ok(replay.includes('[CACHE HIT]'), 'should have CACHE HIT prefix');
+      assert.ok(
+        replay.includes('offset=') || replay.includes('search='),
+        'should include navigation hints in replay'
+      );
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
+    }
+  });
 });
