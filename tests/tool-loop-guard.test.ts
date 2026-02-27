@@ -36,6 +36,43 @@ describe('tool-loop-guard', () => {
     assert.equal(prepared.replayByCallId.get('b'), 'a');
   });
 
+  it('treats near-identical search_files patterns as duplicates in a turn', () => {
+    const guard = new ToolLoopGuard();
+
+    const calls: ToolCall[] = [
+      {
+        id: 's1',
+        type: 'function',
+        function: {
+          name: 'search_files',
+          arguments: JSON.stringify({
+            pattern: 'retry_fast|retry_heavy|cancel',
+            path: 'src',
+            include: '*.ts',
+            max_results: 20,
+          }),
+        },
+      },
+      {
+        id: 's2',
+        type: 'function',
+        function: {
+          name: 'search_files',
+          arguments: JSON.stringify({
+            pattern: 'cancel|retry_heavy|retry_fast',
+            path: 'src',
+            include: '*.ts',
+            max_results: 50,
+          }),
+        },
+      },
+    ];
+
+    const prepared = guard.prepareTurn(calls);
+    assert.equal(prepared.uniqueCalls.length, 1);
+    assert.equal(prepared.replayByCallId.get('s2'), 's1');
+  });
+
   it('invalidates read cache when file mtime/size changes', async () => {
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'idlehands-loop-guard-'));
     const filePath = path.join(tmp, 'sample.txt');
