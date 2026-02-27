@@ -2839,6 +2839,9 @@ export async function createSession(opts: {
     // Recover once/twice from server-side context-overflow 400/413s by forcing compaction and retrying.
     let overflowCompactionAttempts = 0;
     const MAX_OVERFLOW_COMPACTION_ATTEMPTS = 2;
+    // Recover once from transient HTTP 400 after tool execution (often stale request/runtime mismatch).
+    let transientBadRequestRecoveryAttempts = 0;
+    const MAX_TRANSIENT_BAD_REQUEST_RECOVERY_ATTEMPTS = 1;
 
     const archiveToolOutputForVault = async (msg: ChatMessage) => {
       if (!lens || !vault || msg.role !== 'tool' || typeof msg.content !== 'string') return msg;
@@ -3507,6 +3510,36 @@ export async function createSession(opts: {
               } as ChatMessage);
               continue;
             }
+
+            const errMsg = String((e as any)?.message ?? e ?? '');
+            const errStatus = Number((e as any)?.status ?? NaN);
+            const isLikelyTransient400 =
+              errStatus === 400 ||
+              /\b400\b\s*bad request|POST\s+\/chat\/completions\s+failed:\s*400|"code"\s*:\s*"?400"?/i.test(
+                errMsg
+              );
+
+            if (
+              isLikelyTransient400 &&
+              totalToolCallsThisAsk > 0 &&
+              transientBadRequestRecoveryAttempts < MAX_TRANSIENT_BAD_REQUEST_RECOVERY_ATTEMPTS
+            ) {
+              transientBadRequestRecoveryAttempts++;
+              const compacted = await compactHistory({
+                force: true,
+                hard: false,
+                reason: 'transient 400 post-tool recovery',
+              });
+              messages.push({
+                role: 'system',
+                content:
+                  `[auto-recovery] Upstream returned HTTP 400 after tool execution. ` +
+                  `Ran force compaction (freed ~${compacted.freedTokens} tokens) and will retry once. ` +
+                  `Continue from current progress without restarting.`,
+              } as ChatMessage);
+              continue;
+            }
+
             throw e;
           }
         } finally {
