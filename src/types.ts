@@ -311,6 +311,14 @@ export type IdlehandsConfig = {
   // local-server / perf
   context_window?: number;
   cache_prompt?: boolean;
+  /** Pin requests to a specific llama-server slot for KV cache reuse. Set to 0 for single-session. */
+  id_slot?: number;
+  /** Dynamic llama-server slot assignment with per-session affinity. */
+  slot_affinity?: {
+    enabled?: boolean;
+    /** Total llama-server slots available for LRU assignment. */
+    num_slots?: number;
+  };
   /** Draft model for speculative decoding (llama-server --model-draft). Boosts tg/s 2-4x. */
   draft_model?: string;
   /** Number of speculative tokens to propose per step (default: 5). */

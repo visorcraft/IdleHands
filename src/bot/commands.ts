@@ -21,6 +21,7 @@ import {
   modelCommand,
   compactCommand,
   statusCommand,
+  slotCommand,
   watchdogCommand,
   captureSetCommand,
   captureShowCommand,
@@ -131,6 +132,17 @@ export async function handleStatus({ ctx, sessions }: CommandContext): Promise<v
     return;
   }
   await reply(ctx, statusCommand(managed as unknown as ManagedLike));
+}
+
+export async function handleSlot({ ctx, sessions }: CommandContext): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const managed = sessions.get(chatId);
+  if (!managed) {
+    await ctx.reply('No active session. Send a message to start one.');
+    return;
+  }
+  await reply(ctx, slotCommand(managed as unknown as ManagedLike));
 }
 
 export async function handleWatchdog({ ctx, sessions, botConfig }: CommandContext): Promise<void> {

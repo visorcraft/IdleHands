@@ -27,6 +27,7 @@ import {
   captureSetCommand,
   captureShowCommand,
   statusCommand,
+  slotCommand,
   dirShowCommand,
   approvalShowCommand,
   approvalSetCommand,
@@ -451,6 +452,11 @@ export async function handleTextCommand(
 
   if (content === '/status') {
     await send(statusCommand(m, { maxQueue }));
+    return true;
+  }
+
+  if (content === '/slot') {
+    await send(slotCommand(m));
     return true;
   }
 

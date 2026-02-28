@@ -30,6 +30,7 @@ import {
   handleNew,
   handleCancel,
   handleStatus,
+  handleSlot,
   handleWatchdog,
   handleDir,
   handlePin,
@@ -415,6 +416,7 @@ export async function startTelegramBot(
   bot.command('new', (ctx) => handleNew(cmdCtx(ctx)));
   bot.command('cancel', (ctx) => handleCancel(cmdCtx(ctx)));
   bot.command('status', (ctx) => handleStatus(cmdCtx(ctx)));
+  bot.command('slot', (ctx) => handleSlot(cmdCtx(ctx)));
   bot.command('watchdog', (ctx) => handleWatchdog(cmdCtx(ctx)));
   bot.command('dir', (ctx) => handleDir(cmdCtx(ctx)));
   bot.command('pin', (ctx) => handlePin(cmdCtx(ctx)));
@@ -606,6 +608,7 @@ export async function startTelegramBot(
     { command: 'new', description: 'Start a new session' },
     { command: 'cancel', description: 'Abort current generation' },
     { command: 'status', description: 'Session stats' },
+    { command: 'slot', description: 'Show current llama.cpp slot affinity' },
     { command: 'watchdog', description: 'Show watchdog settings/status' },
     { command: 'agent', description: 'Show current agent info' },
     { command: 'agents', description: 'List all configured agents' },

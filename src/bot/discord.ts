@@ -778,6 +778,7 @@ When you escalate, your request will be re-run on a more capable model.`;
         new SlashCommandBuilder().setName('version').setDescription('Show version'),
         new SlashCommandBuilder().setName('new').setDescription('Start a new session'),
         new SlashCommandBuilder().setName('status').setDescription('Show session statistics'),
+        new SlashCommandBuilder().setName('slot').setDescription('Show llama.cpp slot affinity'),
         new SlashCommandBuilder()
           .setName('watchdog')
           .setDescription('Show watchdog settings/status'),
@@ -843,7 +844,7 @@ When you escalate, your request will be re-run on a more capable model.`;
     } as unknown as Message;
 
     // Defer reply for commands that might take a while
-    if (cmd === 'status' || cmd === 'watchdog' || cmd === 'agent' || cmd === 'agents') {
+    if (cmd === 'status' || cmd === 'slot' || cmd === 'watchdog' || cmd === 'agent' || cmd === 'agents') {
       await interaction.deferReply();
     }
 
@@ -864,6 +865,7 @@ When you escalate, your request will be re-run on a more capable model.`;
           '/version — Show version',
           '/new — Start fresh session',
           '/status — Session stats',
+          '/slot — Show llama.cpp slot affinity',
           '/watchdog — Show watchdog settings/status',
           '/agent — Show current agent',
           '/agents — List all configured agents',
@@ -904,6 +906,32 @@ When you escalate, your request will be re-run on a more capable model.`;
             `**State:** ${managed.state}`,
             `**Turns:** ${managed.session.messages.length}`,
           ];
+          await interaction.editReply(lines.join('\n'));
+        }
+        break;
+      }
+      case 'slot': {
+        const managed = sessions.get(key);
+        if (!managed) {
+          await interaction.editReply('No active session.');
+        } else {
+          const affinity = managed.config?.slot_affinity;
+          const affinityEnabled = affinity?.enabled === true;
+          const numSlots =
+            typeof affinity?.num_slots === 'number' && Number.isFinite(affinity.num_slots)
+              ? Math.max(1, Math.floor(affinity.num_slots))
+              : undefined;
+          const lines = [
+            '**Slot Affinity**',
+            `**Current slot:** ${managed.session.idSlot != null ? managed.session.idSlot : 'n/a'}`,
+            `**Affinity:** ${affinityEnabled ? 'enabled' : 'disabled'}`,
+            `**Slots:** ${numSlots != null ? numSlots : 'n/a'}`,
+          ];
+          if (!affinityEnabled) {
+            lines.push(
+              `**Fixed id_slot:** ${managed.config?.id_slot != null ? managed.config.id_slot : 'n/a'}`
+            );
+          }
           await interaction.editReply(lines.join('\n'));
         }
         break;

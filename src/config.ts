@@ -48,6 +48,11 @@ const DEFAULTS: IdlehandsConfig = {
   sys_eager: false,
   context_window: 131072,
   cache_prompt: true,
+  id_slot: 0,
+  slot_affinity: {
+    enabled: false,
+    num_slots: 8,
+  },
   i_know_what_im_doing: false,
   theme: 'default',
   vim_mode: false,
@@ -205,6 +210,14 @@ function mergeTrifecta(base: Partial<any> = {}, override: Partial<any> = {}) {
   }
   return out;
 }
+
+function mergeSlotAffinity(base: Partial<any> = {}, override: Partial<any> = {}) {
+  const out: any = { ...(base ?? {}) };
+  for (const [k, v] of Object.entries(override ?? {})) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
 export async function loadConfig(opts: {
   configPath?: string;
   cli?: Partial<IdlehandsConfig>;
@@ -277,6 +290,13 @@ export async function loadConfig(opts: {
     sys_eager: parseBool(process.env.IDLEHANDS_SYS_EAGER),
     context_window: parseNum(process.env.IDLEHANDS_CONTEXT_WINDOW),
     cache_prompt: parseBool(process.env.IDLEHANDS_CACHE_PROMPT),
+    id_slot: parseNum(process.env.IDLEHANDS_ID_SLOT),
+    slot_affinity: (() => {
+      const enabled = parseBool(process.env.IDLEHANDS_SLOT_AFFINITY_ENABLED);
+      const num_slots = parseNum(process.env.IDLEHANDS_SLOT_AFFINITY_NUM_SLOTS);
+      if (enabled === undefined && num_slots === undefined) return undefined;
+      return { enabled, num_slots };
+    })(),
     i_know_what_im_doing: parseBool(process.env.IDLEHANDS_I_KNOW_WHAT_IM_DOING),
     theme: process.env.IDLEHANDS_THEME,
     vim_mode: parseBool(process.env.IDLEHANDS_VIM_MODE),
@@ -415,6 +435,17 @@ export async function loadConfig(opts: {
   merged.trifecta = mergeTrifecta(
     mergeTrifecta(mergeTrifecta(DEFAULTS.trifecta as any, fileTrifecta ?? {}), envTrifecta ?? {}),
     cliTrifecta ?? {}
+  );
+
+  const fileSlotAffinity = (fileCfg as any).slot_affinity;
+  const envSlotAffinity = (envCfg as any).slot_affinity;
+  const cliSlotAffinity = (cliCfg as any).slot_affinity;
+  merged.slot_affinity = mergeSlotAffinity(
+    mergeSlotAffinity(
+      mergeSlotAffinity(DEFAULTS.slot_affinity as any, fileSlotAffinity ?? {}),
+      envSlotAffinity ?? {}
+    ),
+    cliSlotAffinity ?? {}
   );
 
   // Anton: shallow merge like trifecta (defaults < file < env < cli)
@@ -850,6 +881,21 @@ export async function loadConfig(opts: {
   }
   if (typeof merged.context_window === 'number') {
     merged.context_window = Math.max(1024, Math.floor(merged.context_window));
+  }
+  if (typeof merged.id_slot === 'number') {
+    merged.id_slot = Math.max(0, Math.floor(merged.id_slot));
+  }
+  if (merged.slot_affinity && typeof merged.slot_affinity === 'object') {
+    const enabled = parseBoolLike((merged.slot_affinity as any).enabled);
+    if (enabled !== undefined) {
+      (merged.slot_affinity as any).enabled = enabled;
+    }
+    if (typeof (merged.slot_affinity as any).num_slots === 'number') {
+      (merged.slot_affinity as any).num_slots = Math.max(
+        1,
+        Math.floor((merged.slot_affinity as any).num_slots)
+      );
+    }
   }
   if (typeof merged.timeout === 'number') {
     merged.timeout = Math.max(1, Math.floor(merged.timeout));

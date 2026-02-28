@@ -400,7 +400,12 @@ export async function replayCaptureFile(filePath: string, cfg: any): Promise<voi
       top_p: typeof request.top_p === 'number' ? request.top_p : undefined,
       max_tokens: typeof request.max_tokens === 'number' ? request.max_tokens : undefined,
       extra:
-        request.cache_prompt !== undefined ? { cache_prompt: request.cache_prompt } : undefined,
+        request.cache_prompt !== undefined || request.id_slot !== undefined
+          ? {
+              ...(request.cache_prompt !== undefined ? { cache_prompt: request.cache_prompt } : {}),
+              ...(request.id_slot !== undefined ? { id_slot: request.id_slot } : {}),
+            }
+          : undefined,
     });
 
     const oldText = String((response as any)?.choices?.[0]?.message?.content ?? '');
