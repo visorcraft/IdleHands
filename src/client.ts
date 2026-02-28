@@ -701,6 +701,16 @@ export class OpenAIClient {
 
         const result = (await res.json()) as ChatCompletionResponse;
         const totalMs = Date.now() - reqStart;
+
+        // Diagnostic trace for silent/early exits: summarize top choice payload.
+        const c0: any = result?.choices?.[0];
+        const m0: any = c0?.message;
+        const finishReason = c0?.finish_reason ?? 'unknown';
+        const contentChars = typeof m0?.content === 'string' ? m0.content.length : 0;
+        const toolCallsCount = Array.isArray(m0?.tool_calls) ? m0.tool_calls.length : 0;
+        this.log(
+          `[chat] finish_reason=${finishReason} content_chars=${contentChars} tool_calls=${toolCallsCount} total_ms=${totalMs}`
+        );
         // Backpressure: track response time and warn on anomalies
         const bp = this.backpressure.record(totalMs);
         if (bp.warn) {
@@ -1442,6 +1452,11 @@ export class OpenAIClient {
       content: content.length ? content : null,
       tool_calls: toolCalls.length ? toolCalls : undefined,
     };
+
+    const finishReason = agg.choices?.[0]?.finish_reason ?? 'unknown';
+    this.log(
+      `[chat-stream] finish_reason=${finishReason} content_chars=${content.length} tool_calls=${toolCalls.length}`
+    );
 
     delete agg.choices[0].delta;
     return agg;

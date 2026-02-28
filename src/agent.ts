@@ -2822,7 +2822,7 @@ export async function createSession(opts: {
     const toolLoopWarningKeys = new Set<string>();
     let forceToollessRecoveryTurn = false;
     let toollessRecoveryCount = 0;
-    const MAX_TOOLLESS_RECOVERIES = 3;
+    const MAX_TOOLLESS_RECOVERIES = 5;
     const streamedToolCallPreviews = new Set<string>();
     const streamedToolCallPreviewScores = new Map<string, number>();
 
@@ -4131,7 +4131,10 @@ export async function createSession(opts: {
 
             // Improved handling of mutating tool loops - gradual recovery instead of immediate error
             const sigCount = sigCounts.get(sig) ?? 0;
-            const loopThreshold = harness.quirks.loopsOnToolError ? 2 : 3;
+            const isMutationTool = toolName === 'edit_range' || toolName === 'edit_file' || toolName === 'apply_patch';
+            // Give mutation tools more room — the signature now includes line range / old_text,
+            // so only truly identical edits count.  loopsOnToolError quirk keeps the tighter threshold.
+            const loopThreshold = harness.quirks.loopsOnToolError ? 2 : (isMutationTool ? 4 : 3);
             
             if (sigCount >= loopThreshold) {
               const argsObj = sigMetaBySig.get(sig)?.args ?? {};
@@ -4212,6 +4215,11 @@ export async function createSession(opts: {
                   `- If you were reading the same file, use the content you already have\n` +
                   `- If you were searching for something and not finding it, it may not exist\n` +
                   `- Consider whether the task can be completed with what you already know`;
+              } else if (toollessRecoveryCount === 3) {
+                recoveryContent =
+                  `[system] \u{1F6D1} Recovery attempt ${toollessRecoveryCount}/${MAX_TOOLLESS_RECOVERIES}. ` +
+                  `You keep looping. Try using apply_patch or exec with sed/awk instead of edit_range. ` +
+                  `Or use exec to run the build/tests with what you have so far — partial progress is better than no progress.`;
               } else {
                 recoveryContent =
                   `[system] \u{1F6D1} FINAL recovery attempt (${toollessRecoveryCount}/${MAX_TOOLLESS_RECOVERIES}). ` +
@@ -5620,6 +5628,11 @@ export async function createSession(opts: {
         noToolTurns = 0;
 
         const assistantOutput = ensureInformativeAssistantText(assistantText, { toolCalls, turns });
+        if (cfg.verbose) {
+          console.warn(
+            `[finalize] turns=${turns} assistant_chars=${assistantOutput.length} tool_calls_total=${toolCalls}`
+          );
+        }
 
         // final assistant message
         messages.push({ role: 'assistant', content: assistantOutput });

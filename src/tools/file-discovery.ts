@@ -8,6 +8,31 @@ import { resolvePath, redactPath } from './path-safety.js';
 import { globishMatch, hasRg } from './search-utils.js';
 import { ToolError } from './tool-error.js';
 
+/**
+ * Build a shell command string from an array of arguments.
+ * `regexArgIndex` identifies which argument is a regex pattern that needs
+ * double-quoting (to preserve | and other regex metacharacters) instead of
+ * the default single-quoting that shellEscape uses.
+ *
+ * Double-quoting: escapes \, ", $, ` so the shell passes the string through
+ * intact to the program, which then interprets regex metacharacters like |.
+ */
+function buildSearchCommand(args: string[], regexArgIndex: number): string {
+  return args.map((arg, i) => {
+    if (i === regexArgIndex) {
+      // Double-quote: escape shell-special chars inside double quotes
+      const escaped = arg
+        .replace(/\\/g, '\\\\')
+        .replace(/"/g, '\\"')
+        .replace(/\$/g, '\\$')
+        .replace(/`/g, '\\`')
+        .replace(/!/g, '\\!');
+      return `"${escaped}"`;
+    }
+    return shellEscape(arg);
+  }).join(' ');
+}
+
 type DiscoveryContext = {
   cwd: string;
 };
@@ -69,10 +94,12 @@ export async function searchFilesTool(
   const absCwd = path.resolve(ctx.cwd);
 
   if (await hasRg()) {
-    const cmd = ['rg', '-n', '--no-heading', '--color', 'never', pattern, root];
+    const cmd = ['rg', '-n', '--no-heading', '--color', 'never', '-e', pattern, root];
     if (include) cmd.splice(1, 0, '-g', include);
     try {
-      const rawJson = await execFn(ctx, { command: cmd.map(shellEscape).join(' '), timeout: 30 });
+      const patternIdx = cmd.indexOf('-e') + 1;
+      const cmdStr = buildSearchCommand(cmd, patternIdx);
+      const rawJson = await execFn(ctx, { command: cmdStr, timeout: 30 });
       const parsed: ExecResult = JSON.parse(rawJson);
       if (parsed.rc === 1 && !parsed.out?.trim()) {
         // No matches from rg; fall through to grep/JS fallback before declaring 0 matches.
@@ -99,9 +126,11 @@ export async function searchFilesTool(
   // Fallback: try grep if rg is not available or failed
   if (!await hasRg()) {
     try {
-      const grepCmd = ['grep', '-rn', '--color=never', pattern, root];
+      const grepCmd = ['grep', '-rn', '--color=never', '-e', pattern, root];
       if (include) grepCmd.splice(1, 0, `--include=${include}`);
-      const rawJson = await execFn(ctx, { command: grepCmd.map(shellEscape).join(' '), timeout: 30 });
+      const patternIdx = grepCmd.indexOf('-e') + 1;
+      const grepStr = buildSearchCommand(grepCmd, patternIdx);
+      const rawJson = await execFn(ctx, { command: grepStr, timeout: 30 });
       const parsed: ExecResult = JSON.parse(rawJson);
       if (parsed.rc === 1 && !parsed.out?.trim()) {
         // grep returns 1 for no matches — fall through to JS walker
