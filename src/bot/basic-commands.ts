@@ -40,6 +40,7 @@ export function helpCommand(surface: 'telegram' | 'discord'): CmdResult {
     '/new — Start a new session',
     '/cancel — Abort current generation',
     '/status — Session stats',
+    '/slot — Show llama-server slot affinity for this session',
     '/watchdog [status] — Show watchdog settings/status',
     '/agent — Show current agent',
     '/agents — List all configured agents',
@@ -106,6 +107,7 @@ export function statusCommand(managed: ManagedLike, extra?: { maxQueue?: number 
     ['Approval', managed.config.approval_mode ?? managed.approvalMode ?? 'auto-edit'],
     ['Model', s.model, true],
     ['Harness', s.harness, true],
+    ['Slot', s.idSlot != null ? String(s.idSlot) : 'n/a'],
     ['Dir', managed.workingDir, true],
     ['Dir pinned', managed.dirPinned ? 'yes' : 'no'],
     [
@@ -140,6 +142,28 @@ export function statusCommand(managed: ManagedLike, extra?: { maxQueue?: number 
   }
 
   return { title: 'Session Status', kv };
+}
+
+export function slotCommand(managed: ManagedLike): CmdResult {
+  const s = managed.session;
+  const affinity = managed.config?.slot_affinity;
+  const affinityEnabled = affinity?.enabled === true;
+  const affinitySlots =
+    typeof affinity?.num_slots === 'number' && Number.isFinite(affinity.num_slots)
+      ? Math.max(1, Math.floor(affinity.num_slots))
+      : undefined;
+
+  const kv: KV[] = [
+    ['Current slot', s.idSlot != null ? String(s.idSlot) : 'n/a'],
+    ['Affinity', affinityEnabled ? 'enabled' : 'disabled'],
+    ['Slots', affinitySlots != null ? String(affinitySlots) : 'n/a'],
+  ];
+
+  if (!affinityEnabled) {
+    kv.push(['Fixed id_slot', managed.config?.id_slot != null ? String(managed.config.id_slot) : 'n/a']);
+  }
+
+  return { title: 'Slot Affinity', kv };
 }
 
 export function watchdogCommand(

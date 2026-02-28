@@ -40,6 +40,7 @@ export {
   compactCommand,
   helpCommand,
   modelCommand,
+  slotCommand,
   startCommand,
   statusCommand,
   versionCommand,
@@ -84,6 +85,7 @@ export interface CmdResult {
 export interface SessionLike {
   model: string;
   harness: string;
+  idSlot?: number;
   currentContextTokens: number;
   contextWindow: number;
   usage: { prompt: number; completion: number };

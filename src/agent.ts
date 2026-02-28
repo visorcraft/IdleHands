@@ -89,6 +89,7 @@ import {
 } from './history.js';
 import { truncateToolResultContent } from './agent/context-budget.js';
 import { HookManager, loadHookPlugins } from './hooks/index.js';
+import { resolveIdSlot } from './slot-affinity.js';
 import type { HookSystemConfig } from './hooks/index.js';
 import { projectIndexKeys, parseIndexMeta, isFreshIndex, indexSummaryLine } from './indexer.js';
 import { LensStore } from './lens.js';
@@ -249,6 +250,7 @@ export type AgentSession = {
   messages: ChatMessage[];
   usage: { prompt: number; completion: number };
   currentContextTokens: number;
+  idSlot?: number;
   ask: (
     instruction: UserContent,
     hooks?: ((t: string) => void) | AgentHooks
@@ -397,6 +399,17 @@ export async function createSession(opts: {
   let supportsVision = supportsVisionModel(model, modelMeta, harness);
 
   const sessionId = `session-${timestampedId()}`;
+  const resolvedIdSlot = resolveIdSlot({
+    sessionKey: sessionId,
+    id_slot: cfg.id_slot,
+    slot_affinity: cfg.slot_affinity,
+  });
+  if (cfg.verbose && resolvedIdSlot !== undefined) {
+    const dynamic = cfg.slot_affinity?.enabled === true;
+    console.error(
+      `[slot-affinity] session=${sessionId} id_slot=${resolvedIdSlot}${dynamic ? ' strategy=lru' : ''}`
+    );
+  }
   const hookCfg: HookSystemConfig = cfg.hooks ?? {};
   const hookManager =
     opts.runtime?.hookManager ??
@@ -3287,6 +3300,9 @@ export async function createSession(opts: {
                 max_tokens: maxTokens,
                 extra: {
                   cache_prompt: cfg.cache_prompt ?? true,
+                  ...(resolvedIdSlot !== undefined && resolvedIdSlot !== null
+                    ? { id_slot: resolvedIdSlot }
+                    : {}),
                   ...(cfg.draft_model ? { draft_model: cfg.draft_model } : {}),
                   ...(cfg.draft_n
                     ? { speculative: { n: cfg.draft_n, p_min: cfg.draft_p_min ?? 0.5 } }
@@ -5690,6 +5706,9 @@ export async function createSession(opts: {
     },
     get currentContextTokens() {
       return currentContextTokens > 0 ? currentContextTokens : estimateTokensFromMessages(messages);
+    },
+    get idSlot() {
+      return resolvedIdSlot;
     },
     ask,
     rollbackLastTurnEdits: async () => {
