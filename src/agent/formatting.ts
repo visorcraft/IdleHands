@@ -240,8 +240,10 @@ export function toolResultSummary(
       return `${entries} entries`;
     }
     case 'search_files': {
-      const matches = (content.match(/^\d+:/gm) || []).length;
-      return `${matches} matches`;
+      // Match lines in path:line:content OR line:content format
+      const matches = content.match(/^.+:\d+:/gm) || content.match(/^\d+:/gm) || [];
+      const noMatchMsg = /^No matches for pattern/i.test(content);
+      return noMatchMsg ? '0 matches' : `${matches.length} matches`;
     }
     case 'spawn_task': {
       const line = content.split(/\r?\n/).find((l) => l.includes('status='));
