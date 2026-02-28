@@ -51,12 +51,20 @@ export async function searchFilesTool(
   args: any,
   execFn: (ctx: any, args: any) => Promise<string>
 ): Promise<string> {
+  // Auto-fix: model sometimes puts path in `include` instead of `path`
+  if (!args?.path && args?.include && /^(src|lib|app|\.)[/\\]/.test(args.include)) {
+    args = { ...args, path: args.include, include: undefined };
+  }
+  // Auto-fix: model sometimes puts path in `directory` or `dir`
+  if (!args?.path && (args?.directory || args?.dir)) {
+    args = { ...args, path: args.directory || args.dir };
+  }
   const root = resolvePath(ctx as any, args?.path ?? '.');
   const pattern = typeof args?.pattern === 'string' ? args.pattern : undefined;
   const include = typeof args?.include === 'string' ? args.include : undefined;
   const maxResults = Math.min(args?.max_results ? Number(args.max_results) : 50, 100);
-  if (!root) throw new Error('search_files: missing path');
-  if (!pattern) throw new Error('search_files: missing pattern');
+  if (!root) throw new Error('search_files: missing path. Use {"pattern": "...", "path": "src/bot"} — the path parameter is required.');
+  if (!pattern) throw new Error('search_files: missing pattern. Use {"pattern": "keyword", "path": "."} — the pattern parameter is required.');
 
   const absCwd = path.resolve(ctx.cwd);
 
@@ -85,22 +93,73 @@ export async function searchFilesTool(
         }
       }
     } catch {
-      // fall through
+      // fall through to grep fallback
+    }
+  }
+
+  // Fallback: try grep if rg is not available or failed
+  if (!await hasRg()) {
+    try {
+      const grepCmd = ['grep', '-rn', '--color=never', pattern, root];
+      if (include) grepCmd.splice(1, 0, `--include=${include}`);
+      const rawJson = await execFn(ctx, { command: grepCmd.map(shellEscape).join(' '), timeout: 30 });
+      const parsed: ExecResult = JSON.parse(rawJson);
+      if (parsed.rc === 1 && !parsed.out?.trim()) {
+        // grep returns 1 for no matches — fall through to JS walker
+      } else if (parsed.rc < 2 && parsed.out?.trim()) {
+        const grepLines = parsed.out.split(/\r?\n/).filter(Boolean).slice(0, maxResults);
+        if (grepLines.length >= maxResults) grepLines.push(`[truncated after ${maxResults} results]`);
+        const redactedLines = grepLines.map((line) => {
+          const colonIdx = line.indexOf(':');
+          if (colonIdx === -1) return line;
+          const filePath = line.substring(0, colonIdx);
+          const rest = line.substring(colonIdx + 1);
+          return redactPath(filePath, absCwd) + ':' + rest;
+        });
+        return redactedLines.join('\n');
+      }
+    } catch {
+      // fall through to JS walker
     }
   }
 
   let re: RegExp;
   try {
     re = new RegExp(pattern);
-  } catch (e: any) {
-    throw new ToolError(
-      'invalid_args',
-      `search_files: invalid regex pattern: ${e?.message ?? String(e)}`,
-      false,
-      'Escape regex metacharacters (\\\\, [, ], (, ), +, *, ?). If you intended literal text, use an escaped/literal pattern.'
-    );
+  } catch {
+    // If regex is invalid, escape and retry as literal string match
+    const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    try {
+      re = new RegExp(escaped);
+    } catch (e2: any) {
+      throw new ToolError(
+        'invalid_args',
+        `search_files: invalid pattern: ${e2?.message ?? String(e2)}`,
+        false,
+        'Escape regex metacharacters (\\\\, [, ], (, ), +, *, ?). If you intended literal text, use an escaped/literal pattern.'
+      );
+    }
   }
   const out: string[] = [];
+
+  // Handle single-file path: if root is a file (not directory), search it directly.
+  const rootStat = await fs.stat(root).catch(() => null);
+  if (rootStat?.isFile()) {
+    const rawBuf = await fs.readFile(root).catch(() => null);
+    if (rawBuf) {
+      const buf = rawBuf.toString('utf8');
+      const lines = buf.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i++) {
+        if (re.test(lines[i])) {
+          out.push(`${redactPath(root, absCwd)}:${i + 1}:${lines[i]}`);
+          if (out.length >= maxResults) break;
+        }
+      }
+    }
+    if (out.length >= maxResults) out.push(`[truncated after ${maxResults} results]`);
+    if (!out.length) return `No matches for pattern \"${pattern}\" in ${redactPath(root, absCwd)}.`;
+    return out.join('\n');
+  }
 
   async function walk(dir: string, depth: number) {
     if (out.length >= maxResults) return;

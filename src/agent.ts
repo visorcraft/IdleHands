@@ -4337,6 +4337,26 @@ export async function createSession(opts: {
               }
             }
 
+            // Auto-fix common model mistakes before validation
+            if (name === 'search_files' && args && typeof args === 'object') {
+              const a = args as Record<string, unknown>;
+              // Model puts path in 'include' instead of 'path'
+              if (!a.path && typeof a.include === 'string' && /^(src|lib|app|test|\.)[/\\]/.test(a.include as string)) {
+                a.path = a.include;
+                delete a.include;
+              }
+              // Model uses 'directory' or 'dir' instead of 'path'
+              if (!a.path && (a.directory || a.dir)) {
+                a.path = a.directory || a.dir;
+                delete a.directory;
+                delete a.dir;
+              }
+              // Model omits path entirely — default to '.'
+              if (!a.path) {
+                a.path = '.';
+              }
+            }
+
             // Pre-dispatch argument validation.
             // - Required params
             // - Type/range/enums

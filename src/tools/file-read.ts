@@ -18,9 +18,12 @@ export async function readFileTool(ctx: ReadToolContext, args: any): Promise<str
 
   const rawLimit = args?.limit != null ? Number(args.limit) : undefined;
   const defaultLimit = (ctx.maxReadLines != null && ctx.maxReadLines > 0) ? ctx.maxReadLines : 200;
+  // Allow explicit limit up to 2000 lines (models need to read large files for context).
+  // Only the *default* (when no limit is specified) stays at defaultLimit.
+  const maxAllowedLimit = 2000;
   let limit =
     Number.isFinite(rawLimit as number) && (rawLimit as number) > 0
-      ? Math.min(Math.max(1, Math.floor(rawLimit as number)), defaultLimit)
+      ? Math.min(Math.max(1, Math.floor(rawLimit as number)), maxAllowedLimit)
       : defaultLimit;
 
   const search = typeof args?.search === 'string' ? args.search : undefined;

@@ -83,7 +83,11 @@ export class OpenAIClient {
    * Built-in model name patterns known to need content-mode tool calls.
    * Can be extended dynamically via ~/.config/idlehands/compat-models.json
    */
-  static readonly CONTENT_MODE_PATTERNS: RegExp[] = [/qwen3\.5.*397b/i, /qwen3\.5.*moe/i];
+  static readonly CONTENT_MODE_PATTERNS: RegExp[] = [
+    /qwen3[.\-_]?5/i,
+    /qwen397b/i,
+    /qwen3.*coder/i,
+  ];
 
   /** Telemetry counters for compatibility behavior. */
   private compatTelemetry = {
@@ -404,12 +408,15 @@ export class OpenAIClient {
         }
       }
 
-      // For llama-server/OpenAI-compatible backends: enforce thinking mode at API level
-      // (not just prompt injection). Some servers require `enable_thinking=false` and
-      // reject assistant-prefill otherwise.
+      // For llama-server/OpenAI-compatible backends: enforce thinking mode at API level.
+      // NOTE: Do NOT set enable_thinking=false — llama-server's Qwen3 Jinja template
+      // injects <think></think> as assistant prefill when enable_thinking=false, which
+      // then conflicts with llama-server's own assistant-prefill validation.
+      // Instead, rely on /no_think directive in the user message + reasoning_format=none.
       if (thinkingMode === 'no_think') {
         body.reasoning_format = 'none';
-        body.enable_thinking = false;
+        // Explicitly delete enable_thinking to avoid template prefill conflicts
+        delete body.enable_thinking;
       } else if (thinkingMode === 'think') {
         body.enable_thinking = true;
       }
