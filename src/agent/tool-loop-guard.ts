@@ -110,24 +110,45 @@ export class ToolLoopGuard {
   }
 
   computeSignature(toolName: string, args: Record<string, unknown>): string {
-    // For read_file calls, normalize to just the path so that reading the same
-    // file with different offset/limit/search params is detected as a loop.
+    // For read_file calls, include path + offset bucket so that reading different
+    // sections of the same file is NOT treated as a loop, but re-reading the exact
+    // same section IS detected.
     if (toolName === 'read_file' && typeof args.path === 'string') {
-      return hashToolCall(toolName, { path: args.path }).signature;
+      const offset = typeof args.offset === 'number' ? args.offset : 0;
+      const search = typeof args.search === 'string' ? args.search : '';
+      // Bucket offsets into 200-line chunks so nearby reads don't count as different
+      const offsetBucket = Math.floor(offset / 200);
+      return hashToolCall(toolName, { path: args.path, offsetBucket, search }).signature;
     }
 
-    // Same for read_files - normalize each request to just path
+    // Same for read_files - include path + offset buckets
     if (toolName === 'read_files' && Array.isArray(args.requests)) {
-      const paths = (args.requests as Array<{ path?: string }>).map((r) => r?.path).filter(Boolean);
-      return hashToolCall(toolName, { paths }).signature;
+      const normalized = (args.requests as Array<{ path?: string; offset?: number; search?: string }>).map((r) => {
+        const offset = typeof r?.offset === 'number' ? r.offset : 0;
+        return { path: r?.path, offsetBucket: Math.floor(offset / 200), search: r?.search ?? '' };
+      });
+      return hashToolCall(toolName, { requests: normalized }).signature;
     }
 
-    // For edit tools, normalize to just the path so that editing the same file
-    // with different content is detected as a loop (symptom chasing pattern).
+    // For edit tools, include path + target location so that edits to different
+    // parts of the same file are NOT treated as loops, but repeated identical
+    // edits to the same location ARE detected.
     if (
       (toolName === 'edit_file' || toolName === 'write_file' || toolName === 'edit_range' || toolName === 'insert_file') &&
       typeof args.path === 'string'
     ) {
+      if (toolName === 'edit_range') {
+        // Include line range so editing different sections isn't a "loop"
+        const startLine = typeof args.start_line === 'number' ? args.start_line : 0;
+        const endLine = typeof args.end_line === 'number' ? args.end_line : 0;
+        return hashToolCall(toolName, { path: args.path, start_line: startLine, end_line: endLine }).signature;
+      }
+      if (toolName === 'edit_file') {
+        // Include a hash of old_text so different edits to same file aren't loops
+        const oldText = typeof args.old_text === 'string' ? args.old_text.slice(0, 200) : '';
+        return hashToolCall(toolName, { path: args.path, old_text_prefix: oldText }).signature;
+      }
+      // write_file / insert_file: just path is fine (truly replacing whole file)
       return hashToolCall(toolName, { path: args.path }).signature;
     }
 

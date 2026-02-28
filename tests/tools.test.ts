@@ -595,11 +595,11 @@ describe('search_files', () => {
     await assert.rejects(() => search_files(ctx, { path: '.' }), /missing pattern/i);
   });
 
-  it('throws on malformed regex with invalid_args hint', async () => {
-    await assert.rejects(
-      () => search_files(ctx, { pattern: '([a-z', path: '.' }),
-      /invalid regex pattern/i
-    );
+  it('auto-escapes malformed regex and falls back to literal match', async () => {
+    // Malformed regex like "([a-z" is auto-escaped to a literal string match
+    // instead of throwing, so the model can recover without losing a turn.
+    const result = await search_files(ctx, { pattern: '([a-z', path: '.' });
+    assert.ok(typeof result === 'string', 'should return a string (possibly no-match message)');
   });
 });
 

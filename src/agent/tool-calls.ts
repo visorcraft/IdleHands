@@ -422,6 +422,10 @@ export function getArgValidationIssues(
         issues.push({ field: 'path', message: 'must be a string', value: args.path });
       const off = checkRange('offset', args.offset, 1, 1_000_000);
       if (off) issues.push(off);
+      // Auto-clamp limit > 240 instead of rejecting — models frequently request 300/500.
+      if (typeof args.limit === 'number' && args.limit > 240) {
+        args.limit = 240;
+      }
       const lim = checkRange('limit', args.limit, 1, 240);
       if (lim) issues.push(lim);
       const ctx = checkRange('context', args.context, 0, 80);
