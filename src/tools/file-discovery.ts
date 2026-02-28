@@ -75,9 +75,8 @@ export async function searchFilesTool(
       const rawJson = await execFn(ctx, { command: cmd.map(shellEscape).join(' '), timeout: 30 });
       const parsed: ExecResult = JSON.parse(rawJson);
       if (parsed.rc === 1 && !parsed.out?.trim()) {
-        return `No matches for pattern \"${pattern}\" in ${root}. STOP — do NOT read files individually to search. Try a broader regex pattern, different keywords, or use exec: grep -rn \"keyword\" ${root}`;
-      }
-      if (parsed.rc < 2) {
+        // No matches from rg; fall through to grep/JS fallback before declaring 0 matches.
+      } else if (parsed.rc < 2) {
         const rgOutput = parsed.out ?? '';
         if (rgOutput) {
           const lines = rgOutput.split(/\r?\n/).filter(Boolean).slice(0, maxResults);
