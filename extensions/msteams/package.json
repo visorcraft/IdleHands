@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/msteams",
-  "version": "4.0.17",
+  "version": "4.0.18",
   "description": "IdleHands Microsoft Teams channel plugin",
   "type": "module",
   "dependencies": {
