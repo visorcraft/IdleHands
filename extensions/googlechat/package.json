@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/googlechat",
-  "version": "4.0.20",
+  "version": "4.0.21",
   "private": true,
   "description": "IdleHands Google Chat channel plugin",
   "type": "module",

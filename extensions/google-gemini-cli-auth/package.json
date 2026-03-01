@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/google-gemini-cli-auth",
-  "version": "4.0.20",
+  "version": "4.0.21",
   "private": true,
   "description": "IdleHands Gemini CLI OAuth provider plugin",
   "type": "module",
