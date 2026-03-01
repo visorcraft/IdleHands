@@ -1,1 +1,1 @@
-export * from "idlehands";
+export * from "@visorcraft/idlehands";
