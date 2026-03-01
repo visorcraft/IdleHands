@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/nostr",
-  "version": "4.0.14",
+  "version": "4.0.15",
   "description": "IdleHands Nostr channel plugin for NIP-04 encrypted DMs",
   "type": "module",
   "dependencies": {

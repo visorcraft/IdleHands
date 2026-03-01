@@ -1,5 +1,7 @@
+import { execFile as execFileCb } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import type { CliDeps } from "../cli/deps.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { CONFIG_DIR } from "../utils.js";
@@ -67,6 +69,7 @@ export type AntonConfig = {
 
 const ANTON_STATE_PATH = path.join(CONFIG_DIR, "anton.state.json");
 const ANTON_LOCK_PATH = path.join(CONFIG_DIR, "anton.lock");
+const execFile = promisify(execFileCb);
 
 // ─── State Management ───────────────────────────────────────────────────────
 
@@ -393,6 +396,18 @@ async function isPlanFileValid(filePath: string): Promise<boolean> {
     return stat.isFile() && stat.size > 10;
   } catch {
     return false;
+  }
+}
+
+async function getGitChangedFileCount(cwd: string): Promise<number | null> {
+  try {
+    const { stdout } = await execFile("git", ["status", "--porcelain"], { cwd });
+    return stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean).length;
+  } catch {
+    return null;
   }
 }
 
@@ -888,7 +903,12 @@ export async function runAnton(args: {
               // Review failure is non-fatal — we proceed with the unreviewed plan
             }
           }
-          // If discovery failed, planFile is undefined → fall through to direct execution
+
+          if (!planFile) {
+            throw new Error(
+              "Preflight discovery did not produce a verified plan file; refusing direct implementation fallback",
+            );
+          }
         }
 
         // ── Phase 2: Implementation ──
@@ -913,6 +933,9 @@ export async function runAnton(args: {
           ? buildImplementationPrompt(task.text, planFile)
           : buildDirectTaskPrompt(task.text);
 
+        const gitCwd = args.workspaceDir ? path.resolve(args.workspaceDir) : path.dirname(filePath);
+        const changedBefore = await getGitChangedFileCount(gitCwd);
+
         await runAgentTask({
           message: implPrompt,
           sessionId: implSessionId,
@@ -923,6 +946,18 @@ export async function runAnton(args: {
           deps: args.deps,
           workspaceDir: args.workspaceDir,
         });
+
+        const changedAfter = await getGitChangedFileCount(gitCwd);
+        if (
+          mode === "preflight" &&
+          changedBefore !== null &&
+          changedAfter !== null &&
+          changedAfter <= changedBefore
+        ) {
+          throw new Error(
+            "Implementation made no repository changes; refusing to mark task complete",
+          );
+        }
 
         const latest = await fs.readFile(filePath, "utf8");
         const updated = markTaskDone(latest, task.line);
