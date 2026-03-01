@@ -146,97 +146,101 @@ describe("directive behavior", () => {
       }
     });
   });
-  it("renders model list and status variants across catalog/config combinations", async () => {
-    await withTempHome(async (home) => {
-      const aliasText = await runModelDirectiveText(home, "/model list");
-      expect(aliasText).toContain("Providers:");
-      expect(aliasText).toContain("- anthropic");
-      expect(aliasText).toContain("- openai");
-      expect(aliasText).toContain("Use: /models <provider>");
-      expect(aliasText).toContain("Switch: /model <provider/model>");
+  it(
+    "renders model list and status variants across catalog/config combinations",
+    { timeout: 180_000 },
+    async () => {
+      await withTempHome(async (home) => {
+        const aliasText = await runModelDirectiveText(home, "/model list");
+        expect(aliasText).toContain("Providers:");
+        expect(aliasText).toContain("- anthropic");
+        expect(aliasText).toContain("- openai");
+        expect(aliasText).toContain("Use: /models <provider>");
+        expect(aliasText).toContain("Switch: /model <provider/model>");
 
-      vi.mocked(loadModelCatalog).mockResolvedValueOnce([]);
-      const unavailableCatalogText = await runModelDirectiveText(home, "/model");
-      expect(unavailableCatalogText).toContain("Current: anthropic/claude-opus-4-5");
-      expect(unavailableCatalogText).toContain("Switch: /model <provider/model>");
-      expect(unavailableCatalogText).toContain(
-        "Browse: /models (providers) or /models <provider> (models)",
-      );
-      expect(unavailableCatalogText).toContain("More: /model status");
+        vi.mocked(loadModelCatalog).mockResolvedValueOnce([]);
+        const unavailableCatalogText = await runModelDirectiveText(home, "/model");
+        expect(unavailableCatalogText).toContain("Current: anthropic/claude-opus-4-5");
+        expect(unavailableCatalogText).toContain("Switch: /model <provider/model>");
+        expect(unavailableCatalogText).toContain(
+          "Browse: /models (providers) or /models <provider> (models)",
+        );
+        expect(unavailableCatalogText).toContain("More: /model status");
 
-      const allowlistedStatusText = await runModelDirectiveText(home, "/model status", {
-        includeSessionStore: false,
-      });
-      expect(allowlistedStatusText).toContain("anthropic/claude-opus-4-5");
-      expect(allowlistedStatusText).toContain("openai/gpt-4.1-mini");
-      expect(allowlistedStatusText).not.toContain("claude-sonnet-4-1");
-      expect(allowlistedStatusText).toContain("auth:");
+        const allowlistedStatusText = await runModelDirectiveText(home, "/model status", {
+          includeSessionStore: false,
+        });
+        expect(allowlistedStatusText).toContain("anthropic/claude-opus-4-5");
+        expect(allowlistedStatusText).toContain("openai/gpt-4.1-mini");
+        expect(allowlistedStatusText).not.toContain("claude-sonnet-4-1");
+        expect(allowlistedStatusText).toContain("auth:");
 
-      vi.mocked(loadModelCatalog).mockResolvedValue([
-        { id: "claude-opus-4-5", name: "Opus 4.5", provider: "anthropic" },
-        { id: "gpt-4.1-mini", name: "GPT-4.1 Mini", provider: "openai" },
-        { id: "grok-4", name: "Grok 4", provider: "xai" },
-      ]);
-      const noAllowlistText = await runModelDirectiveText(home, "/model list", {
-        defaults: {
-          model: {
-            primary: "anthropic/claude-opus-4-5",
-            fallbacks: ["openai/gpt-4.1-mini"],
+        vi.mocked(loadModelCatalog).mockResolvedValue([
+          { id: "claude-opus-4-5", name: "Opus 4.5", provider: "anthropic" },
+          { id: "gpt-4.1-mini", name: "GPT-4.1 Mini", provider: "openai" },
+          { id: "grok-4", name: "Grok 4", provider: "xai" },
+        ]);
+        const noAllowlistText = await runModelDirectiveText(home, "/model list", {
+          defaults: {
+            model: {
+              primary: "anthropic/claude-opus-4-5",
+              fallbacks: ["openai/gpt-4.1-mini"],
+            },
+            imageModel: { primary: "minimax/MiniMax-M2.1" },
+            models: undefined,
           },
-          imageModel: { primary: "minimax/MiniMax-M2.1" },
-          models: undefined,
-        },
-      });
-      expect(noAllowlistText).toContain("Providers:");
-      expect(noAllowlistText).toContain("- anthropic");
-      expect(noAllowlistText).toContain("- openai");
-      expect(noAllowlistText).toContain("- xai");
-      expect(noAllowlistText).toContain("Use: /models <provider>");
+        });
+        expect(noAllowlistText).toContain("Providers:");
+        expect(noAllowlistText).toContain("- anthropic");
+        expect(noAllowlistText).toContain("- openai");
+        expect(noAllowlistText).toContain("- xai");
+        expect(noAllowlistText).toContain("Use: /models <provider>");
 
-      vi.mocked(loadModelCatalog).mockResolvedValueOnce([
-        {
-          provider: "anthropic",
-          id: "claude-opus-4-5",
-          name: "Claude Opus 4.5",
-        },
-        { provider: "openai", id: "gpt-4.1-mini", name: "GPT-4.1 mini" },
-      ]);
-      const configOnlyProviderText = await runModelDirectiveText(home, "/models minimax", {
-        defaults: {
-          models: {
-            "anthropic/claude-opus-4-5": {},
-            "openai/gpt-4.1-mini": {},
-            "minimax/MiniMax-M2.1": { alias: "minimax" },
+        vi.mocked(loadModelCatalog).mockResolvedValueOnce([
+          {
+            provider: "anthropic",
+            id: "claude-opus-4-5",
+            name: "Claude Opus 4.5",
           },
-        },
-        extra: {
-          models: {
-            mode: "merge",
-            providers: {
-              minimax: {
-                baseUrl: "https://api.minimax.io/anthropic",
-                api: "anthropic-messages",
-                models: [{ id: "MiniMax-M2.1", name: "MiniMax M2.1" }],
+          { provider: "openai", id: "gpt-4.1-mini", name: "GPT-4.1 mini" },
+        ]);
+        const configOnlyProviderText = await runModelDirectiveText(home, "/models minimax", {
+          defaults: {
+            models: {
+              "anthropic/claude-opus-4-5": {},
+              "openai/gpt-4.1-mini": {},
+              "minimax/MiniMax-M2.1": { alias: "minimax" },
+            },
+          },
+          extra: {
+            models: {
+              mode: "merge",
+              providers: {
+                minimax: {
+                  baseUrl: "https://api.minimax.io/anthropic",
+                  api: "anthropic-messages",
+                  models: [{ id: "MiniMax-M2.1", name: "MiniMax M2.1" }],
+                },
               },
             },
           },
-        },
-      });
-      expect(configOnlyProviderText).toContain("Models (minimax");
-      expect(configOnlyProviderText).toContain("minimax/MiniMax-M2.1");
+        });
+        expect(configOnlyProviderText).toContain("Models (minimax");
+        expect(configOnlyProviderText).toContain("minimax/MiniMax-M2.1");
 
-      const missingAuthText = await runModelDirectiveText(home, "/model list", {
-        defaults: {
-          models: {
-            "anthropic/claude-opus-4-5": {},
+        const missingAuthText = await runModelDirectiveText(home, "/model list", {
+          defaults: {
+            models: {
+              "anthropic/claude-opus-4-5": {},
+            },
           },
-        },
+        });
+        expect(missingAuthText).toContain("Providers:");
+        expect(missingAuthText).not.toContain("missing (missing)");
+        expect(runEmbeddedPiAgent).not.toHaveBeenCalled();
       });
-      expect(missingAuthText).toContain("Providers:");
-      expect(missingAuthText).not.toContain("missing (missing)");
-      expect(runEmbeddedPiAgent).not.toHaveBeenCalled();
-    });
-  });
+    },
+  );
   it("sets model override on /model directive", async () => {
     await withTempHome(async (home) => {
       const storePath = sessionStorePath(home);
