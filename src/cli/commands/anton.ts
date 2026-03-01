@@ -237,42 +237,42 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
   const config: AntonRunConfig = {
     taskFile: filePath,
     preflightEnabled: defaults.preflight?.enabled ?? false,
-    preflightRequirementsReview: defaults.preflight?.requirements_review ?? true,
+    preflightRequirementsReview: defaults.preflight?.requirementsReview ?? defaults.preflight?.requirements_review ?? true,
     preflightDiscoveryTimeoutSec:
-      defaults.preflight?.discovery_timeout_sec ?? defaults.task_timeout_sec ?? 600,
+      defaults.preflight?.discoveryTimeoutSec ?? defaults.preflight?.discovery_timeout_sec ?? defaults.taskTimeoutSec ?? defaults.task_timeout_sec ?? 600,
     preflightReviewTimeoutSec:
-      defaults.preflight?.review_timeout_sec ?? defaults.task_timeout_sec ?? 600,
-    preflightMaxRetries: defaults.preflight?.max_retries ?? 2,
-    preflightSessionMaxIterations: defaults.preflight?.session_max_iterations ?? 500,
+      defaults.preflight?.reviewTimeoutSec ?? defaults.preflight?.review_timeout_sec ?? defaults.taskTimeoutSec ?? defaults.task_timeout_sec ?? 600,
+    preflightMaxRetries: defaults.preflight?.maxRetries ?? defaults.preflight?.max_retries ?? 2,
+    preflightSessionMaxIterations: defaults.preflight?.sessionMaxIterations ?? defaults.preflight?.session_max_iterations ?? 500,
     preflightSessionTimeoutSec:
-      defaults.preflight?.session_timeout_sec ?? defaults.task_timeout_sec ?? 600,
+      defaults.preflight?.sessionTimeoutSec ?? defaults.preflight?.session_timeout_sec ?? defaults.taskTimeoutSec ?? defaults.task_timeout_sec ?? 600,
     projectDir: cwd,
-    maxRetriesPerTask: parsed.maxRetries ?? defaults.max_retries ?? 3,
-    maxIterations: parsed.maxIterations ?? defaults.max_iterations ?? 200,
-    taskMaxIterations: defaults.task_max_iterations ?? 50,
-    taskTimeoutSec: parsed.taskTimeout ?? defaults.task_timeout_sec ?? 600,
-    totalTimeoutSec: parsed.totalTimeout ?? defaults.total_timeout_sec ?? 7200,
-    maxTotalTokens: parsed.maxTokens ?? defaults.max_total_tokens ?? Infinity,
-    maxPromptTokensPerAttempt: defaults.max_prompt_tokens_per_attempt ?? 999_999_999,
-    autoCommit: parsed.autoCommit ?? defaults.auto_commit ?? true,
+    maxRetriesPerTask: parsed.maxRetries ?? defaults.maxRetries ?? defaults.max_retries ?? 3,
+    maxIterations: parsed.maxIterations ?? defaults.maxIterations ?? defaults.max_iterations ?? 200,
+    taskMaxIterations: defaults.taskMaxIterations ?? defaults.task_max_iterations ?? 50,
+    taskTimeoutSec: parsed.taskTimeout ?? defaults.taskTimeoutSec ?? defaults.task_timeout_sec ?? 600,
+    totalTimeoutSec: parsed.totalTimeout ?? defaults.totalTimeoutSec ?? defaults.total_timeout_sec ?? 7200,
+    maxTotalTokens: parsed.maxTokens ?? defaults.maxTotalTokens ?? defaults.max_total_tokens ?? Infinity,
+    maxPromptTokensPerAttempt: defaults.maxPromptTokensPerAttempt ?? defaults.max_prompt_tokens_per_attempt ?? 999_999_999,
+    autoCommit: parsed.autoCommit ?? defaults.autoCommit ?? defaults.auto_commit ?? true,
     branch: parsed.branch ?? false,
     allowDirty: parsed.allowDirty ?? false,
     aggressiveCleanOnFail: parsed.aggressiveClean ?? false,
-    verifyAi: parsed.verifyAi ?? defaults.verify_ai ?? true,
+    verifyAi: parsed.verifyAi ?? defaults.verifyAi ?? defaults.verify_ai ?? true,
     verifyModel: parsed.verifyModel ?? undefined,
     decompose: parsed.decompose ?? defaults.decompose ?? true,
-    maxDecomposeDepth: parsed.maxDecomposeDepth ?? defaults.max_decompose_depth ?? 2,
-    maxTotalTasks: parsed.maxTotalTasks ?? defaults.max_total_tasks ?? 500,
+    maxDecomposeDepth: parsed.maxDecomposeDepth ?? defaults.maxDecomposeDepth ?? defaults.max_decompose_depth ?? 2,
+    maxTotalTasks: parsed.maxTotalTasks ?? defaults.maxTotalTasks ?? defaults.max_total_tasks ?? 500,
     buildCommand: parsed.buildCommand ?? undefined,
     testCommand: parsed.testCommand ?? undefined,
     lintCommand: parsed.lintCommand ?? undefined,
-    skipOnFail: parsed.skipOnFail ?? defaults.skip_on_fail ?? false,
-    skipOnBlocked: parsed.skipOnBlocked ?? defaults.skip_on_blocked ?? true,
-    rollbackOnFail: parsed.rollbackOnFail ?? defaults.rollback_on_fail ?? false,
-    scopeGuard: parsed.scopeGuard ?? defaults.scope_guard ?? 'lax',
-    maxIdenticalFailures: defaults.max_identical_failures ?? 3,
+    skipOnFail: parsed.skipOnFail ?? defaults.skipOnFail ?? defaults.skip_on_fail ?? false,
+    skipOnBlocked: parsed.skipOnBlocked ?? defaults.skipOnBlocked ?? defaults.skip_on_blocked ?? true,
+    rollbackOnFail: parsed.rollbackOnFail ?? defaults.rollbackOnFail ?? defaults.rollback_on_fail ?? false,
+    scopeGuard: parsed.scopeGuard ?? defaults.scopeGuard ?? defaults.scope_guard ?? 'lax',
+    maxIdenticalFailures: defaults.maxIdenticalFailures ?? defaults.max_identical_failures ?? 3,
     approvalMode: (parsed.approval ??
-      defaults.approval_mode ??
+      defaults.approvalMode ?? defaults.approval_mode ??
       'yolo') as AntonRunConfig['approvalMode'],
     verbose: parsed.verbose ?? defaults.verbose ?? false,
     dryRun: parsed.dryRun ?? false,
@@ -286,7 +286,7 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
   ctx.antonLastLoopEvent = null;
 
   // Build progress callback
-  const heartbeatSecRaw = Number(defaults.progress_heartbeat_sec ?? 30);
+  const heartbeatSecRaw = Number(defaults.progressHeartbeatSec ?? defaults.progress_heartbeat_sec ?? 30);
   const heartbeatIntervalMs = Number.isFinite(heartbeatSecRaw)
     ? Math.max(5000, Math.floor(heartbeatSecRaw * 1000))
     : 30_000;
@@ -324,7 +324,7 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
     },
     onHeartbeat() {
       const now = Date.now();
-      if (defaults.progress_events === false) return;
+      if ((defaults.progressEvents ?? defaults.progress_events) === false) return;
       if (!ctx.antonProgress?.currentTask) return;
       if (now - lastProgressAt < 3000) return;
       if (now - lastHeartbeatNoticeAt < heartbeatIntervalMs) return;
@@ -365,7 +365,7 @@ async function startRun(ctx: ReplContext, args: string): Promise<void> {
       emitAntonUpdate(ctx, formatVerificationDetail(taskText, verification));
     },
     onStage(stage, message) {
-      if (defaults.progress_events !== false) {
+      if ((defaults.progressEvents ?? defaults.progress_events) !== false) {
         emitAntonUpdate(ctx, formatStageUpdate(stage, message));
       }
     },
