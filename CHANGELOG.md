@@ -2,6 +2,16 @@
 
 Docs: https://docs.idlehands.ai
 
+## 4.0.12
+
+### Changes
+
+- Configure wizard: add an `Anton` section so `idlehands configure` can interactively set Anton defaults (mode, timeout, approval mode, and preflight options).
+
+### Fixes
+
+- Release hygiene: removed an accidental memory commit from `main` history.
+
 ## 2026.2.27
 
 ### Changes
