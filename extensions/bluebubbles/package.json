@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/bluebubbles",
-  "version": "4.0.19",
+  "version": "4.0.20",
   "description": "IdleHands BlueBubbles channel plugin",
   "type": "module",
   "idlehands": {

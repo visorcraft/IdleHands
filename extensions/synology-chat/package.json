@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/synology-chat",
-  "version": "4.0.19",
+  "version": "4.0.20",
   "description": "Synology Chat channel plugin for IdleHands",
   "type": "module",
   "dependencies": {
