@@ -2735,6 +2735,9 @@ export async function createSession(opts: {
     // that happen back-to-back with no other tool calls in between.
     let lastTurnSigs = new Set<string>();
     const consecutiveCounts = new Map<string, number>();
+    // Total (cross-turn) repeat tracking for identical read_file/read_files slices.
+    // If the same slice is read 5x total, force an immediate edit-focused recovery.
+    const totalReadSliceCounts = new Map<string, number>();
 
     let malformedCount = 0;
     let toolRepairAttempts = 0;
@@ -4072,6 +4075,23 @@ export async function createSession(opts: {
               const consec = consecutiveCounts.get(sig) ?? 1;
               const isReadFileTool = READ_FILE_CACHE_TOOLS.has(toolName);
               const hardBreakAt = isReadFileTool ? 6 : 4;
+
+              if (isReadFileTool) {
+                const totalReadsForSlice = (totalReadSliceCounts.get(sig) ?? 0) + 1;
+                totalReadSliceCounts.set(sig, totalReadsForSlice);
+                if (totalReadsForSlice >= 5) {
+                  shouldForceToollessRecovery = true;
+                  poisonedToolSigs.add(sig);
+                  messages.push({
+                    role: 'system',
+                    content:
+                      '[read-loop hard-stop] You have read the same file lines 5 times total. ' +
+                      'STOP THINKING. BEGIN EDITING NOW using the information you already have. ' +
+                      'Do not call read_file/read_files for this same slice again.',
+                  } as ChatMessage);
+                  continue;
+                }
+              }
 
               // At 3x, first warning
               if (consec >= 3) {
