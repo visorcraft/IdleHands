@@ -260,6 +260,63 @@ async function getLatestNpm(timeoutMs = 5000): Promise<string | null> {
   return data?.version ?? null;
 }
 
+async function npmVersionExists(version: string, timeoutMs = 5000): Promise<boolean> {
+  const pkg = encodeURIComponent(NPM_SCOPED_PACKAGE);
+  const res = await safeFetch(
+    `https://registry.npmjs.org/${pkg}/${encodeURIComponent(version)}`,
+    { headers: { Accept: "application/json", "User-Agent": "idlehands-bot" } },
+    timeoutMs,
+  );
+  return Boolean(res && res.ok);
+}
+
+async function installFromGitHubRelease(version: string, onProgress: ProgressCallback): Promise<void> {
+  const token = resolveGitHubToken();
+  const releaseUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/v${version}`;
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "idlehands-bot",
+  };
+  if (token) {
+    headers["Authorization"] = `token ${token}`;
+  }
+
+  const releaseRes = await fetch(releaseUrl, { headers });
+  if (!releaseRes.ok) {
+    throw new Error(`Failed to fetch release v${version}`);
+  }
+  const releaseData = (await releaseRes.json()) as {
+    assets?: Array<{ name: string; url: string; size: number }>;
+  };
+
+  const tgzName = `${RELEASE_ASSET_PREFIX}-${version}.tgz`;
+  const asset = (releaseData.assets ?? []).find((a) => a.name === tgzName);
+  if (!asset) {
+    throw new Error(`Release has no asset named ${tgzName}`);
+  }
+
+  await onProgress(`📦 Downloading ${tgzName}...`);
+
+  const dlHeaders: Record<string, string> = {
+    Accept: "application/octet-stream",
+    "User-Agent": "idlehands-bot",
+  };
+  if (token) {
+    dlHeaders["Authorization"] = `token ${token}`;
+  }
+  const dlRes = await fetch(asset.url, { headers: dlHeaders });
+  if (!dlRes.ok) {
+    throw new Error("Failed to download asset");
+  }
+
+  const tmpPath = path.join(os.tmpdir(), tgzName);
+  const buf = Buffer.from(await dlRes.arrayBuffer());
+  await fs.writeFile(tmpPath, buf);
+
+  npmInstallGlobal(tmpPath);
+  await fs.unlink(tmpPath).catch(() => {});
+}
+
 async function checkForUpdate(source: InstallSource): Promise<VersionInfo | null> {
   const currentVersion = getPkgVersion();
   let latest: string | null = null;
@@ -380,53 +437,17 @@ export async function performBotUpgrade(onProgress: ProgressCallback): Promise<U
 
   try {
     if (info.source === "npm") {
-      npmInstallGlobal(`${NPM_SCOPED_PACKAGE}@latest`);
+      const npmHasVersion = await npmVersionExists(info.latest);
+      if (npmHasVersion) {
+        npmInstallGlobal(`${NPM_SCOPED_PACKAGE}@${info.latest}`);
+      } else {
+        await onProgress(
+          `📦 npm has not published v${info.latest} yet; falling back to GitHub release asset...`,
+        );
+        await installFromGitHubRelease(info.latest, onProgress);
+      }
     } else {
-      // GitHub release download
-      const token = resolveGitHubToken();
-      const releaseUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/v${info.latest}`;
-      const headers: Record<string, string> = {
-        Accept: "application/vnd.github+json",
-        "User-Agent": "idlehands-bot",
-      };
-      if (token) {
-        headers["Authorization"] = `token ${token}`;
-      }
-
-      const releaseRes = await fetch(releaseUrl, { headers });
-      if (!releaseRes.ok) {
-        throw new Error(`Failed to fetch release v${info.latest}`);
-      }
-      const releaseData = (await releaseRes.json()) as {
-        assets?: Array<{ name: string; url: string; size: number }>;
-      };
-
-      const tgzName = `${RELEASE_ASSET_PREFIX}-${info.latest}.tgz`;
-      const asset = (releaseData.assets ?? []).find((a) => a.name === tgzName);
-      if (!asset) {
-        throw new Error(`Release has no asset named ${tgzName}`);
-      }
-
-      await onProgress(`📦 Downloading ${tgzName}...`);
-
-      const dlHeaders: Record<string, string> = {
-        Accept: "application/octet-stream",
-        "User-Agent": "idlehands-bot",
-      };
-      if (token) {
-        dlHeaders["Authorization"] = `token ${token}`;
-      }
-      const dlRes = await fetch(asset.url, { headers: dlHeaders });
-      if (!dlRes.ok) {
-        throw new Error("Failed to download asset");
-      }
-
-      const tmpPath = path.join(os.tmpdir(), tgzName);
-      const buf = Buffer.from(await dlRes.arrayBuffer());
-      await fs.writeFile(tmpPath, buf);
-
-      npmInstallGlobal(tmpPath);
-      await fs.unlink(tmpPath).catch(() => {});
+      await installFromGitHubRelease(info.latest, onProgress);
     }
 
     await onProgress(`✅ Upgraded to **v${info.latest}**`);
