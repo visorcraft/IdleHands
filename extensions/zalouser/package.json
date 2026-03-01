@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/zalouser",
-  "version": "4.0.12",
+  "version": "4.0.13",
   "description": "IdleHands Zalo Personal Account plugin via zca-cli",
   "type": "module",
   "dependencies": {

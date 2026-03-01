@@ -2,6 +2,12 @@
 
 Docs: https://docs.idlehands.ai
 
+## 4.0.13
+
+### Fixes
+
+- Anton preflight workspace inheritance: make spawned Anton discovery/review/implementation runs honor the session-level workspace set via `/dir` (instead of falling back to the default workspace), so task execution and file writes stay in the intended repo.
+
 ## 4.0.12
 
 ### Changes

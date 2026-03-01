@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/discord",
-  "version": "4.0.12",
+  "version": "4.0.13",
   "description": "IdleHands Discord channel plugin",
   "type": "module",
   "idlehands": {

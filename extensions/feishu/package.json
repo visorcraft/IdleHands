@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/feishu",
-  "version": "4.0.12",
+  "version": "4.0.13",
   "description": "IdleHands Feishu/Lark channel plugin (community maintained by @m1heng)",
   "type": "module",
   "dependencies": {
