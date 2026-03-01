@@ -317,7 +317,11 @@ const entries: SubCliEntry[] = [
           console.log("\n" + result.message.replace(/\*\*/g, ""));
 
           if (result.needsRestart && result.success) {
-            console.log("\n⚠️  Please restart idlehands to use the new version.");
+            console.log("\nℹ️  Upgrade installed. If you are running interactively, restart your current process/session to load the new binary.");
+            console.log("Suggested commands:");
+            console.log("  systemctl --user restart idlehands-bot   # if using user service");
+            console.log("  idlehands gateway restart                 # if running gateway manually");
+            console.log("  hash -r && idlehands --version            # refresh shell command cache + verify");
           }
         });
     },
