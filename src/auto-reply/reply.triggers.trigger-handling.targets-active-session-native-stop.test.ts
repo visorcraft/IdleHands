@@ -38,7 +38,7 @@ afterAll(() => {
 installTriggerHandlingE2eTestHooks();
 
 const BASE_MESSAGE = {
-  Body: "hello",
+  Body: "run status check",
   From: "+1002",
   To: "+2000",
 } as const;
@@ -449,7 +449,7 @@ describe("trigger handling", () => {
 
         await getReplyFromConfig(
           {
-            Body: "hi",
+            Body: "please continue",
             From: "telegram:111",
             To: "telegram:111",
             ChatType: "direct",
