@@ -1,5 +1,5 @@
 {
-  "name": "idlehands",
+  "name": "@visorcraft/idlehands",
   "version": "4.0.0",
   "description": "Multi-channel AI gateway with extensible messaging integrations",
   "keywords": [],
