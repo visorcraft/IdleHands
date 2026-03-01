@@ -12,5 +12,9 @@
   },
   "dependencies": {
     "@visorcraft/idlehands": "workspace:*"
+  },
+  "private": true,
+  "publishConfig": {
+    "access": "restricted"
   }
 }
