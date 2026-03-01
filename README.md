@@ -1,6 +1,6 @@
 # 🤚 Idle Hands
 
-> *"The devil finds work for idle hands."*
+> _"The devil finds work for idle hands."_
 
 **Idle Hands** is an autonomous AI coding agent built for running **local LLMs**. It connects your self-hosted model to your codebase and lets it loose — reading files, writing code, running tests, executing commands — all without touching the cloud.
 
@@ -33,11 +33,13 @@ You write a task document — a simple markdown checklist:
 # TASKS.md
 
 ## Phase 1: Core refactor
+
 - [ ] Extract shared dispatcher from telegram callback handler
 - [ ] Wire retry_fast, retry_heavy, cancel through shared dispatcher
 - [ ] Add unit tests for all 3 dispatch actions
 
 ## Phase 2: Bot commands
+
 - [ ] Add /upgrade command to all bot surfaces
 - [ ] Add /dir command to view and set workspace
 - [x] Set up CI pipeline (already done)
@@ -107,9 +109,9 @@ Task → Discovery Agent (writes spec) → Review Agent (refines spec) → Imple
 
 **Phase 1: Discovery.** A planning agent reads your codebase and writes a detailed implementation spec to `.agents/tasks/`. It identifies what files need to change, what the approach should be, and how to verify the result. The discovery agent is **restricted from modifying source files** — it can only write the plan.
 
-**Phase 1.5: Requirements Review** *(optional)*. A review agent reads the plan, tightens it, catches edge cases, and improves it in-place. Think of it as an automated code review of the spec before any code is written.
+**Phase 1.5: Requirements Review** _(optional)_. A review agent reads the plan, tightens it, catches edge cases, and improves it in-place. Think of it as an automated code review of the spec before any code is written.
 
-**Phase 2: Implementation.** A fresh agent receives the task *and* the spec file. It follows the plan to write code, run tests, and verify the result. Because it has a clear spec to follow, it's far less likely to drift or loop.
+**Phase 2: Implementation.** A fresh agent receives the task _and_ the spec file. It follows the plan to write code, run tests, and verify the result. Because it has a clear spec to follow, it's far less likely to drift or loop.
 
 If discovery fails after retries, Anton automatically falls back to direct execution — the hand keeps moving.
 
@@ -167,14 +169,14 @@ Most AI coding tools give you a chat window and hope for the best. `/anton` give
 
 ### Commands
 
-| Command | Surface | Description |
-|---------|---------|-------------|
-| `/anton TASKS.md` | Telegram, Discord, TUI | Start the orchestrator on a task document |
-| `/anton status` | All | Show current task progress |
-| `/anton stop` | All | Stop after current task completes |
-| `idlehands anton run TASKS.md` | CLI | Run from terminal |
-| `idlehands anton run TASKS.md --mode preflight` | CLI | Run with discovery → implementation pipeline |
-| `idlehands anton run TASKS.md --dry-run` | CLI | Preview tasks without executing |
+| Command                                         | Surface                | Description                                  |
+| ----------------------------------------------- | ---------------------- | -------------------------------------------- |
+| `/anton TASKS.md`                               | Telegram, Discord, TUI | Start the orchestrator on a task document    |
+| `/anton status`                                 | All                    | Show current task progress                   |
+| `/anton stop`                                   | All                    | Stop after current task completes            |
+| `idlehands anton run TASKS.md`                  | CLI                    | Run from terminal                            |
+| `idlehands anton run TASKS.md --mode preflight` | CLI                    | Run with discovery → implementation pipeline |
+| `idlehands anton run TASKS.md --dry-run`        | CLI                    | Preview tasks without executing              |
 
 ---
 
@@ -197,6 +199,7 @@ idlehands orchestrator status
 ```
 
 Supports:
+
 - **Local and remote hosts** (SSH transport)
 - **Backend switching** (Vulkan, ROCm, CPU)
 - **Health probing** with configurable timeouts
@@ -295,19 +298,19 @@ See [`docs/SETUP_LOCAL_QWEN3_CODER_NEXT.md`](docs/SETUP_LOCAL_QWEN3_CODER_NEXT.m
 
 These work in **Telegram, Discord, TUI**, and every other connected chat surface:
 
-| Command | Description |
-|---------|-------------|
+| Command         | Description                     |
+| --------------- | ------------------------------- |
 | `/anton <file>` | Start autonomous task execution |
-| `/anton status` | Check orchestrator progress |
-| `/anton stop` | Stop after current task |
-| `/dir` | Show current workspace |
-| `/dir /path` | Set workspace directory |
-| `/upgrade` | Self-upgrade to latest version |
-| `/status` | Show session info |
-| `/model` | View/change active model |
-| `/new` | Start fresh session |
-| `/compact` | Compress context |
-| `/stop` | Cancel current operation |
+| `/anton status` | Check orchestrator progress     |
+| `/anton stop`   | Stop after current task         |
+| `/dir`          | Show current workspace          |
+| `/dir /path`    | Set workspace directory         |
+| `/upgrade`      | Self-upgrade to latest version  |
+| `/status`       | Show session info               |
+| `/model`        | View/change active model        |
+| `/new`          | Start fresh session             |
+| `/compact`      | Compress context                |
+| `/stop`         | Cancel current operation        |
 
 ---
 
@@ -344,13 +347,13 @@ src/
 
 ## 📜 Attribution
 
-Idle Hands is a fork of [OpenClaw](https://github.com/openclaw/openclaw), licensed under the Apache 2.0 License. See [LICENSE](LICENSE) for details.
+Idle Hands is a fork of [OpenClaw](https://github.com/openclaw/openclaw), licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
 ## 🎬
 
-> *"I'm not possessed! My hand is!"*
-> — Anton Tobias, *Idle Hands* (1999)
+> _"I'm not possessed! My hand is!"_
+> — Anton Tobias, _Idle Hands_ (1999)
 
 Your hand. Your model. Let it loose. 🤚
