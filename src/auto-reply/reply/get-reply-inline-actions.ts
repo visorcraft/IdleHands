@@ -407,6 +407,18 @@ export async function handleInlineActions(params: {
     return { kind: "reply", reply: commandResult.reply };
   }
 
+  // Fast-path for simple greetings so users get instant responses
+  // instead of waiting on long model turns.
+  const simpleBody = cleanedBody.trim().toLowerCase();
+  const isSimpleGreeting = ["hi", "hello", "hey", "yo", "sup", "hola"].includes(simpleBody);
+  if (isSimpleGreeting) {
+    typing.cleanup();
+    return {
+      kind: "reply",
+      reply: { text: "Hey 👋 I’m here. What do you want to work on?" },
+    };
+  }
+
   return {
     kind: "continue",
     directives,
