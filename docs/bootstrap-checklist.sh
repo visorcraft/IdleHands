@@ -85,7 +85,7 @@ echo
 
 echo "[5/6] Verifying template expectation reminder..."
 echo "[INFO] Ensure llama-server was started with:"
-echo "       --jinja --chat-template-file /home/<user>/.idlehands/templates/dqwen3.jinja"
+echo "       --jinja --chat-template-file /home/<user>/.idlehands/templates/qwen3.jinja"
 
 echo
 
