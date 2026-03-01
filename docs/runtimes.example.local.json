@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "default": "qwen3-coder-next-q6-local",
+  "models": [
+    {
+      "id": "qwen3-coder-next-q6-local",
+      "provider": "openai",
+      "baseURL": "http://<LLAMA_HOST>:8082/v1",
+      "apiKey": "<DUMMY_OR_ENV>",
+      "model": "qwen3-coder-next",
+      "temperature": 0.8,
+      "top_p": 0.95,
+      "max_tokens": 8192,
+      "timeout": 3600,
+      "connection_timeout": 3600,
+      "response_timeout": 3600,
+      "max_iterations": 200,
+      "no_think": true,
+      "readBudget": 999,
+      "toolSchemaMode": "native",
+      "toolResultTruncation": "off",
+      "stubMode": {
+        "enabled": true,
+        "allowlist": ["read_file", "search_files", "edit_file", "write_file", "exec"]
+      }
+    }
+  ],
+  "notes": {
+    "template": "llama-server must run with --jinja --chat-template-file /home/<user>/.idlehands/templates/dqwen3.jinja",
+    "endpoint": "OpenAI-compatible chat endpoint (/v1/chat/completions via baseURL /v1)",
+    "security": "Do not store real keys/tokens in this file; prefer env vars"
+  }
+}

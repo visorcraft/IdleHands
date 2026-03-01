@@ -1,0 +1,12 @@
+{
+  "name": "@idlehands/copilot-proxy",
+  "version": "2026.2.27",
+  "private": true,
+  "description": "IdleHands Copilot Proxy provider plugin",
+  "type": "module",
+  "idlehands": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "@idlehands/llm-task",
+  "version": "2026.2.27",
+  "private": true,
+  "description": "IdleHands JSON-only LLM task plugin",
+  "type": "module",
+  "idlehands": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
