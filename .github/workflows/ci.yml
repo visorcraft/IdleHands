@@ -25,8 +25,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Build
-        run: pnpm build
+      - name: Typecheck
+        run: pnpm tsgo
 
       - name: Test
         run: pnpm test
