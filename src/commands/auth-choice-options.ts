@@ -344,12 +344,24 @@ export function buildAuthChoiceGroups(params: { store: AuthProfileStore; include
     options.map((opt) => [opt.value, opt]),
   );
 
-  const groups = AUTH_CHOICE_GROUP_DEFS.map((group) => ({
+  const groupsUnsorted = AUTH_CHOICE_GROUP_DEFS.map((group) => ({
     ...group,
     options: group.choices
       .map((choice) => optionByValue.get(choice))
       .filter((opt): opt is AuthChoiceOption => Boolean(opt)),
   }));
+
+  const vllmGroup = groupsUnsorted.find((group) => group.value === "vllm");
+  const customGroup = groupsUnsorted.find((group) => group.value === "custom");
+  const alphabetical = groupsUnsorted
+    .filter((group) => group.value !== "vllm" && group.value !== "custom")
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  const groups = [
+    ...(vllmGroup ? [vllmGroup] : []),
+    ...alphabetical,
+    ...(customGroup ? [customGroup] : []), // second from bottom (skip remains very bottom)
+  ];
 
   const skipOption = params.includeSkip
     ? ({ value: "skip", label: "Skip for now" } satisfies AuthChoiceOption)
