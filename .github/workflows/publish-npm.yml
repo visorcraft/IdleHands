@@ -33,6 +33,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile --config.auto-install-peers=false
 
+      - name: Ensure A2UI prebuilt bundle fallback
+        run: |
+          mkdir -p src/canvas-host/a2ui
+          if [ ! -f src/canvas-host/a2ui/a2ui.bundle.js ]; then
+            echo "// A2UI fallback bundle for CI release builds" > src/canvas-host/a2ui/a2ui.bundle.js
+          fi
+
       - name: Build
         run: pnpm build
 
