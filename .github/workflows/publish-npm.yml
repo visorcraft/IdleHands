@@ -1,0 +1,45 @@
+name: publish-npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    env:
+      NPM_CONFIG_AUDIT: "false"
+      NPM_CONFIG_FUND: "false"
+      IDLEHANDS_QUIET_WARNINGS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Verify package contents
+        run: pnpm pack --dry-run
+
+      - name: Publish to npm (Trusted Publishing / OIDC)
+        run: pnpm publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

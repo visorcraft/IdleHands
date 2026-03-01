@@ -1,0 +1,12 @@
+{
+  "name": "@idlehands/telegram",
+  "version": "2026.2.27",
+  "private": true,
+  "description": "IdleHands Telegram channel plugin",
+  "type": "module",
+  "idlehands": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "runtime": {
+    "model": "qwen3-coder-next",
+    "endpoint": "http://<LLAMA_HOST>:8082/v1",
+    "api": "openai-completions"
+  },
+  "agent": {
+    "default": "task1",
+    "mode": {
+      "primary": "local"
+    },
+    "bootstrapMaxChars": 500,
+    "bootstrapTotalMaxChars": 1500,
+    "contextTokens": 200000,
+    "thinkingDefault": "off",
+    "toolResultTruncation": "off"
+  },
+  "skills": {
+    "maxSkillsInPrompt": 0,
+    "enablePromptQueue": false
+  },
+  "hooks": {
+    "enabled": true,
+    "requireToolGate": true,
+    "cooldownSec": 5,
+    "categories": ["safety", "secrets"]
+  },
+  "chat": {
+    "security": {
+      "allowlist": false
+    },
+    "native": "auto"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:1013",
+    "token": "<SET_IN_ENV_NOT_HERE>"
+  },
+  "session": {
+    "scope": "per-sender",
+    "reset": {
+      "enabled": true
+    }
+  },
+  "tools": {
+    "stubMode": {
+      "enabled": true,
+      "allowlist": ["read_file", "search_files", "edit_file", "write_file", "exec"]
+    }
+  },
+  "bots": {
+    "telegram": {
+      "token": "<SET_IN_ENV_NOT_HERE>",
+      "allowedUserIds": ["<USER_ID>"],
+      "streaming": {
+        "enabled": true,
+        "progressMode": true
+      },
+      "typing": {
+        "enabled": true,
+        "cooldownMs": 1000
+      }
+    }
+  }
+}

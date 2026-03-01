@@ -1,0 +1,125 @@
+{
+  "$schema": "https://docs.idlehands.ai/config-schema.json",
+  "_comment": "IdleHands config template for local llama-server with hybrid Mamba-Transformer models",
+  "_llama_server_flags": "--ctx-checkpoints 0 --cache-reuse 64 -np 4",
+
+  "models": {
+    "providers": {
+      "local": {
+        "baseUrl": "http://127.0.0.1:8082/v1",
+        "apiKey": "not-needed",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "your-model-id",
+            "name": "Your Model Name",
+            "reasoning": false,
+            "input": ["text"],
+            "cost": {
+              "input": 0,
+              "output": 0
+            },
+            "contextWindow": 200000,
+            "maxTokens": 16384
+          }
+        ],
+        "slotAffinity": {
+          "enabled": true,
+          "numSlots": 4
+        }
+      }
+    }
+  },
+
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "local/your-model-id"
+      },
+      "bootstrapMaxChars": 500,
+      "bootstrapTotalMaxChars": 1500,
+      "contextTokens": 200000,
+      "toolResultTruncation": "off",
+      "compaction": {
+        "mode": "safeguard",
+        "reserveTokens": 3000,
+        "keepRecentTokens": 2000,
+        "maxHistoryShare": 0.05,
+        "memoryFlush": {
+          "enabled": false
+        }
+      },
+      "thinkingDefault": "off",
+      "workspace": "/home/YOUR_USER",
+      "timeoutSeconds": 1800
+    }
+  },
+
+  "tools": {
+    "profile": "coding",
+    "deny": [
+      "browser",
+      "canvas",
+      "nodes",
+      "cron",
+      "gateway",
+      "agents_list",
+      "tts",
+      "image",
+      "sessions_spawn",
+      "subagents",
+      "web_search",
+      "web_fetch"
+    ],
+    "stubMode": {
+      "enabled": true,
+      "compactGuidance": true,
+      "fullSchemaTools": ["exec", "read", "write", "edit", "process"]
+    },
+    "elevated": {
+      "enabled": true,
+      "allowFrom": {
+        "discord": ["YOUR_DISCORD_USER_ID"]
+      }
+    },
+    "exec": {
+      "security": "full",
+      "ask": "off"
+    }
+  },
+
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto",
+    "restart": true,
+    "ownerAllowFrom": ["discord:YOUR_DISCORD_USER_ID"],
+    "ownerDisplay": "raw"
+  },
+
+  "channels": {
+    "discord": {
+      "enabled": true,
+      "token": "YOUR_DISCORD_BOT_TOKEN",
+      "groupPolicy": "allowlist",
+      "allowFrom": ["YOUR_DISCORD_USER_ID"],
+      "streaming": "partial",
+      "progressMode": true
+    }
+  },
+
+  "gateway": {
+    "mode": "local",
+    "auth": {
+      "mode": "token",
+      "token": "GENERATE_A_RANDOM_TOKEN"
+    }
+  },
+
+  "skills": {
+    "allowBundled": [],
+    "limits": {
+      "maxSkillsInPrompt": 0,
+      "maxSkillsPromptChars": 0
+    }
+  }
+}

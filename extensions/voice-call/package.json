@@ -1,0 +1,16 @@
+{
+  "name": "@idlehands/voice-call",
+  "version": "2026.2.27",
+  "description": "IdleHands voice-call plugin",
+  "type": "module",
+  "dependencies": {
+    "@sinclair/typebox": "0.34.48",
+    "ws": "^8.19.0",
+    "zod": "^4.3.6"
+  },
+  "idlehands": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

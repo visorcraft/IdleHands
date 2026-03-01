@@ -1,0 +1,15 @@
+{
+  "name": "@idlehands/memory-core",
+  "version": "2026.2.27",
+  "private": true,
+  "description": "IdleHands core memory search plugin",
+  "type": "module",
+  "peerDependencies": {
+    "idlehands": ">=2026.1.26"
+  },
+  "idlehands": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "@idlehands/minimax-portal-auth",
+  "version": "2026.2.27",
+  "private": true,
+  "description": "IdleHands MiniMax Portal OAuth provider plugin",
+  "type": "module",
+  "idlehands": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@idlehands/discord",
+  "version": "2026.2.27",
+  "description": "IdleHands Discord channel plugin",
+  "type": "module",
+  "idlehands": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

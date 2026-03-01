@@ -1,0 +1,27 @@
+{
+  "name": "@idlehands/line",
+  "version": "2026.2.27",
+  "private": true,
+  "description": "IdleHands LINE channel plugin",
+  "type": "module",
+  "idlehands": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "line",
+      "label": "LINE",
+      "selectionLabel": "LINE (Messaging API)",
+      "docsPath": "/channels/line",
+      "docsLabel": "line",
+      "blurb": "LINE Messaging API bot for Japan/Taiwan/Thailand markets.",
+      "order": 75,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@idlehands/line",
+      "localPath": "extensions/line",
+      "defaultChoice": "npm"
+    }
+  }
+}

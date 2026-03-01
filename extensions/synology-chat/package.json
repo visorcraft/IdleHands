@@ -1,0 +1,28 @@
+{
+  "name": "@idlehands/synology-chat",
+  "version": "2026.2.27",
+  "description": "Synology Chat channel plugin for IdleHands",
+  "type": "module",
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "idlehands": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "synology-chat",
+      "label": "Synology Chat",
+      "selectionLabel": "Synology Chat (Webhook)",
+      "docsPath": "/channels/synology-chat",
+      "docsLabel": "synology-chat",
+      "blurb": "Connect your Synology NAS Chat to IdleHands with full agent capabilities.",
+      "order": 90
+    },
+    "install": {
+      "npmSpec": "@idlehands/synology-chat",
+      "localPath": "extensions/synology-chat",
+      "defaultChoice": "npm"
+    }
+  }
+}
