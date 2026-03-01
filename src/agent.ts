@@ -861,7 +861,7 @@ export async function createSession(opts: {
     const { OpenAIClient: OAIClient } = await import('./client.js');
     if (!client.contentModeToolCalls && OAIClient.needsContentMode(modelName)) {
       client.contentModeToolCalls = true;
-      client.recordKnownPatternMatch();
+      client.recordKnownPatternMatch?.();
       if (cfg.verbose) {
         console.warn(
           `[info] Model "${modelName}" matched known content-mode pattern — using content-based tool calls`
