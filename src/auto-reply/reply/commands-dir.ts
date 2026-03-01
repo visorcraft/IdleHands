@@ -11,7 +11,7 @@ import type {
   CommandHandlerResult,
   HandleCommandsParams,
 } from "./commands-types.js";
-import { routeReply } from "./route-reply.js";
+import { isRoutableChannel, routeReply } from "./route-reply.js";
 
 export const handleDirCommand: CommandHandler = async (
   params: HandleCommandsParams,
@@ -31,12 +31,17 @@ export const handleDirCommand: CommandHandler = async (
   const to: string = params.ctx.OriginatingTo ?? params.command.from ?? params.command.to ?? "";
 
   const arg = body.slice("/dir".length).trim();
+  const canRoute = isRoutableChannel(channel);
 
   if (!arg) {
     // Print current workspace
     const currentDir = params.workspaceDir || "(not set)";
+    const text = `📂 Current workspace: \`${currentDir}\``;
+    if (!canRoute) {
+      return { shouldContinue: false, reply: { text } };
+    }
     await routeReply({
-      payload: { text: `📂 Current workspace: \`${currentDir}\`` },
+      payload: { text },
       channel,
       to,
       sessionKey: params.sessionKey,
@@ -58,8 +63,12 @@ export const handleDirCommand: CommandHandler = async (
   try {
     const stat = await fs.stat(resolved);
     if (!stat.isDirectory()) {
+      const text = `❌ Path exists but is not a directory: \`${resolved}\``;
+      if (!canRoute) {
+        return { shouldContinue: false, reply: { text } };
+      }
       await routeReply({
-        payload: { text: `❌ Path exists but is not a directory: \`${resolved}\`` },
+        payload: { text },
         channel,
         to,
         sessionKey: params.sessionKey,
@@ -70,8 +79,12 @@ export const handleDirCommand: CommandHandler = async (
       return { shouldContinue: false };
     }
   } catch {
+    const text = `❌ Directory not found: \`${resolved}\``;
+    if (!canRoute) {
+      return { shouldContinue: false, reply: { text } };
+    }
     await routeReply({
-      payload: { text: `❌ Directory not found: \`${resolved}\`` },
+      payload: { text },
       channel,
       to,
       sessionKey: params.sessionKey,
@@ -97,10 +110,12 @@ export const handleDirCommand: CommandHandler = async (
     // Update in-memory params so subsequent commands in the same turn see the new dir
     (params as { workspaceDir: string }).workspaceDir = resolved;
 
+    const text = `✅ Workspace set to: \`${resolved}\`\nActive for this session only.`;
+    if (!canRoute) {
+      return { shouldContinue: false, reply: { text } };
+    }
     await routeReply({
-      payload: {
-        text: `✅ Workspace set to: \`${resolved}\`\nActive for this session only.`,
-      },
+      payload: { text },
       channel,
       to,
       sessionKey: params.sessionKey,
@@ -110,8 +125,12 @@ export const handleDirCommand: CommandHandler = async (
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    const text = `❌ Failed to update workspace: ${msg}`;
+    if (!canRoute) {
+      return { shouldContinue: false, reply: { text } };
+    }
     await routeReply({
-      payload: { text: `❌ Failed to update workspace: ${msg}` },
+      payload: { text },
       channel,
       to,
       sessionKey: params.sessionKey,
