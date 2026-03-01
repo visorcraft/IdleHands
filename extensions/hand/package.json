@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/hand",
-  "version": "4.0.19",
+  "version": "4.0.20",
   "description": "Hand workflow tool plugin (typed pipelines + resumable approvals)",
   "type": "module",
   "idlehands": {
