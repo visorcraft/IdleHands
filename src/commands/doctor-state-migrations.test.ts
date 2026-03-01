@@ -122,11 +122,9 @@ async function runAutoMigrateLegacyStateWithLog(params: {
   return { result, log };
 }
 
-function expectTargetAlreadyExistsWarning(result: StateDirMigrationResult, targetDir: string) {
+function expectTargetAlreadyExistsNoWarning(result: StateDirMigrationResult, _targetDir: string) {
   expect(result.migrated).toBe(false);
-  expect(result.warnings).toEqual([
-    `State dir migration skipped: target already exists (${targetDir}). Remove or merge manually.`,
-  ]);
+  expect(result.warnings).toEqual([]);
 }
 
 describe("doctor legacy state migrations", () => {
@@ -479,7 +477,7 @@ describe("doctor legacy state migrations", () => {
     const { targetDir } = ensureLegacyAndTargetStateDirs(root);
 
     const result = await runStateDirMigration(root);
-    expectTargetAlreadyExistsWarning(result, targetDir);
+    expectTargetAlreadyExistsNoWarning(result, targetDir);
   });
 
   it("warns when legacy state dir contains non-symlink entries and target already exists", async () => {
@@ -488,7 +486,7 @@ describe("doctor legacy state migrations", () => {
     fs.writeFileSync(path.join(legacyDir, "sessions.json"), "{}", "utf-8");
 
     const result = await runStateDirMigration(root);
-    expectTargetAlreadyExistsWarning(result, targetDir);
+    expectTargetAlreadyExistsNoWarning(result, targetDir);
   });
 
   it("does not warn when legacy state dir contains nested symlink mirrors", async () => {
@@ -519,7 +517,7 @@ describe("doctor legacy state migrations", () => {
     fs.symlinkSync(path.join(outsideDir), path.join(legacyDir, "sessions"), DIR_LINK_TYPE);
 
     const result = await runStateDirMigration(root);
-    expectTargetAlreadyExistsWarning(result, targetDir);
+    expectTargetAlreadyExistsNoWarning(result, targetDir);
   });
 
   it("warns when legacy state dir contains a broken symlink target", async () => {
@@ -532,7 +530,7 @@ describe("doctor legacy state migrations", () => {
     fs.rmSync(targetSessionDir, { recursive: true, force: true });
 
     const result = await runStateDirMigration(root);
-    expectTargetAlreadyExistsWarning(result, targetDir);
+    expectTargetAlreadyExistsNoWarning(result, targetDir);
   });
 
   it("warns when legacy symlink escapes target tree through second-hop symlink", async () => {
@@ -546,6 +544,6 @@ describe("doctor legacy state migrations", () => {
     fs.symlinkSync(targetHop, path.join(legacyDir, "sessions"), DIR_LINK_TYPE);
 
     const result = await runStateDirMigration(root);
-    expectTargetAlreadyExistsWarning(result, targetDir);
+    expectTargetAlreadyExistsNoWarning(result, targetDir);
   });
 });

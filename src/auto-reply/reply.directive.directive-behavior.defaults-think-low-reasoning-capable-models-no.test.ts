@@ -92,7 +92,7 @@ async function runReasoningDefaultCase(params: {
 
   await getReplyFromConfig(
     {
-      Body: "hello",
+      Body: "run diagnostics",
       From: "+1004",
       To: "+2000",
     },
@@ -307,7 +307,7 @@ describe("directive behavior", () => {
 
       await getReplyFromConfig(
         {
-          Body: "hello",
+          Body: "run diagnostics",
           From: "+1004",
           To: "+2000",
           Provider: "whatsapp",
@@ -383,7 +383,7 @@ describe("directive behavior", () => {
 
       await getReplyFromConfig(
         {
-          Body: "hello",
+          Body: "run diagnostics",
           From: "discord:user:1004",
           To: "channel:general",
           Provider: "discord",
