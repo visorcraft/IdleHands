@@ -411,6 +411,15 @@ export async function runPreparedReply(
       defaultModel,
     });
   }
+
+  // Bare /new or /reset should only reset session + send notice.
+  // Do not run the model on a synthetic reset prompt, which can produce
+  // confusing random output unrelated to user intent.
+  if (isBareSessionReset) {
+    typing.cleanup();
+    return undefined;
+  }
+
   const sessionIdFinal = sessionId ?? crypto.randomUUID();
   const sessionFile = resolveSessionFilePath(
     sessionIdFinal,
