@@ -2,6 +2,13 @@
 
 Docs: https://docs.idlehands.ai
 
+## 4.0.19
+
+### Fixes
+
+- Anton workspace propagation (hard fix): gateway `agent` calls now forward `workspaceDir` through to `agentCommand`, and `agentCommand` now honors per-call `workspaceDir` before falling back to session/default workspace.
+- Anton CLI debugging support: `idlehands anton run` now supports `--workspace <dir>` so Anton preflight can be validated directly against a target workspace.
+
 ## 4.0.18
 
 ### Fixes

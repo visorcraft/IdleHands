@@ -90,6 +90,7 @@ export function registerOrchestratorAntonCommands(program: Command) {
     .option("--to <e164>", "Session routing recipient")
     .option("--timeout <seconds>", "Per-task timeout in seconds")
     .option("--mode <mode>", "Execution mode: direct or preflight", undefined)
+    .option("--workspace <dir>", "Workspace directory for spawned Anton agents")
     .option("--force", "Force lock takeover", false)
     .option("--dry-run", "Show tasks only", false)
     .action(async (taskFile, opts) => {
@@ -106,6 +107,7 @@ export function registerOrchestratorAntonCommands(program: Command) {
           force: Boolean(opts.force),
           dryRun: Boolean(opts.dryRun),
           mode: opts.mode,
+          workspaceDir: opts.workspace,
         });
       });
     });

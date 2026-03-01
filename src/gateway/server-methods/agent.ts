@@ -191,6 +191,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       groupSpace?: string;
       lane?: string;
       extraSystemPrompt?: string;
+      workspaceDir?: string;
       idempotencyKey: string;
       timeout?: number;
       bestEffortDeliver?: boolean;
@@ -210,6 +211,10 @@ export const agentHandlers: GatewayRequestHandlers = {
     let spawnedByValue =
       typeof request.spawnedBy === "string" ? request.spawnedBy.trim() : undefined;
     const inputProvenance = normalizeInputProvenance(request.inputProvenance);
+    const requestedWorkspaceDir =
+      typeof request.workspaceDir === "string" && request.workspaceDir.trim()
+        ? request.workspaceDir.trim()
+        : undefined;
     const cached = context.dedupe.get(`agent:${idem}`);
     if (cached) {
       respond(cached.ok, cached.payload, cached.error, {
@@ -404,6 +409,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         label: labelValue,
         spawnedBy: spawnedByValue,
         spawnDepth: entry?.spawnDepth,
+        workspaceDir: requestedWorkspaceDir ?? entry?.workspaceDir,
         channel: entry?.channel ?? request.channel?.trim(),
         groupId: resolvedGroupId ?? entry?.groupId,
         groupChannel: resolvedGroupChannel ?? entry?.groupChannel,
@@ -622,6 +628,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         runId,
         lane: request.lane,
         extraSystemPrompt: request.extraSystemPrompt,
+        workspaceDir: requestedWorkspaceDir,
         inputProvenance,
       },
       defaultRuntime,
