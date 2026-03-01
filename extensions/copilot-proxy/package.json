@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/copilot-proxy",
-  "version": "4.0.12",
+  "version": "4.0.13",
   "private": true,
   "description": "IdleHands Copilot Proxy provider plugin",
   "type": "module",

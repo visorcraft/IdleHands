@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/voice-call",
-  "version": "4.0.12",
+  "version": "4.0.13",
   "description": "IdleHands voice-call plugin",
   "type": "module",
   "dependencies": {

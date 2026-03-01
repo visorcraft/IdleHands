@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/twitch",
-  "version": "4.0.12",
+  "version": "4.0.13",
   "description": "IdleHands Twitch channel plugin",
   "type": "module",
   "dependencies": {

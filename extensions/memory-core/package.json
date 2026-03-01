@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/memory-core",
-  "version": "4.0.12",
+  "version": "4.0.13",
   "private": true,
   "description": "IdleHands core memory search plugin",
   "type": "module",

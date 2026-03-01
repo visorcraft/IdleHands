@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/memory-lancedb",
-  "version": "4.0.12",
+  "version": "4.0.13",
   "private": true,
   "description": "IdleHands LanceDB-backed long-term memory plugin with auto-recall/capture",
   "type": "module",
