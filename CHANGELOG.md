@@ -2,6 +2,12 @@
 
 Docs: https://docs.idlehands.ai
 
+## 4.0.16
+
+### Fixes
+
+- Upgrade/NPM source: force self-upgrade installs to use the official npmjs registry (`https://registry.npmjs.org`) to avoid `ETARGET` failures caused by misconfigured or lagging alternate registries under elevated (`sudo`) installs.
+
 ## 4.0.15
 
 ### Fixes

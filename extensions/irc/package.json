@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/irc",
-  "version": "4.0.15",
+  "version": "4.0.16",
   "description": "IdleHands IRC channel plugin",
   "type": "module",
   "idlehands": {
