@@ -292,10 +292,15 @@ export class TelegramConfirmProvider implements ConfirmationProvider {
     if (data.startsWith('action:')) {
       const actionType = data.slice('action:'.length);
       if (this.actionHandler) {
+        // For action callbacks, the handler returns a boolean indicating if handled
         const handled = await this.actionHandler(actionType, data);
-        if (handled) return true;
+        if (handled) {
+          return true;
+        }
       }
       // Fall through to default handling if no action handler or not handled
+      // But for action callbacks, we should return true to prevent the "Unknown action" message
+      return true;
     }
 
     // Format: c:<sid>:<aid>:a|r|d OR p:<sid>:<aid>:aa|ra|sN
