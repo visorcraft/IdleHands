@@ -129,7 +129,9 @@ function parsePendingTasks(markdown: string): ParsedTask[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     const m = line.match(/^(\s*)- \[ \] (.+)$/);
-    if (!m) { continue; }
+    if (!m) {
+      continue;
+    }
     tasks.push({ line: i + 1, indent: m[1] ?? "", text: (m[2] ?? "").trim() });
   }
   return tasks;
@@ -138,7 +140,9 @@ function parsePendingTasks(markdown: string): ParsedTask[] {
 function markTaskDone(markdown: string, lineNo: number): string {
   const lines = markdown.split(/\r?\n/);
   const idx = lineNo - 1;
-  if (idx < 0 || idx >= lines.length) { return markdown; }
+  if (idx < 0 || idx >= lines.length) {
+    return markdown;
+  }
   lines[idx] = (lines[idx] ?? "").replace(/^(\s*)- \[ \] /, "$1- [x] ");
   return `${lines.join("\n")}\n`;
 }
@@ -231,10 +235,14 @@ function buildImplementationPrompt(task: string, planFilePath: string): string {
 
 function formatDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) { return `${seconds}s`; }
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
   const minutes = Math.floor(seconds / 60);
   const secs = seconds % 60;
-  if (minutes < 60) { return `${minutes}m ${secs}s`; }
+  if (minutes < 60) {
+    return `${minutes}m ${secs}s`;
+  }
   const hours = Math.floor(minutes / 60);
   const mins = minutes % 60;
   return `${hours}h ${mins}m`;
@@ -292,7 +300,9 @@ export async function antonStatus(runtime: RuntimeEnv) {
   const s = await readState();
   if (!s.running) {
     runtime.log("Anton is idle.");
-    if (s.lastSummary) { runtime.log(s.lastSummary); }
+    if (s.lastSummary) {
+      runtime.log(s.lastSummary);
+    }
     return;
   }
   runtime.log(
@@ -317,7 +327,7 @@ async function loadAntonConfig(): Promise<AntonConfig> {
   try {
     const { loadConfig } = await import("../config/config.js");
     const cfg = loadConfig();
-    return (cfg as Record<string, unknown>).anton as AntonConfig ?? {};
+    return ((cfg as Record<string, unknown>).anton as AntonConfig) ?? {};
   } catch {
     return {};
   }
@@ -334,25 +344,37 @@ async function runAgentTask(args: {
   runtime: RuntimeEnv;
   deps: CliDeps;
   workspaceDir?: string;
-}) {
+}): Promise<{ text: string }> {
   const { agentCliCommand } = await import("./agent-via-gateway.js");
   const extraSystemPrompt = args.workspaceDir
     ? `Your working directory is: ${args.workspaceDir}\nAll file paths are relative to this directory. Use this as your cwd for all operations.`
     : undefined;
-  await agentCliCommand(
+  const result = await agentCliCommand(
     {
       message: args.message,
       agent: args.agent,
       to: args.to,
       sessionId: args.sessionId,
       timeout: args.timeout,
-      json: false,
+      json: true,
       deliver: false,
       extraSystemPrompt,
     },
     args.runtime,
     args.deps,
   );
+
+  const payloads =
+    result && typeof result === "object" && "result" in result
+      ? ((result as { result?: { payloads?: Array<{ text?: string }> } }).result?.payloads ?? [])
+      : [];
+  const text = payloads
+    .map((p) => (typeof p?.text === "string" ? p.text.trim() : ""))
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+
+  return { text };
 }
 
 // ─── Plan File Helpers ──────────────────────────────────────────────────────
@@ -372,6 +394,107 @@ async function isPlanFileValid(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+type DiscoveryResultPayload = {
+  status?: string;
+  filename?: string;
+  planMarkdown?: string;
+  plan?: string;
+};
+
+function extractJsonObject(text: string): DiscoveryResultPayload | null {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const tryParse = (candidate: string): DiscoveryResultPayload | null => {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (!parsed || typeof parsed !== "object") {
+        return null;
+      }
+      return parsed as DiscoveryResultPayload;
+    } catch {
+      return null;
+    }
+  };
+
+  const direct = tryParse(trimmed);
+  if (direct) {
+    return direct;
+  }
+
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fencedMatch?.[1]) {
+    const fenced = tryParse(fencedMatch[1].trim());
+    if (fenced) {
+      return fenced;
+    }
+  }
+
+  const first = trimmed.indexOf("{");
+  const last = trimmed.lastIndexOf("}");
+  if (first >= 0 && last > first) {
+    const sliced = tryParse(trimmed.slice(first, last + 1));
+    if (sliced) {
+      return sliced;
+    }
+  }
+
+  return null;
+}
+
+function extractPlanMarkdownFromText(text: string): string | undefined {
+  const fenced = text.match(/```(?:markdown|md)?\s*([\s\S]*?)```/i);
+  const candidate = fenced?.[1]?.trim() ?? text.trim();
+  if (candidate.length < 60) {
+    return undefined;
+  }
+  return candidate;
+}
+
+function normalizeDiscoveryFilename(
+  filename: string | undefined,
+  expectedPlanFile: string,
+): string {
+  const trimmed = filename?.trim();
+  if (!trimmed) {
+    return expectedPlanFile;
+  }
+  return path.resolve(trimmed);
+}
+
+function buildDiscoveryRepairPrompt(task: string, taskFile: string, planFilePath: string): string {
+  return `RETRY: your previous preflight response did not produce a valid plan file.
+
+You MUST complete these steps exactly:
+1) Write the implementation plan to: ${planFilePath}
+2) Verify the file exists and is non-empty
+3) Return ONLY strict JSON: {"status":"incomplete","filename":"${planFilePath}"}
+
+If task is already complete, return ONLY: {"status":"complete","filename":""}
+
+Do not include THOUGHT, markdown fences, or extra commentary.
+Task file: ${taskFile}
+Task: ${task}`;
+}
+
+async function tryPersistPlanFallback(params: {
+  planFile: string;
+  parsed: DiscoveryResultPayload | null;
+  rawText: string;
+}): Promise<boolean> {
+  const fromJson =
+    (typeof params.parsed?.planMarkdown === "string" ? params.parsed.planMarkdown : undefined) ??
+    (typeof params.parsed?.plan === "string" ? params.parsed.plan : undefined);
+  const planText = (fromJson?.trim() || extractPlanMarkdownFromText(params.rawText) || "").trim();
+  if (planText.length < 60) {
+    return false;
+  }
+  await fs.writeFile(params.planFile, `${planText}\n`, "utf8");
+  return await isPlanFileValid(params.planFile);
 }
 
 // ─── Discovery Phase ────────────────────────────────────────────────────────
@@ -412,7 +535,7 @@ async function runDiscoveryPhase(args: {
         sessionId,
       });
 
-      await runAgentTask({
+      const firstPass = await runAgentTask({
         message: buildDiscoveryPrompt(args.task.text, args.taskFile, planFile),
         sessionId,
         timeout: args.timeout,
@@ -423,24 +546,96 @@ async function runDiscoveryPhase(args: {
         workspaceDir: args.workspaceDir,
       });
 
-      // Check if the agent wrote a valid plan file
-      if (await isPlanFileValid(planFile)) {
+      const firstParsed = extractJsonObject(firstPass.text);
+      if ((firstParsed?.status ?? "").toLowerCase() === "complete") {
+        return { status: "complete" };
+      }
+
+      const declaredPlanFile = normalizeDiscoveryFilename(firstParsed?.filename, planFile);
+      if (await isPlanFileValid(declaredPlanFile)) {
         await args.notify({
           phase: "discovery_complete",
           index: args.taskNum,
           total: args.total,
           task: args.task.text,
-          planFile,
+          planFile: declaredPlanFile,
         });
-        return { status: "plan_ready", planFile };
+        return { status: "plan_ready", planFile: declaredPlanFile };
       }
 
-      // Agent may have determined task is already complete (no plan file written)
-      // We can't parse JSON from agent output easily, so if no plan file exists
-      // and the agent completed without error, treat as potentially complete.
-      // For safety, we'll still run implementation on it.
+      if (
+        (firstParsed?.status ?? "").toLowerCase() === "incomplete" &&
+        (await tryPersistPlanFallback({
+          planFile: declaredPlanFile,
+          parsed: firstParsed,
+          rawText: firstPass.text,
+        }))
+      ) {
+        await args.notify({
+          phase: "discovery_complete",
+          index: args.taskNum,
+          total: args.total,
+          task: args.task.text,
+          planFile: declaredPlanFile,
+        });
+        return { status: "plan_ready", planFile: declaredPlanFile };
+      }
+
+      // Redundancy pass: direct repair prompt on same attempt before counting retry.
+      const repairSessionId = `anton-discovery-repair-${Date.now()}-${args.taskNum}-${attempt}`;
+      await args.notify({
+        phase: "task_agent_spawned",
+        index: args.taskNum,
+        total: args.total,
+        task: `Discovery repair (attempt ${attempt + 1})`,
+        sessionId: repairSessionId,
+      });
+
+      const repairPass = await runAgentTask({
+        message: buildDiscoveryRepairPrompt(args.task.text, args.taskFile, declaredPlanFile),
+        sessionId: repairSessionId,
+        timeout: args.timeout,
+        agent: args.agent,
+        to: args.to,
+        runtime: args.runtime,
+        deps: args.deps,
+        workspaceDir: args.workspaceDir,
+      });
+
+      const repairParsed = extractJsonObject(repairPass.text);
+      if ((repairParsed?.status ?? "").toLowerCase() === "complete") {
+        return { status: "complete" };
+      }
+
+      const repairPlanFile = normalizeDiscoveryFilename(repairParsed?.filename, declaredPlanFile);
+      if (
+        (await isPlanFileValid(repairPlanFile)) ||
+        (await tryPersistPlanFallback({
+          planFile: repairPlanFile,
+          parsed: repairParsed,
+          rawText: repairPass.text,
+        }))
+      ) {
+        await args.notify({
+          phase: "discovery_complete",
+          index: args.taskNum,
+          total: args.total,
+          task: args.task.text,
+          planFile: repairPlanFile,
+        });
+        return { status: "plan_ready", planFile: repairPlanFile };
+      }
+
       if (attempt === args.maxRetries) {
-        return { status: "failed", error: "Discovery did not produce a valid plan file" };
+        const reason = "Discovery did not produce a valid plan file after primary + repair passes";
+        await args.notify({
+          phase: "discovery_failed",
+          index: args.taskNum,
+          total: args.total,
+          task: args.task.text,
+          error: reason,
+        });
+        return { status: "failed", error: reason };
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -578,7 +773,7 @@ export async function runAnton(args: {
   const defaultTimeout = String(
     Number.isFinite(args.timeoutSec) && (args.timeoutSec ?? 0) > 0
       ? args.timeoutSec
-      : cfg.agents?.defaults?.timeoutSeconds ?? taskTimeout,
+      : (cfg.agents?.defaults?.timeoutSeconds ?? taskTimeout),
   );
 
   await acquireLock(Boolean(args.force));
@@ -595,7 +790,9 @@ export async function runAnton(args: {
   });
 
   await notify({ phase: "start", taskFile: filePath, totalTasks: pending.length });
-  args.runtime.log(`[Anton] Mode: ${mode}${mode === "preflight" ? (requirementsReview ? " (with review)" : " (discovery → implementation)") : ""}`);
+  args.runtime.log(
+    `[Anton] Mode: ${mode}${mode === "preflight" ? (requirementsReview ? " (with review)" : " (discovery → implementation)") : ""}`,
+  );
 
   let completed = 0;
   let skipped = 0;
@@ -609,7 +806,9 @@ export async function runAnton(args: {
       }
 
       const task = pending[i];
-      if (!task) { continue; }
+      if (!task) {
+        continue;
+      }
       const taskNum = i + 1;
 
       await writeState({
@@ -659,7 +858,12 @@ export async function runAnton(args: {
             const updated = markTaskDone(latest, task.line);
             await fs.writeFile(filePath, updated, "utf8");
             completed += 1;
-            await notify({ phase: "task_complete", index: taskNum, total: pending.length, task: task.text });
+            await notify({
+              phase: "task_complete",
+              index: taskNum,
+              total: pending.length,
+              task: task.text,
+            });
             continue;
           }
 
@@ -725,7 +929,12 @@ export async function runAnton(args: {
         await fs.writeFile(filePath, updated, "utf8");
         completed += 1;
 
-        await notify({ phase: "task_complete", index: taskNum, total: pending.length, task: task.text });
+        await notify({
+          phase: "task_complete",
+          index: taskNum,
+          total: pending.length,
+          task: task.text,
+        });
       } catch (err) {
         skipped += 1;
         const errorMsg = err instanceof Error ? err.message : String(err);

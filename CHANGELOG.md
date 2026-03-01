@@ -2,6 +2,13 @@
 
 Docs: https://docs.idlehands.ai
 
+## 4.0.14
+
+### Fixes
+
+- Anton preflight reliability: add multi-pass discovery with structured JSON extraction, repair-pass retries, and fallback plan persistence so discovery can recover when models return malformed output or claim success without writing the plan file.
+- Anton preflight redundancy: when discovery reports `incomplete` but no plan file exists, Anton now validates declared paths, attempts deterministic plan recovery, and only advances when a non-empty plan file is verified.
+
 ## 4.0.13
 
 ### Fixes
