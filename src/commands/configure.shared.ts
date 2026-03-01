@@ -15,6 +15,7 @@ export const CONFIGURE_WIZARD_SECTIONS = [
   "daemon",
   "channels",
   "skills",
+  "anton",
   "health",
 ] as const;
 
@@ -65,6 +66,11 @@ export const CONFIGURE_SECTION_OPTIONS: Array<{
     hint: "Link WhatsApp/Telegram/etc and defaults",
   },
   { value: "skills", label: "Skills", hint: "Install/enable workspace skills" },
+  {
+    value: "anton",
+    label: "Anton",
+    hint: "Configure Anton task runner defaults",
+  },
   {
     value: "health",
     label: "Health check",

@@ -209,6 +209,95 @@ async function promptWebToolsConfig(
   };
 }
 
+async function promptAntonConfig(
+  nextConfig: IdleHandsConfig,
+  runtime: RuntimeEnv,
+): Promise<IdleHandsConfig> {
+  const existing = nextConfig.anton ?? {};
+  const existingPreflight = existing.preflight ?? {};
+
+  const mode = guardCancel(
+    await select<"direct" | "preflight">({
+      message: "Anton mode",
+      options: [
+        { value: "direct", label: "Direct", hint: "Implement tasks immediately" },
+        {
+          value: "preflight",
+          label: "Preflight",
+          hint: "Discovery → optional review → implementation",
+        },
+      ],
+      initialValue: existing.mode ?? "direct",
+    }),
+    runtime,
+  );
+
+  const taskTimeoutInput = guardCancel(
+    await text({
+      message: "Anton task timeout (seconds)",
+      initialValue: String(existing.taskTimeoutSec ?? 1200),
+      validate: (value) => {
+        const n = Number(value);
+        return Number.isInteger(n) && n > 0 ? undefined : "Enter a positive integer";
+      },
+    }),
+    runtime,
+  );
+
+  const approvalMode = guardCancel(
+    await select<"auto" | "yolo">({
+      message: "Anton approval mode",
+      options: [
+        { value: "auto", label: "Auto", hint: "Normal safety/approval flow" },
+        { value: "yolo", label: "Yolo", hint: "No confirmation mode" },
+      ],
+      initialValue: existing.approvalMode ?? "auto",
+    }),
+    runtime,
+  );
+
+  let preflight = existingPreflight;
+  if (mode === "preflight") {
+    const requirementsReview = guardCancel(
+      await confirm({
+        message: "Enable requirements review stage?",
+        initialValue: existingPreflight.requirementsReview ?? false,
+      }),
+      runtime,
+    );
+
+    const preflightMaxRetriesInput = guardCancel(
+      await text({
+        message: "Preflight max retries",
+        initialValue: String(existingPreflight.maxRetries ?? 2),
+        validate: (value) => {
+          const n = Number(value);
+          return Number.isInteger(n) && n >= 0 ? undefined : "Enter an integer ≥ 0";
+        },
+      }),
+      runtime,
+    );
+
+    preflight = {
+      ...existingPreflight,
+      enabled: true,
+      requirementsReview,
+      maxRetries: Number(preflightMaxRetriesInput),
+    };
+  }
+
+  return {
+    ...nextConfig,
+    anton: {
+      ...existing,
+      mode,
+      taskTimeoutSec: Number(taskTimeoutInput),
+      approvalMode,
+      preflight,
+    },
+  };
+}
+
 export async function runConfigureWizard(
   opts: ConfigureWizardParams,
   runtime: RuntimeEnv = defaultRuntime,
@@ -435,6 +524,10 @@ export async function runConfigureWizard(
         nextConfig = await setupSkills(nextConfig, wsDir, runtime, prompter);
       }
 
+      if (selected.includes("anton")) {
+        nextConfig = await promptAntonConfig(nextConfig, runtime);
+      }
+
       await persistConfig();
 
       if (selected.includes("daemon")) {
@@ -494,6 +587,11 @@ export async function runConfigureWizard(
           await persistConfig();
         }
 
+        if (choice === "anton") {
+          nextConfig = await promptAntonConfig(nextConfig, runtime);
+          await persistConfig();
+        }
+
         if (choice === "daemon") {
           if (!didConfigureGateway) {
             await promptDaemonPort();
@@ -534,8 +632,10 @@ export async function runConfigureWizard(
       basePath: nextConfig.gateway?.controlUi?.basePath,
     });
     // Try both new and old passwords since gateway may still have old config.
-    const newPassword = nextConfig.gateway?.auth?.password ?? process.env.IDLEHANDS_GATEWAY_PASSWORD;
-    const oldPassword = baseConfig.gateway?.auth?.password ?? process.env.IDLEHANDS_GATEWAY_PASSWORD;
+    const newPassword =
+      nextConfig.gateway?.auth?.password ?? process.env.IDLEHANDS_GATEWAY_PASSWORD;
+    const oldPassword =
+      baseConfig.gateway?.auth?.password ?? process.env.IDLEHANDS_GATEWAY_PASSWORD;
     const token = nextConfig.gateway?.auth?.token ?? process.env.IDLEHANDS_GATEWAY_TOKEN;
 
     let gatewayProbe = await probeGatewayReachable({
