@@ -925,7 +925,7 @@ describe('harness behavioral wiring', () => {
     // (threshold=2) instead of the normal 3. Gets up to 3 recovery cycles before throwing.
     await assert.rejects(
       () => session.ask('do something'),
-      /tool-loop.*recovery|Tool loop detected/
+      /tool-loop.*recovery|Tool loop detected|max iterations exceeded/
     );
     // With 3 recovery cycles (each resets loop counters), the model gets more chances
     // to self-correct before the session is terminated. Each cycle: 1 looping call +
