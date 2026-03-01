@@ -355,7 +355,7 @@ async function checkForUpdate(source: InstallSource): Promise<VersionInfo | null
 
 function detectServiceManager(): "systemd-user" | "systemd-system" | "none" {
   try {
-    const result = execSync("systemctl --user is-active idlehands-bot 2>/dev/null || true", {
+    const result = execSync("systemctl --user is-active idlehands-gateway.service 2>/dev/null || true", {
       encoding: "utf8",
       timeout: 5000,
     }).trim();
@@ -366,7 +366,7 @@ function detectServiceManager(): "systemd-user" | "systemd-system" | "none" {
     // not available
   }
   try {
-    const result = execSync("systemctl is-active idlehands-bot 2>/dev/null || true", {
+    const result = execSync("systemctl is-active idlehands-gateway.service 2>/dev/null || true", {
       encoding: "utf8",
       timeout: 5000,
     }).trim();
@@ -382,8 +382,8 @@ function detectServiceManager(): "systemd-user" | "systemd-system" | "none" {
 function scheduleServiceRestart(serviceManager: "systemd-user" | "systemd-system"): void {
   const restartCmd =
     serviceManager === "systemd-user"
-      ? "sleep 2 && systemctl --user restart idlehands-bot"
-      : "sleep 2 && sudo systemctl restart idlehands-bot";
+      ? "sleep 2 && systemctl --user restart idlehands-gateway.service"
+      : "sleep 2 && sudo systemctl restart idlehands-gateway.service";
   spawn("bash", ["-c", restartCmd], { detached: true, stdio: "ignore" }).unref();
 }
 
