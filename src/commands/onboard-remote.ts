@@ -6,7 +6,7 @@ import { resolveWideAreaDiscoveryDomain } from "../infra/widearea-dns.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 import { detectBinary } from "./onboard-helpers.js";
 
-const DEFAULT_GATEWAY_URL = "ws://127.0.0.1:18789";
+const DEFAULT_GATEWAY_URL = "ws://127.0.0.1:1013";
 
 function pickHost(beacon: GatewayBonjourBeacon): string | undefined {
   // Security: TXT is unauthenticated. Prefer the resolved service endpoint host.
@@ -16,7 +16,7 @@ function pickHost(beacon: GatewayBonjourBeacon): string | undefined {
 function buildLabel(beacon: GatewayBonjourBeacon): string {
   const host = pickHost(beacon);
   // Security: Prefer the resolved service endpoint port.
-  const port = beacon.port ?? beacon.gatewayPort ?? 18789;
+  const port = beacon.port ?? beacon.gatewayPort ?? 1013;
   const title = beacon.displayName ?? beacon.instanceName;
   const hint = host ? `${host}:${port}` : "host unknown";
   return `${title} (${hint})`;
@@ -94,7 +94,7 @@ export async function promptRemoteGatewayConfig(
 
   if (selectedBeacon) {
     const host = pickHost(selectedBeacon);
-    const port = selectedBeacon.port ?? selectedBeacon.gatewayPort ?? 18789;
+    const port = selectedBeacon.port ?? selectedBeacon.gatewayPort ?? 1013;
     if (host) {
       const mode = await prompter.select({
         message: "Connection method",
@@ -112,7 +112,7 @@ export async function promptRemoteGatewayConfig(
           [
             "Direct remote access defaults to TLS.",
             `Using: ${suggestedUrl}`,
-            "If your gateway is loopback-only, choose SSH tunnel and keep ws://127.0.0.1:18789.",
+            "If your gateway is loopback-only, choose SSH tunnel and keep ws://127.0.0.1:1013.",
           ].join("\n"),
           "Direct remote",
         );
