@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/mattermost",
-  "version": "4.0.20",
+  "version": "4.0.21",
   "description": "IdleHands Mattermost channel plugin",
   "type": "module",
   "idlehands": {

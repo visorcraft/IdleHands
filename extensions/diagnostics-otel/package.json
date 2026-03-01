@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/diagnostics-otel",
-  "version": "4.0.20",
+  "version": "4.0.21",
   "description": "IdleHands diagnostics OpenTelemetry exporter",
   "type": "module",
   "dependencies": {
