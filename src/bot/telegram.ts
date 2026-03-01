@@ -70,6 +70,8 @@ import { waitForModelEndpoint } from './model-endpoint.js';
 import { SessionManager, type ManagedSession } from './session-manager.js';
 import { registerRuntimeCommands, handleModelSelectCallback } from './telegram-commands.js';
 
+import { createActionDispatcher, createDefaultActionDispatcher, dispatchFromCallbackData } from './ux/action-dispatcher.js';
+
 // Escalation helpers shared with Discord bot
 
 const mentionRegexCache = new Map<string, RegExp>();
@@ -347,10 +349,33 @@ export async function startTelegramBot(
   }
 
   const bot = new Bot(token);
+  
+  // Create shared action dispatcher for Telegram
+  const telegramDispatcher = createDefaultActionDispatcher('telegram');
+  
   const sessions = new SessionManager(
     config,
     botConfig,
-    (chatId) => new TelegramConfirmProvider(bot, chatId, botConfig.confirm_timeout_sec ?? 300)
+    (chatId) => {
+      const provider = new TelegramConfirmProvider(bot, chatId, botConfig.confirm_timeout_sec ?? 300);
+      // Wire up the shared dispatcher to handle action callbacks
+      provider.setActionHandler(async (actionType, data) => {
+        const managed = sessions.get(chatId);
+        if (!managed) {
+          return false;
+        }
+        const result = await dispatchFromCallbackData(telegramDispatcher, data, {
+          managed,
+          platform: 'telegram',
+          context: {
+            from: managed.userId,
+            chat: { id: chatId }
+          }
+        });
+        return result.handled;
+      });
+      return provider;
+    }
   );
   const editIntervalMs = botConfig.edit_interval_ms ?? 1500;
   const replyToUserMessages = botConfig.reply_to_user_messages === true;
@@ -472,9 +497,11 @@ export async function startTelegramBot(
 
     const provider = managed.confirmProvider as TelegramConfirmProvider;
     const handled = await provider.handleCallback(ctx.callbackQuery.data);
-    await ctx
-      .answerCallbackQuery(handled ? undefined : { text: 'Unknown action.' })
-      .catch(() => {});
+    // For action callbacks, don't show "Unknown action" error if not handled by provider
+    // because the action handler might have processed it
+    if (!handled && !ctx.callbackQuery.data.startsWith('action:')) {
+      await ctx.answerCallbackQuery({ text: 'Unknown action.' }).catch(() => {});
+    }
   });
 
   // ---------------------------------------------------------------------------
