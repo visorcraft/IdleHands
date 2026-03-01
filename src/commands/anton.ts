@@ -390,10 +390,44 @@ async function ensurePlanDir(planDir: string) {
   await fs.mkdir(planDir, { recursive: true });
 }
 
+function looksLikeStatusJsonOnly(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    const keys = Object.keys(parsed).toSorted();
+    return keys.length <= 3 && keys.includes("status") && keys.includes("filename");
+  } catch {
+    return false;
+  }
+}
+
+function isUsefulPlanText(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 120) {
+    return false;
+  }
+  if (looksLikeStatusJsonOnly(trimmed)) {
+    return false;
+  }
+  const hasStructure =
+    /^#\s+/m.test(trimmed) ||
+    /\b(Implementation approach|What needs to change|Files to modify|How to verify)\b/i.test(
+      trimmed,
+    );
+  return hasStructure;
+}
+
 async function isPlanFileValid(filePath: string): Promise<boolean> {
   try {
     const stat = await fs.stat(filePath);
-    return stat.isFile() && stat.size > 10;
+    if (!stat.isFile() || stat.size < 20) {
+      return false;
+    }
+    const content = await fs.readFile(filePath, "utf8");
+    return isUsefulPlanText(content);
   } catch {
     return false;
   }
@@ -464,7 +498,7 @@ function extractJsonObject(text: string): DiscoveryResultPayload | null {
 function extractPlanMarkdownFromText(text: string): string | undefined {
   const fenced = text.match(/```(?:markdown|md)?\s*([\s\S]*?)```/i);
   const candidate = fenced?.[1]?.trim() ?? text.trim();
-  if (candidate.length < 60) {
+  if (!isUsefulPlanText(candidate)) {
     return undefined;
   }
   return candidate;
@@ -505,7 +539,7 @@ async function tryPersistPlanFallback(params: {
     (typeof params.parsed?.planMarkdown === "string" ? params.parsed.planMarkdown : undefined) ??
     (typeof params.parsed?.plan === "string" ? params.parsed.plan : undefined);
   const planText = (fromJson?.trim() || extractPlanMarkdownFromText(params.rawText) || "").trim();
-  if (planText.length < 60) {
+  if (!isUsefulPlanText(planText)) {
     return false;
   }
   await fs.writeFile(params.planFile, `${planText}\n`, "utf8");

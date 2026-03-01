@@ -2,6 +2,13 @@
 
 Docs: https://docs.idlehands.ai
 
+## 4.0.17
+
+### Fixes
+
+- Anton preflight plan validation: reject discovery artifacts that contain only status JSON (for example `{"status":"incomplete","filename":"..."}`) and require meaningful implementation-plan content before marking a plan as valid.
+- Anton preflight fallback hardening: prevent JSON-only discovery output from being persisted as a plan file during recovery; retry/repair continues until a real plan is produced or the task is skipped.
+
 ## 4.0.16
 
 ### Fixes
