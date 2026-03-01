@@ -26,7 +26,7 @@
     }
   ],
   "notes": {
-    "template": "llama-server must run with --jinja --chat-template-file /home/<user>/.idlehands/templates/dqwen3.jinja",
+    "template": "llama-server must run with --jinja --chat-template-file /home/<user>/.idlehands/templates/qwen3.jinja",
     "endpoint": "OpenAI-compatible chat endpoint (/v1/chat/completions via baseURL /v1)",
     "security": "Do not store real keys/tokens in this file; prefer env vars"
   }

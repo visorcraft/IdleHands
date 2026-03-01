@@ -174,7 +174,7 @@ export async function orchestratorInit(runtime: RuntimeEnv) {
         hostPolicy: ["local"],
         backendPolicy: ["vulkan"],
         startCmd:
-          "nohup llama-server -m {source} --port 8082 --host 0.0.0.0 --jinja --chat-template-file /home/<user>/.idlehands/templates/dqwen3.jinja {backend_args} > /tmp/llama-server.log 2>&1 &",
+          "nohup llama-server -m {source} --port 8082 --host 0.0.0.0 --jinja --chat-template-file /home/<user>/.idlehands/templates/qwen3.jinja {backend_args} > /tmp/llama-server.log 2>&1 &",
         probeCmd: 'curl -fsS http://127.0.0.1:8082/health | grep -q \'"status":"ok"\'',
         probeTimeoutSec: 60,
       },
