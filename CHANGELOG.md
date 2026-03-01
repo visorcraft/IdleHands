@@ -2,6 +2,13 @@
 
 Docs: https://docs.idlehands.ai
 
+## 4.0.15
+
+### Fixes
+
+- Anton preflight correctness: remove unsafe fallback that previously allowed direct implementation when discovery failed to produce a verified plan file.
+- Anton completion integrity: in preflight mode, Anton now verifies repository change count before marking a task complete, preventing false positives when implementation returns success without making code changes.
+
 ## 4.0.14
 
 ### Fixes
