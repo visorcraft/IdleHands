@@ -7,7 +7,7 @@
  */
 
 import type { OriginatingChannelType } from "../templating.js";
-import { routeReply } from "./route-reply.js";
+import { isRoutableChannel, routeReply } from "./route-reply.js";
 import type { CommandHandler, CommandHandlerResult, HandleCommandsParams } from "./commands-types.js";
 
 async function sendProgress(
@@ -50,6 +50,7 @@ export const handleAntonCommand: CommandHandler = async (
   const to: string =
     params.ctx.OriginatingTo ?? params.command.from ?? params.command.to ?? "";
 
+  const canRoute = isRoutableChannel(channel);
   const replyCtx = {
     channel,
     to,
@@ -71,7 +72,11 @@ export const handleAntonCommand: CommandHandler = async (
       exit: () => {},
     } as unknown as Parameters<typeof antonStatus>[0];
     await antonStatus(mockRuntime);
-    await sendProgress(replyCtx, lines.join("\n") || "Anton is idle.");
+    const text = lines.join("\n") || "Anton is idle.";
+    if (!canRoute) {
+      return { shouldContinue: false, reply: { text } };
+    }
+    await sendProgress(replyCtx, text);
     return { shouldContinue: false };
   }
 
@@ -85,7 +90,11 @@ export const handleAntonCommand: CommandHandler = async (
       exit: () => {},
     } as unknown as Parameters<typeof antonStop>[0];
     await antonStop(mockRuntime);
-    await sendProgress(replyCtx, lines.join("\n") || "Stop requested.");
+    const text = lines.join("\n") || "Stop requested.";
+    if (!canRoute) {
+      return { shouldContinue: false, reply: { text } };
+    }
+    await sendProgress(replyCtx, text);
     return { shouldContinue: false };
   }
 
@@ -100,11 +109,19 @@ export const handleAntonCommand: CommandHandler = async (
   try {
     const stat = await fs.stat(resolvedPath);
     if (!stat.isFile()) {
-      await sendProgress(replyCtx, `❌ Not a file: \`${resolvedPath}\``);
+      const text = `❌ Not a file: \`${resolvedPath}\``;
+      if (!canRoute) {
+        return { shouldContinue: false, reply: { text } };
+      }
+      await sendProgress(replyCtx, text);
       return { shouldContinue: false };
     }
   } catch {
-    await sendProgress(replyCtx, `❌ File not found: \`${resolvedPath}\``);
+    const text = `❌ File not found: \`${resolvedPath}\``;
+    if (!canRoute) {
+      return { shouldContinue: false, reply: { text } };
+    }
+    await sendProgress(replyCtx, text);
     return { shouldContinue: false };
   }
 
@@ -117,9 +134,12 @@ export const handleAntonCommand: CommandHandler = async (
   const deps = createDefaultDeps();
 
   // Send initial acknowledgement
-  await sendProgress(replyCtx, `🤚 **/anton** invoked on \`${pathMod.basename(resolvedPath)}\`\nStarting orchestrator...`);
+  const startText = `🤚 **/anton** invoked on \`${pathMod.basename(resolvedPath)}\`\nStarting orchestrator...`;
+  if (canRoute) {
+    await sendProgress(replyCtx, startText);
+  }
 
-  // Run Anton in background with progress pushed to chat
+  // Run Anton in background with progress pushed to chat (routable channels only)
   // We don't await this — it runs asynchronously and sends updates as it goes
   (async () => {
     try {
@@ -130,16 +150,22 @@ export const handleAntonCommand: CommandHandler = async (
         force: false,
         dryRun: false,
         workspaceDir: params.workspaceDir || undefined,
-        onProgress: async (event) => {
-          const message = formatProgressMessage(event);
-          await sendProgress(replyCtx, message);
-        },
+        ...(canRoute
+          ? {
+              onProgress: async (event) => {
+                const message = formatProgressMessage(event);
+                await sendProgress(replyCtx, message);
+              },
+            }
+          : {}),
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      await sendProgress(replyCtx, `❌ **Anton crashed**: ${msg}`);
+      if (canRoute) {
+        await sendProgress(replyCtx, `❌ **Anton crashed**: ${msg}`);
+      }
     }
   })();
 
-  return { shouldContinue: false };
+  return canRoute ? { shouldContinue: false } : { shouldContinue: false, reply: { text: startText } };
 };
