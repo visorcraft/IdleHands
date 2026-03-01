@@ -85,6 +85,7 @@ USER.md
 .tgz
 .idea
 *.tar.gz
+*.tgz
 
 # local tooling
 .serena/
