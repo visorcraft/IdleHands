@@ -39,12 +39,12 @@ def test_write_gallery_normal_output():
     with tempfile.TemporaryDirectory() as tmpdir:
         out = Path(tmpdir)
         items = [
-            {"prompt": "a lobster astronaut, golden hour", "file": "001-lobster.png"},
+            {"prompt": "a hand astronaut, golden hour", "file": "001-hand.png"},
             {"prompt": "a cozy reading nook", "file": "002-nook.png"},
         ]
         write_gallery(out, items)
         html = (out / "index.html").read_text()
-        assert "a lobster astronaut, golden hour" in html
-        assert 'src="001-lobster.png"' in html
+        assert "a hand astronaut, golden hour" in html
+        assert 'src="001-hand.png"' in html
         assert "002-nook.png" in html
 

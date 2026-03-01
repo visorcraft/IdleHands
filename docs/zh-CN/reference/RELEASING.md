@@ -111,7 +111,7 @@ x-i18n:
 - @idlehands/bluebubbles
 - @idlehands/diagnostics-otel
 - @idlehands/discord
-- @idlehands/lobster
+- @idlehands/hand
 - @idlehands/matrix
 - @idlehands/msteams
 - @idlehands/nextcloud-talk

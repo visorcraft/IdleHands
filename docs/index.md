@@ -5,7 +5,7 @@ read_when:
 title: "IdleHands"
 ---
 
-# IdleHands 🦞
+# IdleHands 🖐️
 
 <p align="center">
     <img
@@ -22,7 +22,7 @@ title: "IdleHands"
     />
 </p>
 
-> _"EXFOLIATE! EXFOLIATE!"_ — A space lobster, probably
+> _"EXFOLIATE! EXFOLIATE!"_ — A space hand, probably
 
 <p align="center">
   <strong>Any OS gateway for AI agents across WhatsApp, Telegram, Discord, iMessage, and more.</strong><br />

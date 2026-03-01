@@ -1,14 +1,14 @@
-# Lobster
+# Hand
 
-Lobster executes multi-step workflows with approval checkpoints. Use it when:
+Hand executes multi-step workflows with approval checkpoints. Use it when:
 
 - User wants a repeatable automation (triage, monitor, sync)
 - Actions need human approval before executing (send, post, delete)
 - Multiple tool calls should run as one deterministic operation
 
-## When to use Lobster
+## When to use Hand
 
-| User intent                                            | Use Lobster?                                  |
+| User intent                                            | Use Hand?                                  |
 | ------------------------------------------------------ | --------------------------------------------- |
 | "Triage my email"                                      | Yes — multi-step, may send replies            |
 | "Send a message"                                       | No — single action, use message tool directly |
@@ -90,7 +90,7 @@ Same as above, but halts for approval before returning.
 - **Resumable**: Use `resume` action with token to continue
 - **Structured output**: Always returns JSON envelope with `protocolVersion`
 
-## Don't use Lobster for
+## Don't use Hand for
 
 - Simple single-action requests (just use the tool directly)
 - Queries that need LLM interpretation mid-flow

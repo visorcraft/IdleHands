@@ -26,12 +26,12 @@ describe("stripHeartbeatToken", () => {
   });
 
   it("drops heartbeats with small junk in heartbeat mode", () => {
-    expect(stripHeartbeatToken("HEARTBEAT_OK 🦞", { mode: "heartbeat" })).toEqual({
+    expect(stripHeartbeatToken("HEARTBEAT_OK 🖐️", { mode: "heartbeat" })).toEqual({
       shouldSkip: true,
       text: "",
       didStrip: true,
     });
-    expect(stripHeartbeatToken(`🦞 ${HEARTBEAT_TOKEN}`, { mode: "heartbeat" })).toEqual({
+    expect(stripHeartbeatToken(`🖐️ ${HEARTBEAT_TOKEN}`, { mode: "heartbeat" })).toEqual({
       shouldSkip: true,
       text: "",
       didStrip: true,
