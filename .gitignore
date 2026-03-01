@@ -117,6 +117,7 @@ dist/protocol.schema.json
 **/.classpath
 **/.settings/
 **/.gradle/
+TASKS.md
 
 # Synthing
 **/.stfolder/
