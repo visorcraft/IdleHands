@@ -264,7 +264,7 @@ llama-server \
   -m /path/to/model.gguf \
   --port 8082 \
   --host 0.0.0.0 \
-  --chat-template-file /path/to/dqwen3.jinja \
+  --chat-template-file /path/to/qwen3.jinja \
   --jinja \
   -ngl 99 \
   -fa on \
@@ -282,7 +282,7 @@ llama-server \
 
 ### Key notes
 
-- **Template matters**: `dqwen3.jinja` is critical for proper tool-call generation with Qwen3-Coder models
+- **Template matters**: `qwen3.jinja` is critical for proper tool-call generation with Qwen3-Coder models
 - **KV cache quantization** (`-ctk q4_0 -ctv q4_0`): Keeps VRAM usage manageable for large contexts
 - **Flash attention** (`-fa on`): Required for performance
 - **Direct I/O** (`-dio`): Recommended for the visorcraft fork
