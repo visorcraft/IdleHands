@@ -319,9 +319,9 @@ const entries: SubCliEntry[] = [
           if (result.needsRestart && result.success) {
             console.log("\nℹ️  Upgrade installed. If you are running interactively, restart your current process/session to load the new binary.");
             console.log("Suggested commands:");
-            console.log("  systemctl --user restart idlehands-bot   # if using user service");
-            console.log("  idlehands gateway restart                 # if running gateway manually");
-            console.log("  hash -r && idlehands --version            # refresh shell command cache + verify");
+            console.log("  systemctl --user restart idlehands-gateway.service  # if using user service");
+            console.log("  idlehands gateway restart                           # if running gateway manually");
+            console.log("  hash -r && idlehands --version                      # refresh shell command cache + verify");
           }
         });
     },
