@@ -207,7 +207,7 @@ describe("agentCommand", () => {
     });
   });
 
-  it("uses the resumed session agent scope when sessionId resolves to another agent store", async () => {
+  it("treats explicit sessionId as isolated main-session transcript key", async () => {
     await withTempHome(async (home) => {
       const storePattern = path.join(home, "sessions", "{agentId}", "sessions.json");
       const execStore = path.join(home, "sessions", "exec", "sessions.json");
@@ -226,13 +226,13 @@ describe("agentCommand", () => {
       await agentCommand({ message: "resume me", sessionId: "session-exec-hook" }, runtime);
 
       const callArgs = vi.mocked(runEmbeddedPiAgent).mock.calls.at(-1)?.[0];
-      expect(callArgs?.sessionKey).toBe("agent:exec:hook:gmail:thread-1");
-      expect(callArgs?.agentId).toBe("exec");
-      expect(callArgs?.agentDir).toContain(`${path.sep}agents${path.sep}exec${path.sep}agent`);
+      expect(callArgs?.sessionKey).toBe("agent:main:main:sid:session-exec-hook");
+      expect(callArgs?.agentId).toBe("main");
+      expect(callArgs?.agentDir).toContain(`${path.sep}agents${path.sep}main${path.sep}agent`);
     });
   });
 
-  it("forwards resolved outbound session context when resuming by sessionId", async () => {
+  it("forwards derived outbound session context for explicit sessionId", async () => {
     await withTempHome(async (home) => {
       const storePattern = path.join(home, "sessions", "{agentId}", "sessions.json");
       const execStore = path.join(home, "sessions", "exec", "sessions.json");
@@ -254,8 +254,8 @@ describe("agentCommand", () => {
       expect(deliverCall?.opts.sessionKey).toBeUndefined();
       expect(deliverCall?.outboundSession).toEqual(
         expect.objectContaining({
-          key: "agent:exec:hook:gmail:thread-1",
-          agentId: "exec",
+          key: "agent:main:main:sid:session-exec-hook",
+          agentId: "main",
         }),
       );
     });

@@ -340,13 +340,6 @@ export async function runGreetingPromptForBareNewOrReset(params: {
 }) {
   const runEmbeddedPiAgentMock = getRunEmbeddedPiAgentMock();
   runEmbeddedPiAgentMock.mockClear();
-  runEmbeddedPiAgentMock.mockResolvedValue({
-    payloads: [{ text: "hello" }],
-    meta: {
-      durationMs: 1,
-      agentMeta: { sessionId: "s", provider: "p", model: "m" },
-    },
-  });
 
   const res = await params.getReplyFromConfig(
     {
@@ -358,12 +351,12 @@ export async function runGreetingPromptForBareNewOrReset(params: {
     {},
     makeCfg(params.home),
   );
+
+  // /new and /reset are native control commands; they should not force an
+  // immediate model run in the same turn.
   const text = Array.isArray(res) ? res[0]?.text : res?.text;
-  expect(text).toBe("hello");
-  expect(runEmbeddedPiAgentMock).toHaveBeenCalledOnce();
-  const prompt = runEmbeddedPiAgentMock.mock.calls.at(-1)?.[0]?.prompt ?? "";
-  expect(prompt).toContain("A new session was started via /new or /reset");
-  expect(prompt).toContain("Execute your Session Startup sequence now");
+  expect(text).toBeUndefined();
+  expect(runEmbeddedPiAgentMock).not.toHaveBeenCalled();
 }
 
 export function installTriggerHandlingE2eTestHooks() {
