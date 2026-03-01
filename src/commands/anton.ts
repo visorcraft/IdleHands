@@ -362,6 +362,7 @@ async function runAgentTask(args: {
       json: true,
       deliver: false,
       extraSystemPrompt,
+      workspaceDir: args.workspaceDir,
     },
     args.runtime,
     args.deps,
@@ -433,13 +434,34 @@ async function isPlanFileValid(filePath: string): Promise<boolean> {
   }
 }
 
-async function getGitChangedFileCount(cwd: string): Promise<number | null> {
+async function getGitChangedFileCount(
+  cwd: string,
+  ignorePaths: string[] = [],
+): Promise<number | null> {
   try {
     const { stdout } = await execFile("git", ["status", "--porcelain"], { cwd });
+    const ignores = ignorePaths
+      .map((p) => p.replace(/\\/g, "/").replace(/^\.\//, ""))
+      .filter(Boolean);
+
     return stdout
       .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean).length;
+      .map((line) => line.trimEnd())
+      .filter(Boolean)
+      .map((line) => {
+        const raw = line.slice(3).trim();
+        const renamed = raw.includes(" -> ") ? (raw.split(" -> ").at(-1) ?? raw) : raw;
+        return renamed.replace(/\\/g, "/").replace(/^\.\//, "");
+      })
+      .filter((file) => {
+        if (!file) {
+          return false;
+        }
+        if (file.startsWith(".agents/tasks/")) {
+          return false;
+        }
+        return !ignores.some((ignore) => file === ignore || file.startsWith(`${ignore}/`));
+      }).length;
   } catch {
     return null;
   }
@@ -597,7 +619,9 @@ async function runDiscoveryPhase(args: {
 
       const firstParsed = extractJsonObject(firstPass.text);
       if ((firstParsed?.status ?? "").toLowerCase() === "complete") {
-        return { status: "complete" };
+        throw new Error(
+          "Discovery claimed task already complete without a verifiable plan artifact; refusing auto-complete",
+        );
       }
 
       const declaredPlanFile = normalizeDiscoveryFilename(firstParsed?.filename, planFile);
@@ -653,7 +677,9 @@ async function runDiscoveryPhase(args: {
 
       const repairParsed = extractJsonObject(repairPass.text);
       if ((repairParsed?.status ?? "").toLowerCase() === "complete") {
-        return { status: "complete" };
+        throw new Error(
+          "Discovery repair claimed task complete without a verifiable plan artifact; refusing auto-complete",
+        );
       }
 
       const repairPlanFile = normalizeDiscoveryFilename(repairParsed?.filename, declaredPlanFile);
@@ -968,7 +994,9 @@ export async function runAnton(args: {
           : buildDirectTaskPrompt(task.text);
 
         const gitCwd = args.workspaceDir ? path.resolve(args.workspaceDir) : path.dirname(filePath);
-        const changedBefore = await getGitChangedFileCount(gitCwd);
+        const taskFileRel = path.relative(gitCwd, filePath).replace(/\\/g, "/");
+        const changeIgnores = taskFileRel.startsWith("..") ? [] : [taskFileRel];
+        const changedBefore = await getGitChangedFileCount(gitCwd, changeIgnores);
 
         await runAgentTask({
           message: implPrompt,
@@ -981,7 +1009,7 @@ export async function runAnton(args: {
           workspaceDir: args.workspaceDir,
         });
 
-        const changedAfter = await getGitChangedFileCount(gitCwd);
+        const changedAfter = await getGitChangedFileCount(gitCwd, changeIgnores);
         if (
           mode === "preflight" &&
           changedBefore !== null &&

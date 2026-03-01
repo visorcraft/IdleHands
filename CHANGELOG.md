@@ -2,6 +2,14 @@
 
 Docs: https://docs.idlehands.ai
 
+## 4.0.18
+
+### Fixes
+
+- Anton workspace propagation: spawned discovery/repair/implementation agents now pass `workspaceDir` through gateway invocation, so preflight and implementation run in the active target workspace instead of silently falling back to the default workspace.
+- Anton preflight integrity: reject unverified `status=complete` discovery claims (no auto-complete from discovery), requiring verifiable plan artifacts.
+- Anton completion guard hardening: repository-change validation now ignores Anton bookkeeping files (`TASKS*.md` task-list state and `.agents/tasks/*`) so bookkeeping edits cannot falsely count as implementation success.
+
 ## 4.0.17
 
 ### Fixes

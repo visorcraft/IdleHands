@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/whatsapp",
-  "version": "4.0.17",
+  "version": "4.0.18",
   "private": true,
   "description": "IdleHands WhatsApp channel plugin",
   "type": "module",
