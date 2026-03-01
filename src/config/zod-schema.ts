@@ -120,6 +120,43 @@ const MemorySchema = z
   .strict()
   .optional();
 
+const AntonPreflightSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    requirementsReview: z.boolean().optional(),
+    discoveryTimeoutSec: z.number().int().positive().optional(),
+    reviewTimeoutSec: z.number().int().positive().optional(),
+    maxRetries: z.number().int().nonnegative().optional(),
+    sessionMaxIterations: z.number().int().positive().optional(),
+    sessionTimeoutSec: z.number().int().positive().optional(),
+  })
+  .strict()
+  .optional();
+
+const AntonSchema = z
+  .object({
+    mode: z.union([z.literal("direct"), z.literal("preflight")]).optional(),
+    preflight: AntonPreflightSchema,
+    taskTimeoutSec: z.number().int().positive().optional(),
+    totalTimeoutSec: z.number().int().positive().optional(),
+    maxRetries: z.number().int().nonnegative().optional(),
+    taskMaxIterations: z.number().int().positive().optional(),
+    autoCommit: z.boolean().optional(),
+    verifyAi: z.boolean().optional(),
+    decompose: z.boolean().optional(),
+    skipOnFail: z.boolean().optional(),
+    skipOnBlocked: z.boolean().optional(),
+    rollbackOnFail: z.boolean().optional(),
+    scopeGuard: z.union([z.literal("lax"), z.literal("strict")]).optional(),
+    maxIdenticalFailures: z.number().int().positive().optional(),
+    approvalMode: z.union([z.literal("auto"), z.literal("yolo")]).optional(),
+    progressHeartbeatSec: z.number().int().positive().optional(),
+    progressEvents: z.boolean().optional(),
+    planDir: z.string().optional(),
+  })
+  .strict()
+  .optional();
+
 const HttpUrlSchema = z
   .string()
   .url()
@@ -691,6 +728,7 @@ export const IdleHandsSchema = z
       .strict()
       .optional(),
     memory: MemorySchema,
+    anton: AntonSchema,
     skills: z
       .object({
         allowBundled: z.array(z.string()).optional(),
