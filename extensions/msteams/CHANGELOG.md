@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.16
+
+### Changes
+
+- Version alignment with core IdleHands release numbers.
+
 ## 4.0.15
 
 ### Changes
