@@ -44,7 +44,7 @@ jobs:
         run: pnpm build
 
       - name: Verify package contents
-        run: pnpm pack --dry-run
+        run: npm pack --dry-run
 
       - name: Publish to npm (Trusted Publishing / OIDC)
         run: pnpm publish --access public --no-git-checks
