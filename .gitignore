@@ -121,3 +121,10 @@ TASKS.md
 
 # Synthing
 **/.stfolder/
+
+# Vim artifacts
+*~
+*.swp
+*.un~
+.*.swp
+.*.un~
