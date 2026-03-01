@@ -22,8 +22,8 @@ describe("model-selection", () => {
       expect(normalizeProviderId("OpenCode-Zen")).toBe("opencode");
       expect(normalizeProviderId("qwen")).toBe("qwen-portal");
       expect(normalizeProviderId("kimi-code")).toBe("kimi-coding");
-      expect(normalizeProviderId("bedrock")).toBe("amazon-bedrock");
-      expect(normalizeProviderId("aws-bedrock")).toBe("amazon-bedrock");
+      expect(normalizeProviderId("bedrock")).toBe("bedrock");
+      expect(normalizeProviderId("aws-bedrock")).toBe("aws-bedrock");
       expect(normalizeProviderId("amazon-bedrock")).toBe("amazon-bedrock");
     });
   });

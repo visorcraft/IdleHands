@@ -644,7 +644,7 @@ describe("applyExtraParamsToAgent", () => {
     expect(calls[0]?.transport).toBe("auto");
   });
 
-  it("disables prompt caching for non-Anthropic Bedrock models", () => {
+  it("does not apply cacheRetention to non-Anthropic Bedrock models", () => {
     const { calls, agent } = createOptionsCaptureAgent();
 
     applyExtraParamsToAgent(agent, undefined, "amazon-bedrock", "amazon.nova-micro-v1");
@@ -659,7 +659,7 @@ describe("applyExtraParamsToAgent", () => {
     void agent.streamFn?.(model, context, {});
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.cacheRetention).toBe("none");
+    expect(calls[0]?.cacheRetention).toBeUndefined();
   });
 
   it("keeps Anthropic Bedrock models eligible for provider-side caching", () => {
@@ -680,7 +680,7 @@ describe("applyExtraParamsToAgent", () => {
     expect(calls[0]?.cacheRetention).toBeUndefined();
   });
 
-  it("passes through explicit cacheRetention for Anthropic Bedrock models", () => {
+  it("does not pass cacheRetention through for Anthropic Bedrock models", () => {
     const { calls, agent } = createOptionsCaptureAgent();
     const cfg = {
       agents: {
@@ -708,7 +708,7 @@ describe("applyExtraParamsToAgent", () => {
     void agent.streamFn?.(model, context, {});
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.cacheRetention).toBe("long");
+    expect(calls[0]?.cacheRetention).toBeUndefined();
   });
 
   it("adds Anthropic 1M beta header when context1m is enabled for Opus/Sonnet", () => {

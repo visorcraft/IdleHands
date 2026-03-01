@@ -647,6 +647,20 @@ export const FIELD_HELP: Record<string, string> = {
     "When true, credentials are sent via the HTTP Authorization header even if alternate auth is possible. Use this only when your provider or proxy explicitly requires Authorization forwarding.",
   "models.providers.*.models":
     "Declared model list for a provider including identifiers, metadata, and optional compatibility/cost hints. Keep IDs exact to provider catalog values so selection and fallback resolve correctly.",
+  "models.bedrockDiscovery":
+    "Amazon Bedrock model discovery settings used to auto-sync available Bedrock models into the runtime catalog. Keep this disabled unless you need dynamic Bedrock inventory, because frequent discovery adds API calls and log noise.",
+  "models.bedrockDiscovery.enabled":
+    "Enable periodic Bedrock model discovery. Turn on only when Bedrock inventory changes often and you want auto-refresh instead of static model definitions.",
+  "models.bedrockDiscovery.region":
+    "AWS region used for Bedrock discovery calls (for example us-east-1). Set this to the region where your Bedrock models are provisioned.",
+  "models.bedrockDiscovery.providerFilter":
+    "Optional provider filter list for discovered Bedrock models (for example anthropic, amazon, meta) to reduce noise from providers you do not use.",
+  "models.bedrockDiscovery.refreshInterval":
+    "Refresh interval in seconds for Bedrock discovery polling. Use longer intervals to reduce API cost/noise, and shorter intervals only when rapid inventory updates are required.",
+  "models.bedrockDiscovery.defaultContextWindow":
+    "Fallback context window used when Bedrock discovery metadata omits token limits for a model.",
+  "models.bedrockDiscovery.defaultMaxTokens":
+    "Fallback max output tokens used when Bedrock discovery metadata does not provide output-token limits.",
   auth: "Authentication profile root used for multi-profile provider credentials and cooldown-based failover ordering. Keep profiles minimal and explicit so automatic failover behavior stays auditable.",
   "channels.slack.allowBots":
     "Allow bot-authored messages to trigger Slack replies (default: false).",
