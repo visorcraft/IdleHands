@@ -7,13 +7,13 @@ title: "Credits"
 
 ## The name
 
-IdleHands = CLAW + TARDIS, because every space lobster needs a time and space machine.
+IdleHands = CLAW + TARDIS, because every space hand needs a time and space machine.
 
 ## Credits
 
-- **Peter Steinberger** ([@steipete](https://x.com/steipete)) - Creator, lobster whisperer
+- **Peter Steinberger** ([@steipete](https://x.com/steipete)) - Creator, hand whisperer
 - **Mario Zechner** ([@badlogicc](https://x.com/badlogicgames)) - Pi creator, security pen tester
-- **Clawd** - The space lobster who demanded a better name
+- **Clawd** - The space hand who demanded a better name
 
 ## Core contributors
 
@@ -23,6 +23,6 @@ IdleHands = CLAW + TARDIS, because every space lobster needs a time and space ma
 
 ## License
 
-MIT - Free as a lobster in the ocean.
+MIT - Free as a hand in the ocean.
 
 > "We are all just playing with our own prompts." (An AI, probably high on tokens)

@@ -38,7 +38,7 @@ x-i18n:
   identity: {
     name: "Clawd",
     theme: "helpful assistant",
-    emoji: "🦞",
+    emoji: "🖐️",
   },
   agent: {
     workspace: "~/.idlehands/workspace",

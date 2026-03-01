@@ -7,8 +7,8 @@
     "library": "lucide"
   },
   "logo": {
-    "light": "/assets/pixel-lobster.svg",
-    "dark": "/assets/pixel-lobster.svg"
+    "light": "/assets/pixel-hand.svg",
+    "dark": "/assets/pixel-hand.svg"
   },
   "fonts": {
     "body": {
@@ -18,7 +18,7 @@
       "family": "DM Sans"
     }
   },
-  "favicon": "/assets/pixel-lobster.svg",
+  "favicon": "/assets/pixel-hand.svg",
   "colors": {
     "primary": "#FF5A36",
     "dark": "#FF5A36",
@@ -985,7 +985,7 @@
               {
                 "group": "Built-in tools",
                 "pages": [
-                  "tools/lobster",
+                  "tools/hand",
                   "tools/llm-task",
                   "tools/exec",
                   "tools/web",
@@ -1514,7 +1514,7 @@
               {
                 "group": "内置工具",
                 "pages": [
-                  "zh-CN/tools/lobster",
+                  "zh-CN/tools/hand",
                   "zh-CN/tools/llm-task",
                   "zh-CN/tools/exec",
                   "zh-CN/tools/web",

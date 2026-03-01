@@ -12,7 +12,7 @@ x-i18n:
   workflow: 15
 ---
 
-# IdleHands 🦞
+# IdleHands 🖐️
 
 <p align="center">
     <img

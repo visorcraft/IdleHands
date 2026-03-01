@@ -21,7 +21,7 @@ macOS 菜单栏应用将 WebChat UI 嵌入为原生 SwiftUI 视图。它连接�
 
 ## 启动和调试
 
-- 手动：Lobster 菜单 → "Open Chat"。
+- 手动：Hand 菜单 → "Open Chat"。
 - 测试时自动打开：
   ```bash
   dist/IdleHands.app/Contents/MacOS/IdleHands --webchat

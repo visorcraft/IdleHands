@@ -108,7 +108,7 @@ Current npm plugin list (update as needed):
 - @idlehands/diagnostics-otel
 - @idlehands/discord
 - @idlehands/feishu
-- @idlehands/lobster
+- @idlehands/hand
 - @idlehands/matrix
 - @idlehands/msteams
 - @idlehands/nextcloud-talk

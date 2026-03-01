@@ -2,9 +2,9 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { IdleHandsPluginApi } from "../../../src/plugins/types.js";
-import { resolveWindowsLobsterSpawn } from "./windows-spawn.js";
+import { resolveWindowsHandSpawn } from "./windows-spawn.js";
 
-type LobsterEnvelope =
+type HandEnvelope =
   | {
       ok: true;
       status: "ok" | "needs_approval" | "cancelled";
@@ -47,7 +47,7 @@ function resolveCwd(cwdRaw: unknown): string {
   return resolved;
 }
 
-async function runLobsterSubprocessOnce(params: {
+async function runHandSubprocessOnce(params: {
   execPath: string;
   argv: string[];
   cwd: string;
@@ -58,14 +58,14 @@ async function runLobsterSubprocessOnce(params: {
   const timeoutMs = Math.max(200, params.timeoutMs);
   const maxStdoutBytes = Math.max(1024, params.maxStdoutBytes);
 
-  const env = { ...process.env, LOBSTER_MODE: "tool" } as Record<string, string | undefined>;
+  const env = { ...process.env, HAND_MODE: "tool" } as Record<string, string | undefined>;
   const nodeOptions = env.NODE_OPTIONS ?? "";
   if (nodeOptions.includes("--inspect")) {
     delete env.NODE_OPTIONS;
   }
   const spawnTarget =
     process.platform === "win32"
-      ? resolveWindowsLobsterSpawn(execPath, argv, env)
+      ? resolveWindowsHandSpawn(execPath, argv, env)
       : { command: execPath, argv };
 
   return await new Promise<{ stdout: string }>((resolve, reject) => {
@@ -111,7 +111,7 @@ async function runLobsterSubprocessOnce(params: {
       const str = String(chunk);
       stdoutBytes += Buffer.byteLength(str, "utf8");
       if (stdoutBytes > maxStdoutBytes) {
-        failAndTerminate("lobster output exceeded maxStdoutBytes");
+        failAndTerminate("hand output exceeded maxStdoutBytes");
         return;
       }
       stdout += str;
@@ -122,7 +122,7 @@ async function runLobsterSubprocessOnce(params: {
     });
 
     const timer = setTimeout(() => {
-      failAndTerminate("lobster subprocess timed out");
+      failAndTerminate("hand subprocess timed out");
     }, timeoutMs);
 
     child.once("error", (err) => {
@@ -133,7 +133,7 @@ async function runLobsterSubprocessOnce(params: {
       if (code !== 0) {
         settle({
           ok: false,
-          error: new Error(`lobster failed (${code ?? "?"}): ${stderr.trim() || stdout.trim()}`),
+          error: new Error(`hand failed (${code ?? "?"}): ${stderr.trim() || stdout.trim()}`),
         });
         return;
       }
@@ -142,7 +142,7 @@ async function runLobsterSubprocessOnce(params: {
   });
 }
 
-function parseEnvelope(stdout: string): LobsterEnvelope {
+function parseEnvelope(stdout: string): HandEnvelope {
   const trimmed = stdout.trim();
 
   const tryParse = (input: string) => {
@@ -165,22 +165,22 @@ function parseEnvelope(stdout: string): LobsterEnvelope {
   }
 
   if (parsed === undefined) {
-    throw new Error("lobster returned invalid JSON");
+    throw new Error("hand returned invalid JSON");
   }
 
   if (!parsed || typeof parsed !== "object") {
-    throw new Error("lobster returned invalid JSON envelope");
+    throw new Error("hand returned invalid JSON envelope");
   }
 
   const ok = (parsed as { ok?: unknown }).ok;
   if (ok === true || ok === false) {
-    return parsed as LobsterEnvelope;
+    return parsed as HandEnvelope;
   }
 
-  throw new Error("lobster returned invalid JSON envelope");
+  throw new Error("hand returned invalid JSON envelope");
 }
 
-function buildLobsterArgv(action: string, params: Record<string, unknown>): string[] {
+function buildHandArgv(action: string, params: Record<string, unknown>): string[] {
   if (action === "run") {
     const pipeline = typeof params.pipeline === "string" ? params.pipeline : "";
     if (!pipeline.trim()) {
@@ -207,12 +207,12 @@ function buildLobsterArgv(action: string, params: Record<string, unknown>): stri
   throw new Error(`Unknown action: ${action}`);
 }
 
-export function createLobsterTool(api: IdleHandsPluginApi) {
+export function createHandTool(api: IdleHandsPluginApi) {
   return {
-    name: "lobster",
-    label: "Lobster Workflow",
+    name: "hand",
+    label: "Hand Workflow",
     description:
-      "Run Lobster pipelines as a local-first workflow runtime (typed JSON envelope + resumable approvals).",
+      "Run Hand pipelines as a local-first workflow runtime (typed JSON envelope + resumable approvals).",
     parameters: Type.Object({
       // NOTE: Prefer string enums in tool schemas; some providers reject unions/anyOf.
       action: Type.Unsafe<"run" | "resume">({ type: "string", enum: ["run", "resume"] }),
@@ -235,19 +235,19 @@ export function createLobsterTool(api: IdleHandsPluginApi) {
         throw new Error("action required");
       }
 
-      const execPath = "lobster";
+      const execPath = "hand";
       const cwd = resolveCwd(params.cwd);
       const timeoutMs = typeof params.timeoutMs === "number" ? params.timeoutMs : 20_000;
       const maxStdoutBytes =
         typeof params.maxStdoutBytes === "number" ? params.maxStdoutBytes : 512_000;
 
-      const argv = buildLobsterArgv(action, params);
+      const argv = buildHandArgv(action, params);
 
       if (api.runtime?.version && api.logger?.debug) {
-        api.logger.debug(`lobster plugin runtime=${api.runtime.version}`);
+        api.logger.debug(`hand plugin runtime=${api.runtime.version}`);
       }
 
-      const { stdout } = await runLobsterSubprocessOnce({
+      const { stdout } = await runHandSubprocessOnce({
         execPath,
         argv,
         cwd,

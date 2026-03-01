@@ -137,7 +137,7 @@ describe("runCronIsolatedAgentTurn", () => {
 
       vi.mocked(runSubagentAnnounceFlow).mockClear();
       vi.mocked(deps.sendMessageTelegram).mockClear();
-      mockEmbeddedAgentPayloads([{ text: "HEARTBEAT_OK 🦞" }]);
+      mockEmbeddedAgentPayloads([{ text: "HEARTBEAT_OK 🖐️" }]);
 
       const cfg = makeCfg(home, storePath);
       cfg.agents = {

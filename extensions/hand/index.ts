@@ -3,7 +3,7 @@ import type {
   IdleHandsPluginApi,
   IdleHandsPluginToolFactory,
 } from "../../src/plugins/types.js";
-import { createLobsterTool } from "./src/lobster-tool.js";
+import { createHandTool } from "./src/hand-tool.js";
 
 export default function register(api: IdleHandsPluginApi) {
   api.registerTool(
@@ -11,7 +11,7 @@ export default function register(api: IdleHandsPluginApi) {
       if (ctx.sandboxed) {
         return null;
       }
-      return createLobsterTool(api) as AnyAgentTool;
+      return createHandTool(api) as AnyAgentTool;
     }) as IdleHandsPluginToolFactory,
     { optional: true },
   );

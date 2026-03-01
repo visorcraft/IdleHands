@@ -21,12 +21,12 @@ vi.mock("node:child_process", () => ({
   spawn: (...args: unknown[]) => spawnState.spawn(...args),
 }));
 
-let createLobsterTool: typeof import("./lobster-tool.js").createLobsterTool;
+let createHandTool: typeof import("./hand-tool.js").createHandTool;
 
 function fakeApi(overrides: Partial<IdleHandsPluginApi> = {}): IdleHandsPluginApi {
   return {
-    id: "lobster",
-    name: "lobster",
+    id: "hand",
+    name: "hand",
     source: "test",
     config: {},
     pluginConfig: {},
@@ -63,14 +63,14 @@ function fakeCtx(overrides: Partial<IdleHandsPluginToolContext> = {}): IdleHands
   };
 }
 
-describe("lobster plugin tool", () => {
+describe("hand plugin tool", () => {
   let tempDir = "";
   const originalProcessState = snapshotPlatformPathEnv();
 
   beforeAll(async () => {
-    ({ createLobsterTool } = await import("./lobster-tool.js"));
+    ({ createHandTool } = await import("./hand-tool.js"));
 
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "idlehands-lobster-plugin-"));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "idlehands-hand-plugin-"));
   });
 
   afterEach(() => {
@@ -129,7 +129,7 @@ describe("lobster plugin tool", () => {
     });
   };
 
-  it("runs lobster and returns parsed envelope in details", async () => {
+  it("runs hand and returns parsed envelope in details", async () => {
     spawnState.queue.push({
       stdout: JSON.stringify({
         ok: true,
@@ -139,7 +139,7 @@ describe("lobster plugin tool", () => {
       }),
     });
 
-    const tool = createLobsterTool(fakeApi());
+    const tool = createHandTool(fakeApi());
     const res = await tool.execute("call1", {
       action: "run",
       pipeline: "noop",
@@ -156,7 +156,7 @@ describe("lobster plugin tool", () => {
       stdout: `noise before json\n${JSON.stringify(payload)}`,
     });
 
-    const tool = createLobsterTool(fakeApi());
+    const tool = createHandTool(fakeApi());
     const res = await tool.execute("call-noisy", {
       action: "run",
       pipeline: "noop",
@@ -167,12 +167,12 @@ describe("lobster plugin tool", () => {
   });
 
   it("requires action", async () => {
-    const tool = createLobsterTool(fakeApi());
+    const tool = createHandTool(fakeApi());
     await expect(tool.execute("call-action-missing", {})).rejects.toThrow(/action required/);
   });
 
   it("requires pipeline for run action", async () => {
-    const tool = createLobsterTool(fakeApi());
+    const tool = createHandTool(fakeApi());
     await expect(
       tool.execute("call-pipeline-missing", {
         action: "run",
@@ -181,7 +181,7 @@ describe("lobster plugin tool", () => {
   });
 
   it("requires token and approve for resume action", async () => {
-    const tool = createLobsterTool(fakeApi());
+    const tool = createHandTool(fakeApi());
     await expect(
       tool.execute("call-resume-token-missing", {
         action: "resume",
@@ -197,7 +197,7 @@ describe("lobster plugin tool", () => {
   });
 
   it("rejects unknown action", async () => {
-    const tool = createLobsterTool(fakeApi());
+    const tool = createHandTool(fakeApi());
     await expect(
       tool.execute("call-action-unknown", {
         action: "explode",
@@ -206,7 +206,7 @@ describe("lobster plugin tool", () => {
   });
 
   it("rejects absolute cwd", async () => {
-    const tool = createLobsterTool(fakeApi());
+    const tool = createHandTool(fakeApi());
     await expect(
       tool.execute("call2c", {
         action: "run",
@@ -217,7 +217,7 @@ describe("lobster plugin tool", () => {
   });
 
   it("rejects cwd that escapes the gateway working directory", async () => {
-    const tool = createLobsterTool(fakeApi());
+    const tool = createHandTool(fakeApi());
     await expect(
       tool.execute("call2d", {
         action: "run",
@@ -227,10 +227,10 @@ describe("lobster plugin tool", () => {
     ).rejects.toThrow(/must stay within/);
   });
 
-  it("rejects invalid JSON from lobster", async () => {
+  it("rejects invalid JSON from hand", async () => {
     spawnState.queue.push({ stdout: "nope" });
 
-    const tool = createLobsterTool(fakeApi());
+    const tool = createHandTool(fakeApi());
     await expect(
       tool.execute("call3", {
         action: "run",
@@ -241,18 +241,18 @@ describe("lobster plugin tool", () => {
 
   it("runs Windows cmd shims through Node without enabling shell", async () => {
     setProcessPlatform("win32");
-    const shimScriptPath = path.join(tempDir, "shim-dist", "lobster-cli.cjs");
-    const shimPath = path.join(tempDir, "shim-bin", "lobster.cmd");
+    const shimScriptPath = path.join(tempDir, "shim-dist", "hand-cli.cjs");
+    const shimPath = path.join(tempDir, "shim-bin", "hand.cmd");
     await createWindowsCmdShimFixture({
       shimPath,
       scriptPath: shimScriptPath,
-      shimLine: `"%dp0%\\..\\shim-dist\\lobster-cli.cjs" %*`,
+      shimLine: `"%dp0%\\..\\shim-dist\\hand-cli.cjs" %*`,
     });
     process.env.PATHEXT = ".CMD;.EXE";
     process.env.PATH = `${path.dirname(shimPath)};${process.env.PATH ?? ""}`;
     queueSuccessfulEnvelope();
 
-    const tool = createLobsterTool(fakeApi());
+    const tool = createHandTool(fakeApi());
     await tool.execute("call-win-shim", {
       action: "run",
       pipeline: "noop",
@@ -282,7 +282,7 @@ describe("lobster plugin tool", () => {
       return child;
     });
 
-    const tool = createLobsterTool(fakeApi());
+    const tool = createHandTool(fakeApi());
     await expect(
       tool.execute("call-win-no-retry", {
         action: "run",
@@ -298,10 +298,10 @@ describe("lobster plugin tool", () => {
       if (ctx.sandboxed) {
         return null;
       }
-      return createLobsterTool(api);
+      return createHandTool(api);
     };
 
     expect(factoryTool(fakeCtx({ sandboxed: true }))).toBeNull();
-    expect(factoryTool(fakeCtx({ sandboxed: false }))?.name).toBe("lobster");
+    expect(factoryTool(fakeCtx({ sandboxed: false }))?.name).toBe("hand");
   });
 });

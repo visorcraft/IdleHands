@@ -219,7 +219,7 @@ ${theme.muted("Docs:")} ${formatDocsLink("/cli/agent", "docs.idlehands.ai/cli/ag
         `
 ${theme.heading("Examples:")}
 ${formatHelpExamples([
-  ['idlehands agents set-identity --agent main --name "IdleHands" --emoji "🦞"', "Set name + emoji."],
+  ['idlehands agents set-identity --agent main --name "IdleHands" --emoji "🖐️"', "Set name + emoji."],
   ["idlehands agents set-identity --agent main --avatar avatars/idlehands.png", "Set avatar path."],
   [
     "idlehands agents set-identity --workspace ~/.idlehands/workspace --from-identity",

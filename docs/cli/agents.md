@@ -99,7 +99,7 @@ idlehands agents set-identity --workspace ~/.idlehands/workspace --from-identity
 Override fields explicitly:
 
 ```bash
-idlehands agents set-identity --agent main --name "IdleHands" --emoji "🦞" --avatar avatars/idlehands.png
+idlehands agents set-identity --agent main --name "IdleHands" --emoji "🖐️" --avatar avatars/idlehands.png
 ```
 
 Config sample:
@@ -112,8 +112,8 @@ Config sample:
         id: "main",
         identity: {
           name: "IdleHands",
-          theme: "space lobster",
-          emoji: "🦞",
+          theme: "space hand",
+          emoji: "🖐️",
           avatar: "avatars/idlehands.png",
         },
       },

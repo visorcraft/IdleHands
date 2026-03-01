@@ -172,7 +172,7 @@ alongside tools (for example, the voice-call plugin).
 
 Optional plugin tools:
 
-- [Lobster](/tools/lobster): typed workflow runtime with resumable approvals (requires the Lobster CLI on the gateway host).
+- [Hand](/tools/hand): typed workflow runtime with resumable approvals (requires the Hand CLI on the gateway host).
 - [LLM Task](/tools/llm-task): JSON-only LLM step for structured workflow output (optional schema validation).
 
 ## Tool inventory

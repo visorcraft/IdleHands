@@ -272,7 +272,7 @@ export async function launchIdleHandsChrome(
         name: profile.name,
         color: profile.color,
       });
-      log.info(`🦞 idlehands browser profile decorated (${profile.color})`);
+      log.info(`🖐️ idlehands browser profile decorated (${profile.color})`);
     } catch (err) {
       log.warn(`idlehands browser profile decoration failed: ${String(err)}`);
     }
@@ -307,7 +307,7 @@ export async function launchIdleHandsChrome(
 
   const pid = proc.pid ?? -1;
   log.info(
-    `🦞 idlehands browser started (${exe.kind}) profile "${profile.name}" on 127.0.0.1:${profile.cdpPort} (pid ${pid})`,
+    `🖐️ idlehands browser started (${exe.kind}) profile "${profile.name}" on 127.0.0.1:${profile.cdpPort} (pid ${pid})`,
   );
 
   return {

@@ -97,7 +97,7 @@ _clawdock_ensure_dir() {
 
   if [[ -n "$found_path" ]]; then
     echo ""
-    echo "🦞 Found IdleHands at: $found_path"
+    echo "🖐️ Found IdleHands at: $found_path"
     echo -n "   Use this location? [Y/n] "
     read -r response
     if [[ "$response" =~ ^[Nn] ]]; then
@@ -278,7 +278,7 @@ clawdock-fix-token() {
 clawdock-dashboard() {
   _clawdock_ensure_dir || return 1
 
-  echo "🦞 Getting dashboard URL..."
+  echo "🖐️ Getting dashboard URL..."
   local output exit_status url
   output=$(_clawdock_compose run --rm idlehands-cli dashboard --no-open 2>&1)
   exit_status=$?
@@ -354,7 +354,7 @@ clawdock-approve() {
 
 # Show all available clawdock helper commands
 clawdock-help() {
-  echo -e "\n${_CLR_BOLD}${_CLR_CYAN}🦞 ClawDock - Docker Helpers for IdleHands${_CLR_RESET}\n"
+  echo -e "\n${_CLR_BOLD}${_CLR_CYAN}🖐️ ClawDock - Docker Helpers for IdleHands${_CLR_RESET}\n"
 
   echo -e "${_CLR_BOLD}${_CLR_MAGENTA}⚡ Basic Operations${_CLR_RESET}"
   echo -e "  $(_cmd clawdock-start)       ${_CLR_DIM}Start the gateway${_CLR_RESET}"

@@ -58,7 +58,7 @@ idlehands agents set-identity --workspace ~/.idlehands/workspace --from-identity
 显式覆盖字段：
 
 ```bash
-idlehands agents set-identity --agent main --name "IdleHands" --emoji "🦞" --avatar avatars/idlehands.png
+idlehands agents set-identity --agent main --name "IdleHands" --emoji "🖐️" --avatar avatars/idlehands.png
 ```
 
 配置示例：
@@ -71,8 +71,8 @@ idlehands agents set-identity --agent main --name "IdleHands" --emoji "🦞" --a
         id: "main",
         identity: {
           name: "IdleHands",
-          theme: "space lobster",
-          emoji: "🦞",
+          theme: "space hand",
+          emoji: "🖐️",
           avatar: "avatars/idlehands.png",
         },
       },

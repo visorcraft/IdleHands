@@ -89,7 +89,7 @@ describe("browser chrome profile decoration", () => {
 
   it("best-effort writes name when color is invalid", async () => {
     const userDataDir = await createUserDataDir();
-    decorateIdleHandsProfile(userDataDir, { color: "lobster-orange" });
+    decorateIdleHandsProfile(userDataDir, { color: "hand-orange" });
     const def = await readDefaultProfileFromLocalState(userDataDir);
 
     expect(def.name).toBe(DEFAULT_IDLEHANDS_BROWSER_PROFILE_NAME);
