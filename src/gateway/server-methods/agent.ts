@@ -350,7 +350,7 @@ export const agentHandlers: GatewayRequestHandlers = {
     // Inject timestamp into user-authored messages that don't already have one.
     // Channel messages (Discord, Telegram, etc.) get timestamps via envelope
     // formatting in a separate code path — they never reach this handler.
-    // See: https://github.com/moltbot/moltbot/issues/3658
+    // Legacy behavior reference: timestamp fallback for follow-up ordering.
     if (!skipTimestampInjection) {
       message = injectTimestamp(message, timestampOptsFromConfig(cfg));
     }
