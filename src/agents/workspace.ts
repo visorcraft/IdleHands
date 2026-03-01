@@ -114,6 +114,18 @@ async function loadTemplate(name: string): Promise<string> {
       const content = await fs.readFile(templatePath, "utf-8");
       return stripFrontMatter(content);
     } catch {
+      // Fallback: in some builds only *.dev.md template variants may be present.
+      const devTemplatePath = name.endsWith(".md")
+        ? path.join(templateDir, name.replace(/\.md$/, ".dev.md"))
+        : "";
+      if (devTemplatePath) {
+        try {
+          const devContent = await fs.readFile(devTemplatePath, "utf-8");
+          return stripFrontMatter(devContent);
+        } catch {
+          // Fall through to error below.
+        }
+      }
       throw new Error(
         `Missing workspace template: ${name} (${templatePath}). Ensure docs/reference/templates are packaged.`,
       );
