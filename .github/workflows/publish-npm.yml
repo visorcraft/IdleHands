@@ -47,6 +47,13 @@ jobs:
         run: npm pack --dry-run
 
       - name: Publish to npm (Trusted Publishing / OIDC)
-        run: pnpm publish --access public --no-git-checks
+        run: |
+          PKG_NAME=$(node -p "require('./package.json').name")
+          PKG_VER=$(node -p "require('./package.json').version")
+          if npm view "$PKG_NAME@$PKG_VER" version >/dev/null 2>&1; then
+            echo "Version $PKG_NAME@$PKG_VER already published; skipping publish."
+            exit 0
+          fi
+          pnpm publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
