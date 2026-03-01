@@ -49,6 +49,7 @@ const GITHUB_OWNER = "visorcraft";
 const GITHUB_REPO = "idlehands";
 const NPM_SCOPED_PACKAGE = "@visorcraft/idlehands";
 const RELEASE_ASSET_PREFIX = "idlehands";
+const NPM_REGISTRY_URL = "https://registry.npmjs.org";
 
 type InstallSource = "github" | "npm" | "unknown";
 
@@ -133,8 +134,12 @@ function hasSudo(): boolean {
 function npmInstallGlobal(spec: string): void {
   const target = resolveInstallPaths();
   if (target) {
-    const args = ["install", "-g", "--prefix", target.prefix, spec];
-    const env = { ...process.env, npm_config_prefix: target.prefix };
+    const args = ["install", "-g", "--prefix", target.prefix, "--registry", NPM_REGISTRY_URL, spec];
+    const env = {
+      ...process.env,
+      npm_config_prefix: target.prefix,
+      npm_config_registry: NPM_REGISTRY_URL,
+    };
     if (needsElevation(target.prefix)) {
       if (!hasSudo()) {
         throw new Error(
@@ -151,7 +156,11 @@ function npmInstallGlobal(spec: string): void {
     execFileSync(target.npmBin, args, { stdio: "pipe", timeout: 120_000, env });
     return;
   }
-  execFileSync("npm", ["install", "-g", spec], { stdio: "pipe", timeout: 120_000 });
+  execFileSync("npm", ["install", "-g", "--registry", NPM_REGISTRY_URL, spec], {
+    stdio: "pipe",
+    timeout: 120_000,
+    env: { ...process.env, npm_config_registry: NPM_REGISTRY_URL },
+  });
 }
 
 function compareSemver(a: string, b: string): number {
@@ -270,7 +279,10 @@ async function npmVersionExists(version: string, timeoutMs = 5000): Promise<bool
   return Boolean(res && res.ok);
 }
 
-async function installFromGitHubRelease(version: string, onProgress: ProgressCallback): Promise<void> {
+async function installFromGitHubRelease(
+  version: string,
+  onProgress: ProgressCallback,
+): Promise<void> {
   const token = resolveGitHubToken();
   const releaseUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/v${version}`;
   const headers: Record<string, string> = {
@@ -355,10 +367,13 @@ async function checkForUpdate(source: InstallSource): Promise<VersionInfo | null
 
 function detectServiceManager(): "systemd-user" | "systemd-system" | "none" {
   try {
-    const result = execSync("systemctl --user is-active idlehands-gateway.service 2>/dev/null || true", {
-      encoding: "utf8",
-      timeout: 5000,
-    }).trim();
+    const result = execSync(
+      "systemctl --user is-active idlehands-gateway.service 2>/dev/null || true",
+      {
+        encoding: "utf8",
+        timeout: 5000,
+      },
+    ).trim();
     if (result === "active" || result === "inactive") {
       return "systemd-user";
     }
