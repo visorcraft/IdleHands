@@ -618,14 +618,21 @@ async function runDiscoveryPhase(args: {
       });
 
       const firstParsed = extractJsonObject(firstPass.text);
-      if ((firstParsed?.status ?? "").toLowerCase() === "complete") {
-        throw new Error(
-          "Discovery claimed task already complete without a verifiable plan artifact; refusing auto-complete",
-        );
-      }
 
+      // Always check the expected plan file first — the model may have written it
+      // even if it claims a different status.
       const declaredPlanFile = normalizeDiscoveryFilename(firstParsed?.filename, planFile);
-      if (await isPlanFileValid(declaredPlanFile)) {
+      if (await isPlanFileValid(planFile)) {
+        await args.notify({
+          phase: "discovery_complete",
+          index: args.taskNum,
+          total: args.total,
+          task: args.task.text,
+          planFile,
+        });
+        return { status: "plan_ready", planFile };
+      }
+      if (declaredPlanFile !== planFile && (await isPlanFileValid(declaredPlanFile))) {
         await args.notify({
           phase: "discovery_complete",
           index: args.taskNum,
@@ -676,10 +683,17 @@ async function runDiscoveryPhase(args: {
       });
 
       const repairParsed = extractJsonObject(repairPass.text);
-      if ((repairParsed?.status ?? "").toLowerCase() === "complete") {
-        throw new Error(
-          "Discovery repair claimed task complete without a verifiable plan artifact; refusing auto-complete",
-        );
+
+      // Check plan file first before rejecting status claims
+      if (await isPlanFileValid(declaredPlanFile)) {
+        await args.notify({
+          phase: "discovery_complete",
+          index: args.taskNum,
+          total: args.total,
+          task: args.task.text,
+          planFile: declaredPlanFile,
+        });
+        return { status: "plan_ready", planFile: declaredPlanFile };
       }
 
       const repairPlanFile = normalizeDiscoveryFilename(repairParsed?.filename, declaredPlanFile);
@@ -903,6 +917,18 @@ export async function runAnton(args: {
       try {
         let planFile: string | undefined;
 
+        // Snapshot git change count before any phase runs for this task
+        const gitCwdForBaseline = args.workspaceDir
+          ? path.resolve(args.workspaceDir)
+          : path.dirname(filePath);
+        const taskFileRelForBaseline = path
+          .relative(gitCwdForBaseline, filePath)
+          .replace(/\\/g, "/");
+        const baselineIgnores = taskFileRelForBaseline.startsWith("..")
+          ? []
+          : [taskFileRelForBaseline];
+        const changedBeforeTask = await getGitChangedFileCount(gitCwdForBaseline, baselineIgnores);
+
         if (mode === "preflight") {
           // ── Phase 1: Discovery ──
           const discoveryResult = await runDiscoveryPhase({
@@ -996,7 +1022,6 @@ export async function runAnton(args: {
         const gitCwd = args.workspaceDir ? path.resolve(args.workspaceDir) : path.dirname(filePath);
         const taskFileRel = path.relative(gitCwd, filePath).replace(/\\/g, "/");
         const changeIgnores = taskFileRel.startsWith("..") ? [] : [taskFileRel];
-        const changedBefore = await getGitChangedFileCount(gitCwd, changeIgnores);
 
         await runAgentTask({
           message: implPrompt,
@@ -1009,12 +1034,15 @@ export async function runAnton(args: {
           workspaceDir: args.workspaceDir,
         });
 
+        // Verify real repo changes exist relative to the pre-task baseline.
+        // Discovery may have already made changes, so we compare against
+        // the snapshot taken before discovery started.
         const changedAfter = await getGitChangedFileCount(gitCwd, changeIgnores);
         if (
           mode === "preflight" &&
-          changedBefore !== null &&
+          changedBeforeTask !== null &&
           changedAfter !== null &&
-          changedAfter <= changedBefore
+          changedAfter <= changedBeforeTask
         ) {
           throw new Error(
             "Implementation made no repository changes; refusing to mark task complete",

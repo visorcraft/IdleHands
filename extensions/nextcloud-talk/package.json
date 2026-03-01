@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/nextcloud-talk",
-  "version": "4.0.18",
+  "version": "4.0.19",
   "description": "IdleHands Nextcloud Talk channel plugin",
   "type": "module",
   "idlehands": {

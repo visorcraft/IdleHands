@@ -78,6 +78,7 @@ export const AgentParamsSchema = Type.Object(
     bestEffortDeliver: Type.Optional(Type.Boolean()),
     lane: Type.Optional(Type.String()),
     extraSystemPrompt: Type.Optional(Type.String()),
+    workspaceDir: Type.Optional(Type.String()),
     inputProvenance: Type.Optional(
       Type.Object(
         {

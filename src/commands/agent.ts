@@ -330,7 +330,9 @@ export async function agentCommand(
     sessionKey,
   });
   const workspaceDirRaw =
-    resolvedSessionEntry?.workspaceDir?.trim() || resolveAgentWorkspaceDir(cfg, sessionAgentId);
+    opts.workspaceDir?.trim() ||
+    resolvedSessionEntry?.workspaceDir?.trim() ||
+    resolveAgentWorkspaceDir(cfg, sessionAgentId);
   const agentDir = resolveAgentDir(cfg, sessionAgentId);
   const workspace = await ensureAgentWorkspace({
     dir: workspaceDirRaw,
