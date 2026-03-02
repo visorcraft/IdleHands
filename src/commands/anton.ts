@@ -736,6 +736,16 @@ async function getGitChangedFileCount(
   }
 }
 
+async function getGitHeadCommit(cwd: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFile("git", ["rev-parse", "HEAD"], { cwd });
+    const sha = stdout.trim();
+    return sha.length > 0 ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
 type DiscoveryResultPayload = {
   status?: string;
   filename?: string;
@@ -1260,6 +1270,7 @@ export async function runAnton(args: {
           ? []
           : [taskFileRelForBaseline];
         const changedBeforeTask = await getGitChangedFileCount(gitCwdForBaseline, baselineIgnores);
+        const headBeforeTask = await getGitHeadCommit(gitCwdForBaseline);
 
         if (mode === "preflight") {
           // ── Phase 1: Discovery ──
@@ -1385,12 +1396,15 @@ export async function runAnton(args: {
         // Discovery may have already made changes, so we compare against
         // the snapshot taken before discovery started.
         let changedAfter = await getGitChangedFileCount(gitCwd, changeIgnores);
+        let headAfterTask = await getGitHeadCommit(gitCwd);
 
         if (
           mode === "direct" &&
           changedBeforeTask !== null &&
           changedAfter !== null &&
           changedAfter <= changedBeforeTask &&
+          headBeforeTask !== null &&
+          headAfterTask === headBeforeTask &&
           !allowNoChanges
         ) {
           throw new Error(
@@ -1401,7 +1415,9 @@ export async function runAnton(args: {
           mode === "preflight" &&
           changedBeforeTask !== null &&
           changedAfter !== null &&
-          changedAfter <= changedBeforeTask
+          changedAfter <= changedBeforeTask &&
+          headBeforeTask !== null &&
+          headAfterTask === headBeforeTask
         ) {
           if (!allowNoChanges) {
             // One self-healing retry: force a tool-using implementation turn.
@@ -1432,7 +1448,13 @@ export async function runAnton(args: {
             });
 
             changedAfter = await getGitChangedFileCount(gitCwd, changeIgnores);
-            if (changedAfter !== null && changedAfter <= changedBeforeTask) {
+            headAfterTask = await getGitHeadCommit(gitCwd);
+            if (
+              changedAfter !== null &&
+              changedAfter <= changedBeforeTask &&
+              headBeforeTask !== null &&
+              headAfterTask === headBeforeTask
+            ) {
               throw new Error(
                 "Implementation made no repository changes after retry; refusing to mark task complete",
               );
