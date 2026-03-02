@@ -7,7 +7,7 @@ describe("shortenText", () => {
   });
 
   it("truncates and appends ellipsis when over limit", () => {
-    expect(shortenText("idlehands-status-output", 10)).toBe("idlehands-…");
+    expect(shortenText("idlehands-status-output", 10)).toBe("idlehands…");
   });
 
   it("counts multi-byte characters correctly", () => {
