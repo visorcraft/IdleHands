@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/zalo",
-  "version": "4.1.0",
+  "version": "4.2.0",
   "description": "IdleHands Zalo channel plugin",
   "type": "module",
   "dependencies": {
