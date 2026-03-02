@@ -306,6 +306,7 @@ These work in **Telegram, Discord, TUI**, and every other connected chat surface
 | `/dir`          | Show current workspace          |
 | `/dir /path`    | Set workspace directory         |
 | `/upgrade`      | Self-upgrade to latest version  |
+| `/update`       | Update dependencies and CLI     |
 | `/status`       | Show session info               |
 | `/model`        | View/change active model        |
 | `/new`          | Start fresh session             |
