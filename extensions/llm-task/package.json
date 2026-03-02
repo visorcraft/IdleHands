@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/llm-task",
-  "version": "4.0.21",
+  "version": "4.1.0",
   "private": true,
   "description": "IdleHands JSON-only LLM task plugin",
   "type": "module",
