@@ -71,6 +71,8 @@ export function createProgressStreamAdapter(
   let lastToolName = "tool";
   let lastToolCallId = "";
   let firstDeltaCalled = false;
+  // Track last partial text to compute delta (onPartialReply sends full text, not delta)
+  let lastPartialText = "";
 
   return {
     stream,
@@ -124,13 +126,19 @@ export function createProgressStreamAdapter(
     },
 
     onPartialReply: (payload) => {
-      if (payload.text) {
+      const fullText = payload.text ?? "";
+      // Compute delta - onPartialReply sends full accumulated text, not just the new part
+      const delta = fullText.startsWith(lastPartialText)
+        ? fullText.slice(lastPartialText.length)
+        : fullText;
+      lastPartialText = fullText;
+
+      if (delta) {
         if (!firstDeltaCalled) {
           firstDeltaCalled = true;
           hooks.onFirstDelta?.();
         }
-        // The progress stream tracks text internally via onToken
-        hooks.onToken?.(payload.text);
+        hooks.onToken?.(delta);
       }
     },
 
