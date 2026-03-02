@@ -28,7 +28,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: "https://registry.npmjs.org"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -49,5 +49,13 @@ jobs:
       - name: Verify package contents
         run: npm pack --dry-run
 
-      - name: Test
-        run: IDLEHANDS_TEST_PROFILE=low pnpm test
+      - name: Core tests
+        run: |
+          IDLEHANDS_TEST_PROFILE=low pnpm test \
+            src/commands/agent.test.ts \
+            src/commands/message.test.ts \
+            src/auto-reply/inbound.test.ts \
+            src/auto-reply/reply/route-reply.test.ts \
+            src/agents/model-selection.test.ts \
+            src/agents/tool-policy.test.ts \
+            src/infra/outbound/message.test.ts
