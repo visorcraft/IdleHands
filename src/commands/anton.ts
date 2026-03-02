@@ -232,12 +232,7 @@ function parsePendingTasksFromJson(jsonText: string): ParsedJsonTasks {
   if (data && typeof data === "object") {
     const root = data as Record<string, unknown>;
 
-    // Shape A: { name, details, subtasks: [...] }
-    if ("name" in root || "subtasks" in root) {
-      pushTask([], root);
-    }
-
-    // Shape B: { tasks: [ {name, details, subtasks: [...] } ] }
+    // Prefer explicit tasks[] when present; otherwise treat root object as one task.
     const tasks = root.tasks;
     if (Array.isArray(tasks)) {
       for (let i = 0; i < tasks.length; i++) {
@@ -247,6 +242,8 @@ function parsePendingTasksFromJson(jsonText: string): ParsedJsonTasks {
         }
         pushTask(["tasks", i], task as Record<string, unknown>);
       }
+    } else if ("name" in root || "subtasks" in root) {
+      pushTask([], root);
     }
   }
 
@@ -302,7 +299,14 @@ function allowsNoRepoChanges(taskText: string): boolean {
 
 async function ensureRepoCleanOrThrow(cwd: string) {
   const { stdout } = await execFile("git", ["status", "--porcelain"], { cwd });
-  if (stdout.trim().length > 0) {
+  const meaningful = stdout
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => line.slice(3).trim().replace(/\\/g, "/"))
+    .filter((file) => file && !file.startsWith(".agents/tasks/"));
+
+  if (meaningful.length > 0) {
     throw new Error(`Anton requires a clean git working tree. Dirty repo at: ${cwd}`);
   }
 }
@@ -429,7 +433,12 @@ function buildImplementationPrompt(
   ].join("\n");
 }
 
-function buildImplementationRetryPrompt(task: string, planFilePath: string): string {
+function buildImplementationRetryPrompt(
+  task: string,
+  planFilePath: string,
+  opts?: { skipTests?: boolean },
+): string {
+  const skipTests = Boolean(opts?.skipTests);
   return [
     "Your previous implementation attempt made zero repository changes.",
     `Task: ${task}`,
@@ -439,7 +448,9 @@ function buildImplementationRetryPrompt(task: string, planFilePath: string): str
     "Required sequence:",
     "1) Read the plan file.",
     "2) Use edit/write to modify repository files.",
-    "3) Optionally run verification.",
+    skipTests
+      ? "3) Skip tests for this task unless you changed executable code."
+      : "3) Optionally run verification.",
     "4) Return a short summary.",
     "",
     "If you only provide analysis/diff text without edit/write tool calls, this attempt fails.",
@@ -1399,7 +1410,9 @@ export async function runAnton(args: {
             await ensureRepoCleanOrThrow(repoCwd);
 
             await runAgentTask({
-              message: buildImplementationRetryPrompt(taskPromptText, planFile ?? ""),
+              message: buildImplementationRetryPrompt(taskPromptText, planFile ?? "", {
+                skipTests,
+              }),
               sessionId: retrySessionId,
               timeout: defaultTimeout,
               agent: args.agent,
