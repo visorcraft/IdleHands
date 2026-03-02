@@ -279,10 +279,19 @@ function parsePendingTasksFromJson(jsonText: string): ParsedJsonTasks {
     });
   };
 
-  if (data && typeof data === "object") {
+  if (Array.isArray(data)) {
+    // Shape C: [ { name, details, subtasks, ... }, ... ]
+    for (let i = 0; i < data.length; i++) {
+      const task = data[i];
+      if (!task || typeof task !== "object") {
+        continue;
+      }
+      pushTask([i], task as Record<string, unknown>);
+    }
+  } else if (data && typeof data === "object") {
     const root = data as Record<string, unknown>;
 
-    // Prefer explicit tasks[] when present; otherwise treat root object as one task.
+    // Shape B: { tasks: [ ... ] }
     const tasks = root.tasks;
     if (Array.isArray(tasks)) {
       for (let i = 0; i < tasks.length; i++) {
@@ -293,6 +302,7 @@ function parsePendingTasksFromJson(jsonText: string): ParsedJsonTasks {
         pushTask(["tasks", i], task as Record<string, unknown>);
       }
     } else if ("name" in root || "subtasks" in root) {
+      // Shape A: { name, details, subtasks }
       pushTask([], root);
     }
   }
