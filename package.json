@@ -1,6 +1,6 @@
 {
   "name": "@visorcraft/idlehands",
-  "version": "4.2.5",
+  "version": "4.2.6",
   "description": "Multi-channel AI gateway with extensible messaging integrations",
   "keywords": [],
   "homepage": "https://github.com/visorcraft/IdleHands#readme",
@@ -238,7 +238,7 @@
   },
   "packageManager": "pnpm@10.23.0",
   "pnpm": {
-    "minimumReleaseAge": 2880,
+    "minimumReleaseAge": 0,
     "overrides": {
       "hono": "4.11.10",
       "fast-xml-parser": "5.3.6",
