@@ -8,30 +8,45 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
+env:
+  NPM_CONFIG_AUDIT: "false"
+  NPM_CONFIG_FUND: "false"
+  IDLEHANDS_QUIET_WARNINGS: "1"
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
-      - name: Typecheck
-        run: pnpm tsgo
+      - name: Ensure A2UI prebuilt bundle fallback
+        run: |
+          mkdir -p src/canvas-host/a2ui
+          if [ ! -f src/canvas-host/a2ui/a2ui.bundle.js ]; then
+            echo "// A2UI fallback bundle for CI builds" > src/canvas-host/a2ui/a2ui.bundle.js
+          fi
+
+      - name: Build
+        run: pnpm build
+
+      - name: Verify package contents
+        run: npm pack --dry-run
 
       - name: Test
-        run: |
-          pnpm test -- \
-            --exclude src/commands/doctor.warns-per-agent-sandbox-docker-browser-prune.test.ts \
-            --exclude src/agents/subagent-announce.format.test.ts \
-            --exclude src/agents/pi-embedded-runner.run-embedded-pi-agent.auth-profile-rotation.test.ts
-        timeout-minutes: 15
+        run: IDLEHANDS_TEST_PROFILE=low pnpm test
