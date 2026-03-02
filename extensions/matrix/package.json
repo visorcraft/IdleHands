@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/matrix",
-  "version": "4.1.0",
+  "version": "4.2.0",
   "description": "IdleHands Matrix channel plugin",
   "type": "module",
   "dependencies": {

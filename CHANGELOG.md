@@ -2,6 +2,12 @@
 
 Docs: https://docs.idlehands.ai
 
+## 4.2.0
+
+### Changes
+
+- Version bump to 4.2.0 across core and all plugins.
+
 ## 4.0.19
 
 ### Fixes
