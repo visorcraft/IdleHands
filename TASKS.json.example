@@ -1,0 +1,62 @@
+{
+  "tasks": [
+    {
+      "name": "Example release task",
+      "details": "Cut a new bugfix release safely and verify all required checks.",
+      "status": "incomplete",
+      "done": false,
+      "subtasks": [
+        {
+          "name": "Run validation checks",
+          "details": "Run pnpm tsgo and relevant vitest suites for changed areas.",
+          "status": "incomplete",
+          "done": false
+        },
+        {
+          "name": "Prepare release changes",
+          "details": "Update version + changelog/release notes as needed.",
+          "status": "incomplete",
+          "done": false
+        },
+        {
+          "name": "Commit and push",
+          "details": "Commit scoped files only and push branch/main per workflow.",
+          "status": "incomplete",
+          "done": false
+        },
+        {
+          "name": "Tag and publish release",
+          "details": "Create tag, push tag, publish GitHub release.",
+          "status": "incomplete",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Example docs verification task",
+      "details": "Verify docs against code and update only factual mismatches.",
+      "status": "incomplete",
+      "done": false,
+      "subtasks": [
+        {
+          "name": "Build docs inventory",
+          "details": "Run docs inventory and duplicate candidate scripts.",
+          "status": "incomplete",
+          "done": false
+        },
+        {
+          "name": "Verify key claims",
+          "details": "Cross-check critical docs against source code and routes.",
+          "status": "incomplete",
+          "done": false
+        },
+        {
+          "name": "Run docs build",
+          "details": "Run docs:verify/build before marking task complete.",
+          "status": "incomplete",
+          "done": false
+        }
+      ]
+    }
+  ]
+}
