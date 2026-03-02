@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/line",
-  "version": "4.0.21",
+  "version": "4.1.0",
   "private": true,
   "description": "IdleHands LINE channel plugin",
   "type": "module",
