@@ -49,7 +49,12 @@ jobs:
       - name: Verify package contents
         run: npm pack --dry-run
 
-      - name: Core tests
+      - name: PR impacted tests (fast)
+        if: github.event_name == 'pull_request'
+        run: pnpm test:ci:pr
+
+      - name: Main branch core smoke tests
+        if: github.event_name == 'push'
         run: |
           IDLEHANDS_TEST_PROFILE=low pnpm test \
             src/commands/agent.test.ts \

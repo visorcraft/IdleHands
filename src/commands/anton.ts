@@ -182,43 +182,51 @@ function parsePendingTasksFromJson(jsonText: string): ParsedJsonTasks {
   const data = JSON.parse(jsonText) as unknown;
   const pending: ParsedTask[] = [];
 
-  const pushTask = (jsonPath: Array<string | number>, name: unknown, details: unknown) => {
-    const text = typeof name === "string" ? name.trim() : "";
+  const joinDetails = (parentDetails: unknown, subtasks: unknown[]): string | undefined => {
+    const details: string[] = [];
+    if (typeof parentDetails === "string" && parentDetails.trim()) {
+      details.push(parentDetails.trim());
+    }
+
+    const lines: string[] = [];
+    for (const sub of subtasks) {
+      if (!sub || typeof sub !== "object") {
+        continue;
+      }
+      const subObj = sub as Record<string, unknown>;
+      if (subObj.done === true) {
+        continue;
+      }
+      const name = typeof subObj.name === "string" ? subObj.name.trim() : "";
+      if (!name) {
+        continue;
+      }
+      const subDetails = typeof subObj.details === "string" ? subObj.details.trim() : "";
+      lines.push(subDetails ? `- ${name}: ${subDetails}` : `- ${name}`);
+    }
+
+    if (lines.length > 0) {
+      details.push(`Subtasks:\n${lines.join("\n")}`);
+    }
+
+    return details.length > 0 ? details.join("\n\n") : undefined;
+  };
+
+  const pushTask = (jsonPath: Array<string | number>, obj: Record<string, unknown>) => {
+    if (obj.done === true) {
+      return;
+    }
+    const text = typeof obj.name === "string" ? obj.name.trim() : "";
     if (!text) {
       return;
     }
+
+    const subtasks = Array.isArray(obj.subtasks) ? obj.subtasks : [];
     pending.push({
       text,
-      details: typeof details === "string" ? details.trim() : undefined,
+      details: joinDetails(obj.details, subtasks),
       jsonPath,
     });
-  };
-
-  const walkTaskObject = (obj: unknown, basePath: Array<string | number>) => {
-    if (!obj || typeof obj !== "object") {
-      return;
-    }
-    const taskObj = obj as Record<string, unknown>;
-    if (taskObj.done === true) {
-      return;
-    }
-
-    pushTask(basePath, taskObj.name, taskObj.details);
-
-    const subtasks = taskObj.subtasks;
-    if (Array.isArray(subtasks)) {
-      for (let i = 0; i < subtasks.length; i++) {
-        const sub = subtasks[i];
-        if (!sub || typeof sub !== "object") {
-          continue;
-        }
-        const subObj = sub as Record<string, unknown>;
-        if (subObj.done === true) {
-          continue;
-        }
-        pushTask([...basePath, "subtasks", i], subObj.name, subObj.details);
-      }
-    }
   };
 
   if (data && typeof data === "object") {
@@ -226,14 +234,18 @@ function parsePendingTasksFromJson(jsonText: string): ParsedJsonTasks {
 
     // Shape A: { name, details, subtasks: [...] }
     if ("name" in root || "subtasks" in root) {
-      walkTaskObject(root, []);
+      pushTask([], root);
     }
 
     // Shape B: { tasks: [ {name, details, subtasks: [...] } ] }
     const tasks = root.tasks;
     if (Array.isArray(tasks)) {
       for (let i = 0; i < tasks.length; i++) {
-        walkTaskObject(tasks[i], ["tasks", i]);
+        const task = tasks[i];
+        if (!task || typeof task !== "object") {
+          continue;
+        }
+        pushTask(["tasks", i], task as Record<string, unknown>);
       }
     }
   }
@@ -1359,10 +1371,10 @@ export async function runAnton(args: {
           changedBeforeTask !== null &&
           changedAfter !== null &&
           changedAfter <= changedBeforeTask &&
-          looksLikeVersionBumpTask(task.text)
+          !allowNoChanges
         ) {
           throw new Error(
-            "Version bump task made no repository changes; refusing to mark task complete",
+            "Implementation made no repository changes; refusing to mark task complete",
           );
         }
         if (
