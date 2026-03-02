@@ -164,73 +164,87 @@ function buildDirectTaskPrompt(task: string): string {
 }
 
 function buildDiscoveryPrompt(task: string, taskFile: string, planFilePath: string): string {
-  return `You are running PRE-FLIGHT for an autonomous coding orchestrator.
+  return `You are a coding assistant running discovery for a task orchestrator.
 
-## RULES
-- DO NOT implement code changes. DO NOT modify source files.
-- You may ONLY write to the plan file specified below.
-- Read the codebase to understand what needs to change.
+## YOUR JOB
+Analyze the codebase and write a detailed implementation plan to a file.
+You will NOT implement anything yourself — a separate agent will do that using your plan.
 
 ## TASK
 From task file: ${taskFile}
 Task: ${task}
 
-## DECISION FLOW
+## WHAT YOU MUST DO
 
-**If task is ALREADY COMPLETE** (you are CERTAIN it's done after checking with tools):
-→ Return ONLY: {"status":"complete","filename":""}
+1. Use the read tool to examine relevant source files, configs, tests, and docs.
+2. Understand what currently exists and what needs to change.
+3. Use the write tool to create the plan file at: ${planFilePath}
 
-**If task is INCOMPLETE or UNCERTAIN**:
-1. Read relevant source files to understand the current state
-2. Write a detailed implementation plan to: ${planFilePath}
-3. The plan MUST include:
-   - Task description (verbatim from above)
-   - What needs to change and why
-   - Implementation approach with specific steps
-   - Files to modify/create
-   - How to verify (test commands)
-4. Verify the file exists and is non-empty
-5. Return ONLY: {"status":"incomplete","filename":"${planFilePath}"}
+The plan file MUST contain:
+- The task description
+- What currently exists (files you read, current behavior)
+- What specifically needs to change and why
+- Step-by-step implementation instructions (specific enough that another agent can follow them)
+- Which files to modify or create, with the exact changes needed
+- How to verify the changes work (test commands, expected output)
 
-## OUTPUT
-Return ONLY the JSON object. No markdown fences. No explanation.`;
+4. After writing the plan file, return ONLY this JSON:
+{"status":"incomplete","filename":"${planFilePath}"}
+
+If you are CERTAIN the task is already complete (you verified with tools), return:
+{"status":"complete","filename":""}
+
+## IMPORTANT
+- You MUST use tools (read, exec, write). Do not skip straight to returning JSON.
+- Do not modify any source files other than the plan file above.
+- The quality of your plan directly determines whether the task succeeds.`;
 }
 
 function buildReviewPrompt(planFilePath: string): string {
-  return `Review this implementation plan and improve it:
-${planFilePath}
+  return `You are reviewing an implementation plan written by another agent.
 
-Treat it as written by a junior developer. Look for:
-- Missing edge cases
-- Opportunities to reuse existing code
-- Unclear or ambiguous steps
-- Missing test scenarios
+1. Use the read tool to open: ${planFilePath}
+2. Read the plan carefully. Check for:
+   - Missing edge cases or unclear steps
+   - Opportunities to reuse existing code
+   - Missing test scenarios or verification steps
+   - Whether the file paths and change descriptions are specific enough for another agent to follow
+3. Use the write tool to update the SAME file in-place with your improvements.
+4. After updating, return: {"status":"ready","filename":"${planFilePath}"}
 
-Update the SAME file in-place with your improvements.
-
-After review, return ONLY:
-{"status":"ready","filename":"${planFilePath}"}
-
-Do not return status=ready unless the file exists and has content.
-Return JSON only. No markdown fences. No commentary.`;
+Do not skip reading the file. Do not return JSON without first reading and updating the plan.`;
 }
 
 function buildImplementationPrompt(task: string, planFilePath: string): string {
   return [
-    "You are implementing a task from a managed checklist.",
-    "A planning agent has already analyzed the codebase and written a detailed spec.",
+    `Complete this task: ${task}`,
     "",
+    `An implementation plan is available at: ${planFilePath}`,
+    "Read it first, then follow its instructions.",
+    "",
+    "You MUST use the edit or write tool to modify the actual source files.",
+    "Describing changes in text or showing diffs without applying them does NOT count.",
+    "Do not ask for confirmation — apply the changes now.",
+    "",
+    "After making the edits, run any verification steps from the plan.",
+    "Then return a brief summary of what you changed.",
+  ].join("\n");
+}
+
+function buildImplementationRetryPrompt(task: string, planFilePath: string): string {
+  return [
+    "Your previous implementation attempt made zero repository changes.",
     `Task: ${task}`,
+    `Plan file: ${planFilePath}`,
     "",
-    `Implementation plan: ${planFilePath}`,
+    "You must now perform actual file edits in this turn.",
+    "Required sequence:",
+    "1) Read the plan file.",
+    "2) Use edit/write to modify repository files.",
+    "3) Optionally run verification.",
+    "4) Return a short summary.",
     "",
-    "Rules:",
-    "1) Read the plan file FIRST — it contains the implementation approach.",
-    "2) Follow the plan precisely. Make the code changes specified.",
-    "3) Run the verification steps from the plan.",
-    "4) Return a concise completion summary.",
-    "",
-    "Do not deviate from the plan unless you find a clear error in it.",
+    "If you only provide analysis/diff text without edit/write tool calls, this attempt fails.",
   ].join("\n");
 }
 
@@ -538,18 +552,18 @@ function normalizeDiscoveryFilename(
 }
 
 function buildDiscoveryRepairPrompt(task: string, taskFile: string, planFilePath: string): string {
-  return `RETRY: your previous preflight response did not produce a valid plan file.
+  return `Your previous attempt did not produce a valid plan file. Try again.
 
-You MUST complete these steps exactly:
-1) Write the implementation plan to: ${planFilePath}
-2) Verify the file exists and is non-empty
-3) Return ONLY strict JSON: {"status":"incomplete","filename":"${planFilePath}"}
-
-If task is already complete, return ONLY: {"status":"complete","filename":""}
-
-Do not include THOUGHT, markdown fences, or extra commentary.
 Task file: ${taskFile}
-Task: ${task}`;
+Task: ${task}
+
+You MUST:
+1. Use the read tool to examine the relevant source files in this repository.
+2. Use the write tool to create a detailed implementation plan at: ${planFilePath}
+   The plan must include: what exists now, what needs to change, specific file edits, and verification steps.
+3. After writing the file, return: {"status":"incomplete","filename":"${planFilePath}"}
+
+Do not skip tool usage. Do not return JSON without first writing the plan file.`;
 }
 
 async function tryPersistPlanFallback(params: {
@@ -1062,16 +1076,40 @@ export async function runAnton(args: {
         // Verify real repo changes exist relative to the pre-task baseline.
         // Discovery may have already made changes, so we compare against
         // the snapshot taken before discovery started.
-        const changedAfter = await getGitChangedFileCount(gitCwd, changeIgnores);
+        let changedAfter = await getGitChangedFileCount(gitCwd, changeIgnores);
         if (
           mode === "preflight" &&
           changedBeforeTask !== null &&
           changedAfter !== null &&
           changedAfter <= changedBeforeTask
         ) {
-          throw new Error(
-            "Implementation made no repository changes; refusing to mark task complete",
-          );
+          // One self-healing retry: force a tool-using implementation turn.
+          const retrySessionId = `anton-impl-retry-${Date.now()}-${taskNum}`;
+          await notify({
+            phase: "task_agent_spawned",
+            index: taskNum,
+            total: pending.length,
+            task: `${task.text} (implementation retry)`,
+            sessionId: retrySessionId,
+          });
+
+          await runAgentTask({
+            message: buildImplementationRetryPrompt(task.text, planFile ?? ""),
+            sessionId: retrySessionId,
+            timeout: defaultTimeout,
+            agent: args.agent,
+            to: args.to,
+            runtime: args.runtime,
+            deps: args.deps,
+            workspaceDir: args.workspaceDir,
+          });
+
+          changedAfter = await getGitChangedFileCount(gitCwd, changeIgnores);
+          if (changedAfter !== null && changedAfter <= changedBeforeTask) {
+            throw new Error(
+              "Implementation made no repository changes after retry; refusing to mark task complete",
+            );
+          }
         }
 
         const latest = await fs.readFile(filePath, "utf8");
