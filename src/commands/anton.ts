@@ -178,6 +178,14 @@ type ParsedJsonTasks = {
   data: unknown;
 };
 
+function isJsonTaskComplete(obj: Record<string, unknown>): boolean {
+  if (isJsonTaskComplete(obj)) {
+    return true;
+  }
+  const status = typeof obj.status === "string" ? obj.status.trim().toLowerCase() : "";
+  return status === "complete" || status === "completed" || status === "done";
+}
+
 function parsePendingTasksFromJson(jsonText: string): ParsedJsonTasks {
   const data = JSON.parse(jsonText) as unknown;
   const pending: ParsedTask[] = [];
@@ -194,7 +202,7 @@ function parsePendingTasksFromJson(jsonText: string): ParsedJsonTasks {
         continue;
       }
       const subObj = sub as Record<string, unknown>;
-      if (subObj.done === true) {
+      if (isJsonTaskComplete(subObj)) {
         continue;
       }
       const name = typeof subObj.name === "string" ? subObj.name.trim() : "";
@@ -213,7 +221,7 @@ function parsePendingTasksFromJson(jsonText: string): ParsedJsonTasks {
   };
 
   const pushTask = (jsonPath: Array<string | number>, obj: Record<string, unknown>) => {
-    if (obj.done === true) {
+    if (isJsonTaskComplete(obj)) {
       return;
     }
     const text = typeof obj.name === "string" ? obj.name.trim() : "";
@@ -275,6 +283,7 @@ function markJsonTaskDone(data: unknown, jsonPath: Array<string | number>) {
   }
 
   (cur as Record<string, unknown>).done = true;
+  (cur as Record<string, unknown>).status = "complete";
 }
 
 function formatTaskForPrompt(task: ParsedTask): string {
