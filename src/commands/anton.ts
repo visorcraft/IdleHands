@@ -9,9 +9,15 @@ import { CONFIG_DIR } from "../utils.js";
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type ParsedTask = {
-  line: number;
-  indent: string;
+  /** For markdown tasks */
+  line?: number;
+  indent?: string;
+  /** Human task name/text */
   text: string;
+  /** Optional longer description (JSON tasks, etc.) */
+  details?: string;
+  /** JSON pointer-like path for marking completion in .json task files */
+  jsonPath?: Array<string | number>;
 };
 
 type AntonState = {
@@ -163,15 +169,175 @@ function markTaskDone(markdown: string, lineNo: number): string {
   return `${lines.join("\n")}\n`;
 }
 
+function isJsonTaskFile(taskFile: string): boolean {
+  return taskFile.toLowerCase().endsWith(".json");
+}
+
+type ParsedJsonTasks = {
+  pending: ParsedTask[];
+  data: unknown;
+};
+
+function parsePendingTasksFromJson(jsonText: string): ParsedJsonTasks {
+  const data = JSON.parse(jsonText) as unknown;
+  const pending: ParsedTask[] = [];
+
+  const pushTask = (jsonPath: Array<string | number>, name: unknown, details: unknown) => {
+    const text = typeof name === "string" ? name.trim() : "";
+    if (!text) {
+      return;
+    }
+    pending.push({
+      text,
+      details: typeof details === "string" ? details.trim() : undefined,
+      jsonPath,
+    });
+  };
+
+  const walkTaskObject = (obj: unknown, basePath: Array<string | number>) => {
+    if (!obj || typeof obj !== "object") {
+      return;
+    }
+    const taskObj = obj as Record<string, unknown>;
+    if (taskObj.done === true) {
+      return;
+    }
+
+    pushTask(basePath, taskObj.name, taskObj.details);
+
+    const subtasks = taskObj.subtasks;
+    if (Array.isArray(subtasks)) {
+      for (let i = 0; i < subtasks.length; i++) {
+        const sub = subtasks[i];
+        if (!sub || typeof sub !== "object") {
+          continue;
+        }
+        const subObj = sub as Record<string, unknown>;
+        if (subObj.done === true) {
+          continue;
+        }
+        pushTask([...basePath, "subtasks", i], subObj.name, subObj.details);
+      }
+    }
+  };
+
+  if (data && typeof data === "object") {
+    const root = data as Record<string, unknown>;
+
+    // Shape A: { name, details, subtasks: [...] }
+    if ("name" in root || "subtasks" in root) {
+      walkTaskObject(root, []);
+    }
+
+    // Shape B: { tasks: [ {name, details, subtasks: [...] } ] }
+    const tasks = root.tasks;
+    if (Array.isArray(tasks)) {
+      for (let i = 0; i < tasks.length; i++) {
+        walkTaskObject(tasks[i], ["tasks", i]);
+      }
+    }
+  }
+
+  return { pending, data };
+}
+
+function markJsonTaskDone(data: unknown, jsonPath: Array<string | number>) {
+  if (!jsonPath) {
+    return;
+  }
+  let cur: unknown = data;
+  for (const key of jsonPath) {
+    if (typeof key === "number") {
+      if (!Array.isArray(cur)) {
+        return;
+      }
+      cur = cur[key];
+      continue;
+    }
+
+    if (!cur || typeof cur !== "object" || Array.isArray(cur)) {
+      return;
+    }
+    cur = (cur as Record<string, unknown>)[key];
+  }
+
+  if (!cur || typeof cur !== "object" || Array.isArray(cur)) {
+    return;
+  }
+
+  (cur as Record<string, unknown>).done = true;
+}
+
+function formatTaskForPrompt(task: ParsedTask): string {
+  if (task.details) {
+    return `${task.text}
+Details: ${task.details}`;
+  }
+  return task.text;
+}
+
+function looksLikeVersionBumpTask(taskText: string): boolean {
+  return /bump\s+version/i.test(taskText) || /version\s+(to|\d+\.)/i.test(taskText);
+}
+
+function allowsNoRepoChanges(taskText: string): boolean {
+  // Examples: review docs, verify docs are correct, check X, confirm Y.
+  return (
+    /(review|verify|ensure|confirm|check)/i.test(taskText) &&
+    /(doc|docs|documentation|readme)/i.test(taskText)
+  );
+}
+
+async function ensureRepoCleanOrThrow(cwd: string) {
+  const { stdout } = await execFile("git", ["status", "--porcelain"], { cwd });
+  if (stdout.trim().length > 0) {
+    throw new Error(`Anton requires a clean git working tree. Dirty repo at: ${cwd}`);
+  }
+}
+
+async function hardCleanRepo(cwd: string) {
+  // User-requested safety net: reset any uncommitted changes and remove untracked files.
+  await execFile("git", ["reset", "--hard"], { cwd });
+  await execFile("git", ["clean", "-fd", "-e", ".agents/tasks", "-e", "node_modules"], { cwd });
+}
+
+async function commitAllIfDirty(cwd: string, message: string) {
+  const { stdout } = await execFile("git", ["status", "--porcelain"], { cwd });
+  if (stdout.trim().length === 0) {
+    return;
+  }
+
+  await execFile("git", ["add", "-A"], { cwd });
+
+  // Never commit Anton plan artifacts.
+  // If the path doesn't exist, these commands are harmless.
+  try {
+    await execFile("git", ["restore", "--staged", ".agents/tasks"], { cwd });
+  } catch {
+    // ignore
+  }
+
+  // If nothing remains staged, skip commit.
+  const { stdout: staged } = await execFile("git", ["diff", "--cached", "--name-only"], { cwd });
+  if (staged.trim().length === 0) {
+    return;
+  }
+
+  await execFile("git", ["commit", "-m", message], { cwd });
+}
+
 // ─── Prompts ────────────────────────────────────────────────────────────────
 
-function buildDirectTaskPrompt(task: string): string {
+function buildDirectTaskPrompt(task: string, opts?: { skipTests?: boolean }): string {
+  const skipTests = Boolean(opts?.skipTests);
   return [
     "You are executing one item from a managed checklist.",
     `Task: ${task}`,
     "Rules:",
     "1) Make the minimal code changes required for this task.",
-    "2) Run targeted tests for your change.",
+    skipTests
+      ? "2) Skip tests for this task unless you changed executable code."
+      : "2) Run targeted tests for your change.",
     "3) Return a concise completion summary.",
   ].join("\n");
 }
@@ -228,7 +394,12 @@ function buildReviewPrompt(planFilePath: string): string {
 Do not skip reading the file. Do not return JSON without first reading and updating the plan.`;
 }
 
-function buildImplementationPrompt(task: string, planFilePath: string): string {
+function buildImplementationPrompt(
+  task: string,
+  planFilePath: string,
+  opts?: { skipTests?: boolean },
+): string {
+  const skipTests = Boolean(opts?.skipTests);
   return [
     `Complete this task: ${task}`,
     "",
@@ -239,7 +410,9 @@ function buildImplementationPrompt(task: string, planFilePath: string): string {
     "Describing changes in text or showing diffs without applying them does NOT count.",
     "Do not ask for confirmation — apply the changes now.",
     "",
-    "After making the edits, run any verification steps from the plan.",
+    skipTests
+      ? "Skip tests for this task unless you changed executable code."
+      : "After making the edits, run any verification steps from the plan.",
     "Then return a brief summary of what you changed.",
   ].join("\n");
 }
@@ -680,8 +853,14 @@ async function runDiscoveryPhase(args: {
         sessionId,
       });
 
+      const discoveryRepoCwd = args.workspaceDir
+        ? path.resolve(args.workspaceDir)
+        : path.dirname(args.taskFile);
+      await hardCleanRepo(discoveryRepoCwd);
+      await ensureRepoCleanOrThrow(discoveryRepoCwd);
+
       const firstPass = await runAgentTask({
-        message: buildDiscoveryPrompt(args.task.text, args.taskFile, planFile),
+        message: buildDiscoveryPrompt(formatTaskForPrompt(args.task), args.taskFile, planFile),
         sessionId,
         timeout: args.timeout,
         agent: args.agent,
@@ -753,8 +932,15 @@ async function runDiscoveryPhase(args: {
         sessionId: repairSessionId,
       });
 
+      await hardCleanRepo(discoveryRepoCwd);
+      await ensureRepoCleanOrThrow(discoveryRepoCwd);
+
       const repairPass = await runAgentTask({
-        message: buildDiscoveryRepairPrompt(args.task.text, args.taskFile, declaredPlanFile),
+        message: buildDiscoveryRepairPrompt(
+          formatTaskForPrompt(args.task),
+          args.taskFile,
+          declaredPlanFile,
+        ),
         sessionId: repairSessionId,
         timeout: args.timeout,
         agent: args.agent,
@@ -866,6 +1052,10 @@ async function runReviewPhase(args: {
       sessionId,
     });
 
+    const reviewRepoCwd = args.workspaceDir ? path.resolve(args.workspaceDir) : process.cwd();
+    await hardCleanRepo(reviewRepoCwd);
+    await ensureRepoCleanOrThrow(reviewRepoCwd);
+
     await runAgentTask({
       message: buildReviewPrompt(args.planFile),
       sessionId,
@@ -917,7 +1107,17 @@ export async function runAnton(args: {
 }) {
   const filePath = path.resolve(args.taskFile);
   const raw = await fs.readFile(filePath, "utf8");
-  const pending = parsePendingTasks(raw);
+
+  let pending: ParsedTask[] = [];
+  let jsonData: unknown;
+
+  if (isJsonTaskFile(filePath)) {
+    const parsed = parsePendingTasksFromJson(raw);
+    pending = parsed.pending;
+    jsonData = parsed.data;
+  } else {
+    pending = parsePendingTasks(raw);
+  }
   const notify = args.onProgress ?? (async () => {});
 
   if (args.dryRun) {
@@ -958,6 +1158,9 @@ export async function runAnton(args: {
       : (cfg.agents?.defaults?.timeoutSeconds ?? taskTimeout),
   );
 
+  const repoCwd = args.workspaceDir ? path.resolve(args.workspaceDir) : path.dirname(filePath);
+  await ensureRepoCleanOrThrow(repoCwd);
+
   await acquireLock(Boolean(args.force));
   const startedAt = Date.now();
   await writeState({
@@ -993,6 +1196,10 @@ export async function runAnton(args: {
       }
       const taskNum = i + 1;
 
+      const taskPromptText = formatTaskForPrompt(task);
+      const skipTests = looksLikeVersionBumpTask(task.text) || allowsNoRepoChanges(task.text);
+      const allowNoChanges = allowsNoRepoChanges(task.text);
+
       await writeState({
         running: true,
         taskFile: filePath,
@@ -1024,6 +1231,10 @@ export async function runAnton(args: {
 
         if (mode === "preflight") {
           // ── Phase 1: Discovery ──
+          // Ensure clean slate before agent-driven discovery (handles leftovers from prior failures)
+          await hardCleanRepo(repoCwd);
+          await ensureRepoCleanOrThrow(repoCwd);
+
           const discoveryResult = await runDiscoveryPhase({
             task,
             taskNum,
@@ -1049,8 +1260,16 @@ export async function runAnton(args: {
               task: task.text,
             });
             const latest = await fs.readFile(filePath, "utf8");
-            const updated = markTaskDone(latest, task.line);
-            await fs.writeFile(filePath, updated, "utf8");
+            if (isJsonTaskFile(filePath)) {
+              if (jsonData && task.jsonPath) {
+                markJsonTaskDone(jsonData, task.jsonPath);
+                await fs.writeFile(filePath, JSON.stringify(jsonData, null, 2) + "\n", "utf8");
+              }
+            } else {
+              const updated = markTaskDone(latest, task.line ?? 0);
+              await fs.writeFile(filePath, updated, "utf8");
+            }
+            await commitAllIfDirty(repoCwd, `anton: ${task.text}`);
             completed += 1;
             await notify({
               phase: "task_complete",
@@ -1109,12 +1328,15 @@ export async function runAnton(args: {
         });
 
         const implPrompt = planFile
-          ? buildImplementationPrompt(task.text, planFile)
-          : buildDirectTaskPrompt(task.text);
+          ? buildImplementationPrompt(taskPromptText, planFile, { skipTests })
+          : buildDirectTaskPrompt(taskPromptText, { skipTests });
 
         const gitCwd = args.workspaceDir ? path.resolve(args.workspaceDir) : path.dirname(filePath);
         const taskFileRel = path.relative(gitCwd, filePath).replace(/\\/g, "/");
         const changeIgnores = taskFileRel.startsWith("..") ? [] : [taskFileRel];
+        // Ensure clean slate before implementation agent call
+        await hardCleanRepo(repoCwd);
+        await ensureRepoCleanOrThrow(repoCwd);
 
         await runAgentTask({
           message: implPrompt,
@@ -1131,44 +1353,70 @@ export async function runAnton(args: {
         // Discovery may have already made changes, so we compare against
         // the snapshot taken before discovery started.
         let changedAfter = await getGitChangedFileCount(gitCwd, changeIgnores);
+
+        if (
+          mode === "direct" &&
+          changedBeforeTask !== null &&
+          changedAfter !== null &&
+          changedAfter <= changedBeforeTask &&
+          looksLikeVersionBumpTask(task.text)
+        ) {
+          throw new Error(
+            "Version bump task made no repository changes; refusing to mark task complete",
+          );
+        }
         if (
           mode === "preflight" &&
           changedBeforeTask !== null &&
           changedAfter !== null &&
           changedAfter <= changedBeforeTask
         ) {
-          // One self-healing retry: force a tool-using implementation turn.
-          const retrySessionId = `anton-impl-retry-${Date.now()}-${taskNum}`;
-          await notify({
-            phase: "task_agent_spawned",
-            index: taskNum,
-            total: pending.length,
-            task: `${task.text} (implementation retry)`,
-            sessionId: retrySessionId,
-          });
+          if (!allowNoChanges) {
+            // One self-healing retry: force a tool-using implementation turn.
+            const retrySessionId = `anton-impl-retry-${Date.now()}-${taskNum}`;
+            await notify({
+              phase: "task_agent_spawned",
+              index: taskNum,
+              total: pending.length,
+              task: `${task.text} (implementation retry)`,
+              sessionId: retrySessionId,
+            });
 
-          await runAgentTask({
-            message: buildImplementationRetryPrompt(task.text, planFile ?? ""),
-            sessionId: retrySessionId,
-            timeout: defaultTimeout,
-            agent: args.agent,
-            to: args.to,
-            runtime: args.runtime,
-            deps: args.deps,
-            workspaceDir: args.workspaceDir,
-          });
+            // Ensure clean slate before implementation retry
+            await hardCleanRepo(repoCwd);
+            await ensureRepoCleanOrThrow(repoCwd);
 
-          changedAfter = await getGitChangedFileCount(gitCwd, changeIgnores);
-          if (changedAfter !== null && changedAfter <= changedBeforeTask) {
-            throw new Error(
-              "Implementation made no repository changes after retry; refusing to mark task complete",
-            );
+            await runAgentTask({
+              message: buildImplementationRetryPrompt(taskPromptText, planFile ?? ""),
+              sessionId: retrySessionId,
+              timeout: defaultTimeout,
+              agent: args.agent,
+              to: args.to,
+              runtime: args.runtime,
+              deps: args.deps,
+              workspaceDir: args.workspaceDir,
+            });
+
+            changedAfter = await getGitChangedFileCount(gitCwd, changeIgnores);
+            if (changedAfter !== null && changedAfter <= changedBeforeTask) {
+              throw new Error(
+                "Implementation made no repository changes after retry; refusing to mark task complete",
+              );
+            }
           }
         }
 
         const latest = await fs.readFile(filePath, "utf8");
-        const updated = markTaskDone(latest, task.line);
-        await fs.writeFile(filePath, updated, "utf8");
+        if (isJsonTaskFile(filePath)) {
+          if (jsonData && task.jsonPath) {
+            markJsonTaskDone(jsonData, task.jsonPath);
+            await fs.writeFile(filePath, JSON.stringify(jsonData, null, 2) + "\n", "utf8");
+          }
+        } else {
+          const updated = markTaskDone(latest, task.line ?? 0);
+          await fs.writeFile(filePath, updated, "utf8");
+        }
+        await commitAllIfDirty(repoCwd, `anton: ${task.text}`);
         completed += 1;
 
         await notify({
@@ -1178,6 +1426,13 @@ export async function runAnton(args: {
           task: task.text,
         });
       } catch (err) {
+        // Task failed: revert any uncommitted changes before moving on.
+        try {
+          await hardCleanRepo(repoCwd);
+        } catch {
+          // ignore
+        }
+
         skipped += 1;
         const errorMsg = err instanceof Error ? err.message : String(err);
         args.runtime.error(`[Anton] Task failed and was skipped: ${task.text}`);
