@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/slack",
-  "version": "4.2.0",
+  "version": "4.2.1",
   "private": true,
   "description": "IdleHands Slack channel plugin",
   "type": "module",

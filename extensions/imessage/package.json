@@ -1,6 +1,6 @@
 {
   "name": "@idlehands/imessage",
-  "version": "4.2.0",
+  "version": "4.2.1",
   "private": true,
   "description": "IdleHands iMessage channel plugin",
   "type": "module",
