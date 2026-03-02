@@ -113,25 +113,61 @@ async function writeState(state: AntonState) {
   );
 }
 
-async function acquireLock(force = false) {
-  await ensureStateDir();
+async function isAntonLockPid(pid: number): Promise<boolean> {
   try {
-    await fs.writeFile(
-      ANTON_LOCK_PATH,
-      JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
-      { encoding: "utf8", flag: "wx" },
+    const { stdout } = await execFile("ps", ["-p", String(pid), "-o", "args="], {
+      encoding: "utf8",
+    });
+    const cmd = stdout.trim().toLowerCase();
+    return (
+      cmd.includes(" anton") ||
+      cmd.endsWith("anton") ||
+      (cmd.includes(" node ") && cmd.includes("anton"))
     );
   } catch {
-    if (!force) {
-      throw new Error("Anton is already running (lock held)");
-    }
-    await fs.rm(ANTON_LOCK_PATH, { force: true });
-    await fs.writeFile(
-      ANTON_LOCK_PATH,
-      JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), force: true }),
-      { encoding: "utf8", flag: "wx" },
-    );
+    return false;
   }
+}
+
+async function acquireLock(force = false) {
+  await ensureStateDir();
+  const payload = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
+  try {
+    await fs.writeFile(ANTON_LOCK_PATH, payload, { encoding: "utf8", flag: "wx" });
+    return;
+  } catch {
+    // Continue below.
+  }
+
+  let staleOrInvalid = false;
+  try {
+    const raw = await fs.readFile(ANTON_LOCK_PATH, "utf8");
+    const parsed = JSON.parse(raw) as { pid?: number };
+    const pid = Number(parsed?.pid);
+    if (!Number.isFinite(pid) || pid <= 0) {
+      staleOrInvalid = true;
+    } else {
+      const looksLikeAnton = await isAntonLockPid(pid);
+      staleOrInvalid = !looksLikeAnton;
+    }
+  } catch {
+    staleOrInvalid = true;
+  }
+
+  if (!force && !staleOrInvalid) {
+    throw new Error("Anton is already running (lock held)");
+  }
+
+  await fs.rm(ANTON_LOCK_PATH, { force: true });
+  await fs.writeFile(
+    ANTON_LOCK_PATH,
+    JSON.stringify({
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      force: force || staleOrInvalid,
+    }),
+    { encoding: "utf8", flag: "wx" },
+  );
 }
 
 async function releaseLock() {
@@ -179,11 +215,17 @@ type ParsedJsonTasks = {
 };
 
 function isJsonTaskComplete(obj: Record<string, unknown>): boolean {
-  if (isJsonTaskComplete(obj)) {
+  if (obj.done === true) {
     return true;
   }
   const status = typeof obj.status === "string" ? obj.status.trim().toLowerCase() : "";
-  return status === "complete" || status === "completed" || status === "done";
+  if (status === "complete" || status === "completed" || status === "done") {
+    return true;
+  }
+  if (status === "incomplete" || status === "pending" || status === "todo" || status === "open") {
+    return false;
+  }
+  return false;
 }
 
 function parsePendingTasksFromJson(jsonText: string): ParsedJsonTasks {
@@ -746,6 +788,16 @@ async function getGitHeadCommit(cwd: string): Promise<string | null> {
   }
 }
 
+async function getGitReflogTop(cwd: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFile("git", ["reflog", "-n", "1", "--format=%H:%gs"], { cwd });
+    const value = stdout.trim();
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 type DiscoveryResultPayload = {
   status?: string;
   filename?: string;
@@ -1154,9 +1206,14 @@ export async function runAnton(args: {
   let jsonData: unknown;
 
   if (isJsonTaskFile(filePath)) {
-    const parsed = parsePendingTasksFromJson(raw);
-    pending = parsed.pending;
-    jsonData = parsed.data;
+    try {
+      const parsed = parsePendingTasksFromJson(raw);
+      pending = parsed.pending;
+      jsonData = parsed.data;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Invalid JSON task file: ${filePath} (${msg})`, { cause: err });
+    }
   } else {
     pending = parsePendingTasks(raw);
   }
@@ -1271,6 +1328,7 @@ export async function runAnton(args: {
           : [taskFileRelForBaseline];
         const changedBeforeTask = await getGitChangedFileCount(gitCwdForBaseline, baselineIgnores);
         const headBeforeTask = await getGitHeadCommit(gitCwdForBaseline);
+        const reflogBeforeTask = await getGitReflogTop(gitCwdForBaseline);
 
         if (mode === "preflight") {
           // ── Phase 1: Discovery ──
@@ -1397,6 +1455,7 @@ export async function runAnton(args: {
         // the snapshot taken before discovery started.
         let changedAfter = await getGitChangedFileCount(gitCwd, changeIgnores);
         let headAfterTask = await getGitHeadCommit(gitCwd);
+        let reflogAfterTask = await getGitReflogTop(gitCwd);
 
         if (
           mode === "direct" &&
@@ -1405,6 +1464,8 @@ export async function runAnton(args: {
           changedAfter <= changedBeforeTask &&
           headBeforeTask !== null &&
           headAfterTask === headBeforeTask &&
+          reflogBeforeTask !== null &&
+          reflogAfterTask === reflogBeforeTask &&
           !allowNoChanges
         ) {
           throw new Error(
@@ -1417,7 +1478,9 @@ export async function runAnton(args: {
           changedAfter !== null &&
           changedAfter <= changedBeforeTask &&
           headBeforeTask !== null &&
-          headAfterTask === headBeforeTask
+          headAfterTask === headBeforeTask &&
+          reflogBeforeTask !== null &&
+          reflogAfterTask === reflogBeforeTask
         ) {
           if (!allowNoChanges) {
             // One self-healing retry: force a tool-using implementation turn.
@@ -1449,11 +1512,14 @@ export async function runAnton(args: {
 
             changedAfter = await getGitChangedFileCount(gitCwd, changeIgnores);
             headAfterTask = await getGitHeadCommit(gitCwd);
+            reflogAfterTask = await getGitReflogTop(gitCwd);
             if (
               changedAfter !== null &&
               changedAfter <= changedBeforeTask &&
               headBeforeTask !== null &&
-              headAfterTask === headBeforeTask
+              headAfterTask === headBeforeTask &&
+              reflogBeforeTask !== null &&
+              reflogAfterTask === reflogBeforeTask
             ) {
               throw new Error(
                 "Implementation made no repository changes after retry; refusing to mark task complete",
