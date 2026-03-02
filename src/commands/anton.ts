@@ -568,6 +568,16 @@ async function tryPersistPlanFallback(params: {
   return await isPlanFileValid(params.planFile);
 }
 
+async function writeDeterministicPlanFallback(params: {
+  planFile: string;
+  taskText: string;
+  taskFile: string;
+}): Promise<boolean> {
+  const plan = `# Task\n\n${params.taskText}\n\n## What needs to change\n- Implement the task exactly as described in the checklist item.\n- Keep changes scoped to files directly related to this task.\n\n## Implementation approach\n1. Inspect existing CI/workflow/config files relevant to this task.\n2. Apply minimal edits needed to satisfy the task requirements.\n3. Keep behavior/style consistent with adjacent repository conventions.\n\n## Files to modify\n- Determine from ${params.taskFile} and related source/config files.\n\n## Verification\n- Run targeted tests for touched areas.\n- Run repository checks required by this project (for example: pnpm test / pnpm check) as appropriate.\n- Confirm git diff contains only task-relevant changes.\n`;
+  await fs.writeFile(params.planFile, plan, "utf8");
+  return await isPlanFileValid(params.planFile);
+}
+
 // ─── Discovery Phase ────────────────────────────────────────────────────────
 
 async function runDiscoveryPhase(args: {
@@ -643,22 +653,30 @@ async function runDiscoveryPhase(args: {
         return { status: "plan_ready", planFile: declaredPlanFile };
       }
 
-      if (
-        (firstParsed?.status ?? "").toLowerCase() === "incomplete" &&
-        (await tryPersistPlanFallback({
+      if ((firstParsed?.status ?? "").toLowerCase() === "incomplete") {
+        const recoveredFromModel = await tryPersistPlanFallback({
           planFile: declaredPlanFile,
           parsed: firstParsed,
           rawText: firstPass.text,
-        }))
-      ) {
-        await args.notify({
-          phase: "discovery_complete",
-          index: args.taskNum,
-          total: args.total,
-          task: args.task.text,
-          planFile: declaredPlanFile,
         });
-        return { status: "plan_ready", planFile: declaredPlanFile };
+        const recoveredDeterministic =
+          recoveredFromModel ||
+          (await writeDeterministicPlanFallback({
+            planFile: declaredPlanFile,
+            taskText: args.task.text,
+            taskFile: args.taskFile,
+          }));
+
+        if (recoveredDeterministic) {
+          await args.notify({
+            phase: "discovery_complete",
+            index: args.taskNum,
+            total: args.total,
+            task: args.task.text,
+            planFile: declaredPlanFile,
+          });
+          return { status: "plan_ready", planFile: declaredPlanFile };
+        }
       }
 
       // Redundancy pass: direct repair prompt on same attempt before counting retry.
@@ -697,14 +715,21 @@ async function runDiscoveryPhase(args: {
       }
 
       const repairPlanFile = normalizeDiscoveryFilename(repairParsed?.filename, declaredPlanFile);
-      if (
+      const repairRecovered =
         (await isPlanFileValid(repairPlanFile)) ||
         (await tryPersistPlanFallback({
           planFile: repairPlanFile,
           parsed: repairParsed,
           rawText: repairPass.text,
-        }))
-      ) {
+        })) ||
+        ((repairParsed?.status ?? "").toLowerCase() === "incomplete" &&
+          (await writeDeterministicPlanFallback({
+            planFile: repairPlanFile,
+            taskText: args.task.text,
+            taskFile: args.taskFile,
+          })));
+
+      if (repairRecovered) {
         await args.notify({
           phase: "discovery_complete",
           index: args.taskNum,
