@@ -51,15 +51,28 @@ export type AntonProgressCallback = (event: AntonProgressEvent) => Promise<void>
 export type AntonConfig = {
   /** Execution mode: "direct" (single agent) or "preflight" (discovery → implementation). Default: "direct". */
   mode?: "direct" | "preflight";
-  /** Enable requirements review stage between discovery and implementation. Default: false. */
+  /** Nested preflight settings used by config wizard/new schema. */
+  preflight?: {
+    /** When false, preflight mode is disabled and execution falls back to direct mode. */
+    enabled?: boolean;
+    /** Enable requirements review stage between discovery and implementation. */
+    requirementsReview?: boolean;
+    /** Discovery-stage timeout in seconds. Falls back to taskTimeoutSec. */
+    discoveryTimeoutSec?: number;
+    /** Requirements-review-stage timeout in seconds. Falls back to taskTimeoutSec. */
+    reviewTimeoutSec?: number;
+    /** Max retries for discovery/review before skipping. */
+    maxRetries?: number;
+  };
+  /** Legacy top-level requirements review flag (backward compatibility). */
   requirementsReview?: boolean;
   /** Per-task timeout in seconds. Default: 1200. */
   taskTimeoutSec?: number;
-  /** Discovery-stage timeout in seconds. Falls back to taskTimeoutSec. */
+  /** Legacy top-level discovery timeout in seconds. Falls back to taskTimeoutSec. */
   discoveryTimeoutSec?: number;
-  /** Requirements-review-stage timeout in seconds. Falls back to taskTimeoutSec. */
+  /** Legacy top-level requirements-review timeout in seconds. Falls back to taskTimeoutSec. */
   reviewTimeoutSec?: number;
-  /** Max retries for discovery/review before skipping. Default: 2. */
+  /** Legacy top-level max retries for discovery/review before skipping. */
   preflightMaxRetries?: number;
   /** Directory to store plan files. Default: .agents/tasks/ relative to workspace. */
   planDir?: string;
@@ -249,6 +262,43 @@ function buildImplementationRetryPrompt(task: string, planFilePath: string): str
 }
 
 // ─── Formatting ─────────────────────────────────────────────────────────────
+
+export function resolveAntonExecutionConfig(params: {
+  config: AntonConfig;
+  modeOverride?: "direct" | "preflight";
+}): {
+  mode: "direct" | "preflight";
+  requirementsReview: boolean;
+  taskTimeoutSec: number;
+  discoveryTimeoutSec: number;
+  reviewTimeoutSec: number;
+  preflightMaxRetries: number;
+} {
+  const antonCfg = params.config ?? {};
+  const preflightCfg = antonCfg.preflight ?? {};
+
+  const requestedMode = params.modeOverride ?? antonCfg.mode ?? "direct";
+  const mode =
+    requestedMode === "preflight" && preflightCfg.enabled === false ? "direct" : requestedMode;
+
+  const taskTimeoutSec = antonCfg.taskTimeoutSec ?? 1200;
+  const requirementsReview =
+    antonCfg.requirementsReview ?? preflightCfg.requirementsReview ?? false;
+  const discoveryTimeoutSec =
+    antonCfg.discoveryTimeoutSec ?? preflightCfg.discoveryTimeoutSec ?? taskTimeoutSec;
+  const reviewTimeoutSec =
+    antonCfg.reviewTimeoutSec ?? preflightCfg.reviewTimeoutSec ?? taskTimeoutSec;
+  const preflightMaxRetries = antonCfg.preflightMaxRetries ?? preflightCfg.maxRetries ?? 2;
+
+  return {
+    mode,
+    requirementsReview,
+    taskTimeoutSec,
+    discoveryTimeoutSec,
+    reviewTimeoutSec,
+    preflightMaxRetries,
+  };
+}
 
 function formatDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000);
@@ -886,12 +936,16 @@ export async function runAnton(args: {
 
   // Load config
   const antonCfg = await loadAntonConfig();
-  const mode = args.mode ?? antonCfg.mode ?? "direct";
-  const requirementsReview = antonCfg.requirementsReview ?? false;
-  const taskTimeout = antonCfg.taskTimeoutSec ?? 1200;
-  const discoveryTimeout = antonCfg.discoveryTimeoutSec ?? taskTimeout;
-  const reviewTimeout = antonCfg.reviewTimeoutSec ?? taskTimeout;
-  const preflightMaxRetries = antonCfg.preflightMaxRetries ?? 2;
+  const execution = resolveAntonExecutionConfig({
+    config: antonCfg,
+    modeOverride: args.mode,
+  });
+  const mode = execution.mode;
+  const requirementsReview = execution.requirementsReview;
+  const taskTimeout = execution.taskTimeoutSec;
+  const discoveryTimeout = execution.discoveryTimeoutSec;
+  const reviewTimeout = execution.reviewTimeoutSec;
+  const preflightMaxRetries = execution.preflightMaxRetries;
   const planDir = antonCfg.planDir
     ? path.resolve(antonCfg.planDir)
     : path.resolve(path.dirname(filePath), ".agents", "tasks");
