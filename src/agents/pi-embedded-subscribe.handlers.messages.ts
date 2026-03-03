@@ -56,6 +56,28 @@ export function resolveSilentReplyFallbackText(params: {
   return fallback;
 }
 
+function hasAssistantToolCallBlock(message: AgentMessage): boolean {
+  const content = (message as { content?: unknown }).content;
+  if (!Array.isArray(content)) {
+    return false;
+  }
+  return content.some((block) => {
+    if (!block || typeof block !== "object") {
+      return false;
+    }
+    const type = (block as { type?: unknown }).type;
+    return type === "toolCall" || type === "tool_call";
+  });
+}
+
+function isAssistantToolPlanningMessage(message: AgentMessage): boolean {
+  const stopReason = (message as { stopReason?: unknown }).stopReason;
+  if (stopReason === "toolUse" || stopReason === "tool_use") {
+    return true;
+  }
+  return hasAssistantToolCallBlock(message);
+}
+
 export function handleMessageStart(
   ctx: EmbeddedPiSubscribeContext,
   evt: AgentEvent & { message: AgentMessage },
@@ -294,6 +316,7 @@ export function handleMessageEnd(
     text: ctx.stripBlockTags(rawText, { thinking: false, final: false }),
     messagingToolSentTexts: ctx.state.messagingToolSentTexts,
   });
+  const suppressToolPlanningOutput = isAssistantToolPlanningMessage(assistantMessage);
   const rawThinking =
     ctx.state.includeReasoning || ctx.state.streamReasoning
       ? extractAssistantThinking(assistantMessage) || extractThinkingFromTaggedText(rawText)
@@ -317,7 +340,11 @@ export function handleMessageEnd(
     }
   }
 
-  if (!ctx.state.emittedAssistantUpdate && (cleanedText || hasMedia)) {
+  if (
+    !ctx.state.emittedAssistantUpdate &&
+    !suppressToolPlanningOutput &&
+    (cleanedText || hasMedia)
+  ) {
     emitAgentEvent({
       runId: ctx.params.runId,
       stream: "assistant",
@@ -340,10 +367,15 @@ export function handleMessageEnd(
 
   const addedDuringMessage = ctx.state.assistantTexts.length > ctx.state.assistantTextBaseline;
   const chunkerHasBuffered = ctx.blockChunker?.hasBuffered() ?? false;
-  ctx.finalizeAssistantTexts({ text, addedDuringMessage, chunkerHasBuffered });
+  ctx.finalizeAssistantTexts({
+    text: suppressToolPlanningOutput ? "" : text,
+    addedDuringMessage,
+    chunkerHasBuffered,
+  });
 
   const onBlockReply = ctx.params.onBlockReply;
   const shouldEmitReasoning = Boolean(
+    !suppressToolPlanningOutput &&
     ctx.state.includeReasoning &&
     formattedReasoning &&
     onBlockReply &&
@@ -366,6 +398,7 @@ export function handleMessageEnd(
   if (
     (ctx.state.blockReplyBreak === "message_end" ||
       (ctx.blockChunker ? ctx.blockChunker.hasBuffered() : ctx.state.blockBuffer.length > 0)) &&
+    !suppressToolPlanningOutput &&
     text &&
     onBlockReply
   ) {
@@ -415,11 +448,11 @@ export function handleMessageEnd(
   if (!shouldEmitReasoningBeforeAnswer) {
     maybeEmitReasoning();
   }
-  if (ctx.state.streamReasoning && rawThinking) {
+  if (!suppressToolPlanningOutput && ctx.state.streamReasoning && rawThinking) {
     ctx.emitReasoningStream(rawThinking);
   }
 
-  if (ctx.state.blockReplyBreak === "text_end" && onBlockReply) {
+  if (!suppressToolPlanningOutput && ctx.state.blockReplyBreak === "text_end" && onBlockReply) {
     const tailResult = ctx.consumeReplyDirectives("", { final: true });
     if (tailResult) {
       const {
