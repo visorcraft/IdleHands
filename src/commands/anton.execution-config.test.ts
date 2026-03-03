@@ -35,6 +35,21 @@ describe("resolveAntonExecutionConfig", () => {
     expect(resolved.discoveryTimeoutSec).toBe(321);
     expect(resolved.reviewTimeoutSec).toBe(654);
     expect(resolved.preflightMaxRetries).toBe(7);
+    expect(resolved.codebaseSnapshot).toBe(true);
+  });
+
+  it("reads preflight.codebaseSnapshot override", () => {
+    const resolved = resolveAntonExecutionConfig({
+      config: {
+        mode: "preflight",
+        preflight: {
+          enabled: true,
+          codebaseSnapshot: false,
+        },
+      },
+    });
+
+    expect(resolved.codebaseSnapshot).toBe(false);
   });
 
   it("resolves Anton-specific thinking defaults per mode/phase", () => {

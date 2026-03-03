@@ -9,6 +9,8 @@ export type AntonPreflightConfig = {
   enabled?: boolean;
   /** Run requirements review phase after discovery. */
   requirementsReview?: boolean;
+  /** Run codebase analysis before discovery to reduce redundant file reads. */
+  codebaseSnapshot?: boolean;
   /** Timeout for discovery phase (seconds). Default: 600. */
   discoveryTimeoutSec?: number;
   /** Timeout for review phase (seconds). Default: 600. */
