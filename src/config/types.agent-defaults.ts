@@ -134,6 +134,10 @@ export type AgentDefaultsConfig = {
   bootstrapMaxChars?: number;
   /** Max total chars across all injected bootstrap files (default: 150000). */
   bootstrapTotalMaxChars?: number;
+  /** Toggle injection of identity/persona bootstrap files (SOUL/TOOLS/IDENTITY/USER/HEARTBEAT/BOOTSTRAP). Default: true. */
+  agentIdentity?: {
+    enabled?: boolean;
+  };
   /** Optional IANA timezone for the user (used in system prompt; defaults to host timezone). */
   userTimezone?: string;
   /** Time format in system prompt: auto (OS preference), 12-hour, or 24-hour. */

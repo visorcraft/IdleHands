@@ -695,6 +695,10 @@ export const FIELD_HELP: Record<string, string> = {
     "Max characters of each workspace bootstrap file injected into the system prompt before truncation (default: 20000).",
   "agents.defaults.bootstrapTotalMaxChars":
     "Max total characters across all injected workspace bootstrap files (default: 150000).",
+  "agents.defaults.agentIdentity":
+    "Controls whether identity/persona bootstrap files are injected into runtime context.",
+  "agents.defaults.agentIdentity.enabled":
+    "When true (default), inject SOUL.md, TOOLS.md, IDENTITY.md, USER.md, HEARTBEAT.md, and BOOTSTRAP.md. Set false to disable that identity bundle and reduce context overhead.",
   "agents.defaults.repoRoot":
     "Optional repository root shown in the system prompt runtime line (overrides auto-detect).",
   "agents.defaults.envelopeTimezone":

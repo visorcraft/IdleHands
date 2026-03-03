@@ -1,5 +1,6 @@
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { IdleHandsConfig } from "../config/config.js";
 import {
   clearInternalHooks,
   registerInternalHook,
@@ -62,6 +63,29 @@ describe("resolveBootstrapFilesForRun", () => {
     const files = await resolveBootstrapFilesForRun({ workspaceDir });
 
     expect(files.some((file) => file.path === path.join(workspaceDir, "EXTRA.md"))).toBe(true);
+  });
+
+  it("filters identity bundle files when agent identity context is disabled", async () => {
+    const workspaceDir = await makeTempWorkspace("idlehands-bootstrap-");
+    const files = await resolveBootstrapFilesForRun({
+      workspaceDir,
+      config: {
+        agents: {
+          defaults: {
+            agentIdentity: { enabled: false },
+          },
+        },
+      } as IdleHandsConfig,
+    });
+
+    const names = new Set(files.map((f) => f.name));
+    expect(names.has("AGENTS.md")).toBe(true);
+    expect(names.has("SOUL.md")).toBe(false);
+    expect(names.has("TOOLS.md")).toBe(false);
+    expect(names.has("IDENTITY.md")).toBe(false);
+    expect(names.has("USER.md")).toBe(false);
+    expect(names.has("HEARTBEAT.md")).toBe(false);
+    expect(names.has("BOOTSTRAP.md")).toBe(false);
   });
 
   it("drops malformed hook files with missing/invalid paths", async () => {

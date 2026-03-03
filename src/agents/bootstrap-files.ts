@@ -8,6 +8,7 @@ import {
   resolveBootstrapTotalMaxChars,
 } from "./pi-embedded-helpers.js";
 import {
+  filterBootstrapFilesForIdentityMode,
   filterBootstrapFilesForSession,
   loadWorkspaceBootstrapFiles,
   type WorkspaceBootstrapFile,
@@ -21,6 +22,10 @@ export function makeBootstrapWarn(params: {
     return undefined;
   }
   return (message: string) => params.warn?.(`${message} (sessionKey=${params.sessionLabel})`);
+}
+
+function isAgentIdentityEnabled(config?: IdleHandsConfig): boolean {
+  return config?.agents?.defaults?.agentIdentity?.enabled ?? true;
 }
 
 function sanitizeBootstrapFiles(
@@ -56,7 +61,11 @@ export async function resolveBootstrapFilesForRun(params: {
         sessionKey: params.sessionKey,
       })
     : await loadWorkspaceBootstrapFiles(params.workspaceDir);
-  const bootstrapFiles = filterBootstrapFilesForSession(rawFiles, sessionKey);
+  const sessionFiltered = filterBootstrapFilesForSession(rawFiles, sessionKey);
+  const bootstrapFiles = filterBootstrapFilesForIdentityMode(
+    sessionFiltered,
+    isAgentIdentityEnabled(params.config),
+  );
 
   const updated = await applyBootstrapHookOverrides({
     files: bootstrapFiles,
