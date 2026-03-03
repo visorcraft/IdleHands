@@ -333,6 +333,7 @@ async function ensureGitRepo(dir: string, isBrandNewWorkspace: boolean) {
 export async function ensureAgentWorkspace(params?: {
   dir?: string;
   ensureBootstrapFiles?: boolean;
+  agentIdentityEnabled?: boolean;
 }): Promise<{
   dir: string;
   agentsPath?: string;
@@ -346,6 +347,7 @@ export async function ensureAgentWorkspace(params?: {
   const rawDir = params?.dir?.trim() ? params.dir.trim() : DEFAULT_AGENT_WORKSPACE_DIR;
   const dir = resolveUserPath(rawDir);
   await fs.mkdir(dir, { recursive: true });
+  const identityEnabled = params?.agentIdentityEnabled ?? true;
 
   if (!params?.ensureBootstrapFiles) {
     return { dir };
@@ -382,79 +384,82 @@ export async function ensureAgentWorkspace(params?: {
   })();
 
   const agentsTemplate = await loadTemplate(DEFAULT_AGENTS_FILENAME);
-  const soulTemplate = await loadTemplate(DEFAULT_SOUL_FILENAME);
-  const toolsTemplate = await loadTemplate(DEFAULT_TOOLS_FILENAME);
-  const identityTemplate = await loadTemplate(DEFAULT_IDENTITY_FILENAME);
-  const userTemplate = await loadTemplate(DEFAULT_USER_FILENAME);
-  const heartbeatTemplate = await loadTemplate(DEFAULT_HEARTBEAT_FILENAME);
   await writeFileIfMissing(agentsPath, agentsTemplate);
-  await writeFileIfMissing(soulPath, soulTemplate);
-  await writeFileIfMissing(toolsPath, toolsTemplate);
-  await writeFileIfMissing(identityPath, identityTemplate);
-  await writeFileIfMissing(userPath, userTemplate);
-  await writeFileIfMissing(heartbeatPath, heartbeatTemplate);
 
-  let state = await readWorkspaceOnboardingState(statePath);
-  let stateDirty = false;
-  const markState = (next: Partial<WorkspaceOnboardingState>) => {
-    state = { ...state, ...next };
-    stateDirty = true;
-  };
-  const nowIso = () => new Date().toISOString();
+  if (identityEnabled) {
+    const soulTemplate = await loadTemplate(DEFAULT_SOUL_FILENAME);
+    const toolsTemplate = await loadTemplate(DEFAULT_TOOLS_FILENAME);
+    const identityTemplate = await loadTemplate(DEFAULT_IDENTITY_FILENAME);
+    const userTemplate = await loadTemplate(DEFAULT_USER_FILENAME);
+    const heartbeatTemplate = await loadTemplate(DEFAULT_HEARTBEAT_FILENAME);
+    await writeFileIfMissing(soulPath, soulTemplate);
+    await writeFileIfMissing(toolsPath, toolsTemplate);
+    await writeFileIfMissing(identityPath, identityTemplate);
+    await writeFileIfMissing(userPath, userTemplate);
+    await writeFileIfMissing(heartbeatPath, heartbeatTemplate);
 
-  let bootstrapExists = await fileExists(bootstrapPath);
-  if (!state.bootstrapSeededAt && bootstrapExists) {
-    markState({ bootstrapSeededAt: nowIso() });
-  }
+    let state = await readWorkspaceOnboardingState(statePath);
+    let stateDirty = false;
+    const markState = (next: Partial<WorkspaceOnboardingState>) => {
+      state = { ...state, ...next };
+      stateDirty = true;
+    };
+    const nowIso = () => new Date().toISOString();
 
-  if (!state.onboardingCompletedAt && state.bootstrapSeededAt && !bootstrapExists) {
-    markState({ onboardingCompletedAt: nowIso() });
-  }
+    let bootstrapExists = await fileExists(bootstrapPath);
+    if (!state.bootstrapSeededAt && bootstrapExists) {
+      markState({ bootstrapSeededAt: nowIso() });
+    }
 
-  if (!state.bootstrapSeededAt && !state.onboardingCompletedAt && !bootstrapExists) {
-    // Legacy migration path: if USER/IDENTITY diverged from templates, or if user-content
-    // indicators exist, treat onboarding as complete and avoid recreating BOOTSTRAP for
-    // already-onboarded workspaces.
-    const [identityContent, userContent] = await Promise.all([
-      fs.readFile(identityPath, "utf-8"),
-      fs.readFile(userPath, "utf-8"),
-    ]);
-    const hasUserContent = await (async () => {
-      const indicators = [
-        path.join(dir, "memory"),
-        path.join(dir, DEFAULT_MEMORY_FILENAME),
-        path.join(dir, ".git"),
-      ];
-      for (const indicator of indicators) {
-        try {
-          await fs.access(indicator);
-          return true;
-        } catch {
-          // continue
+    if (!state.onboardingCompletedAt && state.bootstrapSeededAt && !bootstrapExists) {
+      markState({ onboardingCompletedAt: nowIso() });
+    }
+
+    if (!state.bootstrapSeededAt && !state.onboardingCompletedAt && !bootstrapExists) {
+      // Legacy migration path: if USER/IDENTITY diverged from templates, or if user-content
+      // indicators exist, treat onboarding as complete and avoid recreating BOOTSTRAP for
+      // already-onboarded workspaces.
+      const [identityContent, userContent] = await Promise.all([
+        fs.readFile(identityPath, "utf-8"),
+        fs.readFile(userPath, "utf-8"),
+      ]);
+      const hasUserContent = await (async () => {
+        const indicators = [
+          path.join(dir, "memory"),
+          path.join(dir, DEFAULT_MEMORY_FILENAME),
+          path.join(dir, ".git"),
+        ];
+        for (const indicator of indicators) {
+          try {
+            await fs.access(indicator);
+            return true;
+          } catch {
+            // continue
+          }
+        }
+        return false;
+      })();
+      const legacyOnboardingCompleted =
+        identityContent !== identityTemplate || userContent !== userTemplate || hasUserContent;
+      if (legacyOnboardingCompleted) {
+        markState({ onboardingCompletedAt: nowIso() });
+      } else {
+        const bootstrapTemplate = await loadTemplate(DEFAULT_BOOTSTRAP_FILENAME);
+        const wroteBootstrap = await writeFileIfMissing(bootstrapPath, bootstrapTemplate);
+        if (!wroteBootstrap) {
+          bootstrapExists = await fileExists(bootstrapPath);
+        } else {
+          bootstrapExists = true;
+        }
+        if (bootstrapExists && !state.bootstrapSeededAt) {
+          markState({ bootstrapSeededAt: nowIso() });
         }
       }
-      return false;
-    })();
-    const legacyOnboardingCompleted =
-      identityContent !== identityTemplate || userContent !== userTemplate || hasUserContent;
-    if (legacyOnboardingCompleted) {
-      markState({ onboardingCompletedAt: nowIso() });
-    } else {
-      const bootstrapTemplate = await loadTemplate(DEFAULT_BOOTSTRAP_FILENAME);
-      const wroteBootstrap = await writeFileIfMissing(bootstrapPath, bootstrapTemplate);
-      if (!wroteBootstrap) {
-        bootstrapExists = await fileExists(bootstrapPath);
-      } else {
-        bootstrapExists = true;
-      }
-      if (bootstrapExists && !state.bootstrapSeededAt) {
-        markState({ bootstrapSeededAt: nowIso() });
-      }
     }
-  }
 
-  if (stateDirty) {
-    await writeWorkspaceOnboardingState(statePath, state);
+    if (stateDirty) {
+      await writeWorkspaceOnboardingState(statePath, state);
+    }
   }
   await ensureGitRepo(dir, isBrandNewWorkspace);
 

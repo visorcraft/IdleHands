@@ -6,9 +6,11 @@ import { makeTempWorkspace, writeWorkspaceFile } from "../test-helpers/workspace
 import {
   DEFAULT_AGENTS_FILENAME,
   DEFAULT_BOOTSTRAP_FILENAME,
+  DEFAULT_HEARTBEAT_FILENAME,
   DEFAULT_IDENTITY_FILENAME,
   DEFAULT_MEMORY_ALT_FILENAME,
   DEFAULT_MEMORY_FILENAME,
+  DEFAULT_SOUL_FILENAME,
   DEFAULT_TOOLS_FILENAME,
   DEFAULT_USER_FILENAME,
   ensureAgentWorkspace,
@@ -120,6 +122,23 @@ describe("ensureAgentWorkspace", () => {
     expect(state.onboardingCompletedAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
     const memoryContent = await fs.readFile(path.join(tempDir, "MEMORY.md"), "utf-8");
     expect(memoryContent).toBe("# Long-term memory\nImportant stuff");
+  });
+
+  it("does not auto-create identity bundle files when agentIdentityEnabled is false", async () => {
+    const tempDir = await makeTempWorkspace("idlehands-workspace-");
+    await ensureAgentWorkspace({
+      dir: tempDir,
+      ensureBootstrapFiles: true,
+      agentIdentityEnabled: false,
+    });
+
+    await expect(fs.access(path.join(tempDir, DEFAULT_AGENTS_FILENAME))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(tempDir, DEFAULT_SOUL_FILENAME))).rejects.toBeTruthy();
+    await expect(fs.access(path.join(tempDir, DEFAULT_TOOLS_FILENAME))).rejects.toBeTruthy();
+    await expect(fs.access(path.join(tempDir, DEFAULT_IDENTITY_FILENAME))).rejects.toBeTruthy();
+    await expect(fs.access(path.join(tempDir, DEFAULT_USER_FILENAME))).rejects.toBeTruthy();
+    await expect(fs.access(path.join(tempDir, DEFAULT_HEARTBEAT_FILENAME))).rejects.toBeTruthy();
+    await expect(fs.access(path.join(tempDir, DEFAULT_BOOTSTRAP_FILENAME))).rejects.toBeTruthy();
   });
 
   it("treats git-backed workspaces as existing even when template files are missing", async () => {

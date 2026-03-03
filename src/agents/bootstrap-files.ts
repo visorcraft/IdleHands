@@ -24,7 +24,7 @@ export function makeBootstrapWarn(params: {
   return (message: string) => params.warn?.(`${message} (sessionKey=${params.sessionLabel})`);
 }
 
-function isAgentIdentityEnabled(config?: IdleHandsConfig): boolean {
+export function isAgentIdentityEnabled(config?: IdleHandsConfig): boolean {
   return config?.agents?.defaults?.agentIdentity?.enabled ?? true;
 }
 

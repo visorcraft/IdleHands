@@ -11,6 +11,7 @@ import {
 } from "../agents/agent-scope.js";
 import { ensureAuthProfileStore } from "../agents/auth-profiles.js";
 import { clearSessionAuthProfileOverride } from "../agents/auth-profiles/session-override.js";
+import { isAgentIdentityEnabled } from "../agents/bootstrap-files.js";
 import { runCliAgent } from "../agents/cli-runner.js";
 import { getCliSessionId } from "../agents/cli-session.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
@@ -337,6 +338,7 @@ export async function agentCommand(
   const workspace = await ensureAgentWorkspace({
     dir: workspaceDirRaw,
     ensureBootstrapFiles: !agentCfg?.skipBootstrap,
+    agentIdentityEnabled: isAgentIdentityEnabled(cfg),
   });
   const workspaceDir = workspace.dir;
   let sessionEntry = resolvedSessionEntry;

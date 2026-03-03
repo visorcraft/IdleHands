@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import JSON5 from "json5";
+import { isAgentIdentityEnabled } from "../agents/bootstrap-files.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../agents/workspace.js";
 import { type IdleHandsConfig, createConfigIO, writeConfigFile } from "../config/config.js";
 import { formatConfigPath, logConfigUpdated } from "../config/logging.js";
@@ -66,6 +67,7 @@ export async function setupCommand(
   const ws = await ensureAgentWorkspace({
     dir: workspace,
     ensureBootstrapFiles: !next.agents?.defaults?.skipBootstrap,
+    agentIdentityEnabled: isAgentIdentityEnabled(next),
   });
   runtime.log(`Workspace OK: ${shortenHomePath(ws.dir)}`);
 
