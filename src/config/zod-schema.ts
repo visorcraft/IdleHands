@@ -133,6 +133,7 @@ const AntonPreflightSchema = z
   .object({
     enabled: z.boolean().optional(),
     requirementsReview: z.boolean().optional(),
+    codebaseSnapshot: z.boolean().optional(),
     discoveryTimeoutSec: z.number().int().positive().optional(),
     reviewTimeoutSec: z.number().int().positive().optional(),
     maxRetries: z.number().int().nonnegative().optional(),

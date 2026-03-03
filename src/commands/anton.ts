@@ -35,6 +35,9 @@ type AntonState = {
 };
 
 export type AntonProgressEvent =
+  | { phase: "codebase_analysis_start" }
+  | { phase: "codebase_analysis_complete"; contextFile: string; durationMs: number }
+  | { phase: "codebase_analysis_failed"; error: string }
   | { phase: "start"; taskFile: string; totalTasks: number }
   | { phase: "task_start"; index: number; total: number; task: string }
   | { phase: "discovery_start"; index: number; total: number; task: string }
@@ -70,6 +73,8 @@ export type AntonConfig = {
     reviewTimeoutSec?: number;
     /** Max retries for discovery/review before skipping. */
     maxRetries?: number;
+    /** Run codebase analysis before discovery to reduce redundant file reads. Default: true. */
+    codebaseSnapshot?: boolean;
   };
   /** Optional Anton-specific thinking defaults by execution phase. */
   thinking?: {
@@ -531,6 +536,156 @@ function buildImplementationRetryPrompt(
   ].join("\n");
 }
 
+// ─── Codebase Analysis ──────────────────────────────────────────────────────
+
+const CODEBASE_CONTEXT_FILENAME = "CODEBASE_CONTEXT.md";
+
+function buildCodebaseAnalysisPrompt(workspaceDir: string, outputFile: string): string {
+  return `You are analyzing a codebase to create a context document for other agents.
+
+## YOUR JOB
+Create a comprehensive codebase context file that other agents can use to understand
+the project without re-reading the same files repeatedly.
+
+## OUTPUT
+Write to: ${outputFile}
+
+## WHAT TO INCLUDE
+1. **Project Type & Framework** - Examine package.json, composer.json, Cargo.toml, etc.
+2. **Directory Structure** - Key folders only (src/, app/, tests/, etc.)
+3. **Testing Patterns** - Examine 2-3 existing test files to understand conventions:
+   - Test file naming and location
+   - Common imports and setup
+   - Assertion patterns
+   - How to run tests
+4. **Code Patterns** - Common patterns used in the codebase
+5. **Key Files Reference** - Map controllers/modules to their test files
+6. **API Routes** (if applicable) - Summary of endpoints
+
+## HOW TO DO IT
+1. Use exec to explore: \`find . -type f -name "*.php" | head -30\` (adjust extension as needed)
+2. Read 2-3 representative test files to understand patterns
+3. Read the main routes/config file
+4. Synthesize into a clean markdown document
+
+## CONSTRAINTS
+- Keep output under 1500 lines
+- Focus on PATTERNS, not exhaustive file listings
+- Include actual code snippets for test patterns (they help other agents write consistent tests)
+- Do NOT include node_modules, vendor, or other dependency directories
+
+After writing the file, return: {"status":"complete","filename":"${outputFile}"}`;
+}
+
+function buildDiscoveryPromptWithContext(
+  task: string,
+  taskFile: string,
+  planFilePath: string,
+  codebaseContext?: string,
+): string {
+  const contextSection = codebaseContext
+    ? `## CODEBASE CONTEXT (pre-analyzed)
+The following context was pre-computed to save you time. Use it instead of re-reading files.
+
+${codebaseContext}
+
+---
+
+`
+    : "";
+
+  const readInstruction = codebaseContext
+    ? "1. Use the context above — only read additional files if the context is missing specific information you need."
+    : "1. Use the read tool to examine relevant source files, configs, tests, and docs.";
+
+  return `You are a coding assistant running discovery for a task orchestrator.
+
+${contextSection}## YOUR JOB
+Analyze the codebase and write a detailed implementation plan to a file.
+You will NOT implement anything yourself — a separate agent will do that using your plan.
+
+## TASK
+From task file: ${taskFile}
+Task: ${task}
+
+## WHAT YOU MUST DO
+
+${readInstruction}
+2. Understand what currently exists and what needs to change.
+3. Use the write tool to create the plan file at: ${planFilePath}
+
+The plan file MUST contain:
+- The task description
+- What currently exists (files you read, current behavior)
+- What specifically needs to change and why
+- Step-by-step implementation instructions (specific enough that another agent can follow them)
+- Which files to modify or create, with the exact changes needed
+- How to verify the changes work (test commands, expected output)
+
+4. After writing the plan file, return ONLY this JSON:
+{"status":"incomplete","filename":"${planFilePath}"}
+
+If you are CERTAIN the task is already complete (you verified with tools), return:
+{"status":"complete","filename":""}
+
+## IMPORTANT
+- You MUST use tools (read, exec, write). Do not skip straight to returning JSON.
+- Do not modify any source files other than the plan file above.
+- The quality of your plan directly determines whether the task succeeds.`;
+}
+
+async function runCodebaseAnalysis(args: {
+  workspaceDir: string;
+  planDir: string;
+  timeout: string;
+  agent?: string;
+  to?: string;
+  runtime: RuntimeEnv;
+  deps: CliDeps;
+  notify: AntonProgressCallback;
+}): Promise<{ success: boolean; contextFile?: string; context?: string; error?: string }> {
+  const contextFile = path.join(args.planDir, CODEBASE_CONTEXT_FILENAME);
+  await ensurePlanDir(args.planDir);
+
+  const startTime = Date.now();
+  await args.notify({ phase: "codebase_analysis_start" });
+
+  const sessionId = `anton-codebase-analysis-${Date.now()}`;
+  try {
+    await runAgentTask({
+      message: buildCodebaseAnalysisPrompt(args.workspaceDir, contextFile),
+      sessionId,
+      timeout: args.timeout,
+      agent: args.agent,
+      to: args.to,
+      runtime: args.runtime,
+      deps: args.deps,
+      workspaceDir: args.workspaceDir,
+    });
+
+    // Check if the context file was created and has content
+    try {
+      const stat = await fs.stat(contextFile);
+      if (stat.isFile() && stat.size > 100) {
+        const context = await fs.readFile(contextFile, "utf8");
+        const durationMs = Date.now() - startTime;
+        await args.notify({ phase: "codebase_analysis_complete", contextFile, durationMs });
+        return { success: true, contextFile, context };
+      }
+    } catch {
+      // File does not exist or cannot be read
+    }
+
+    const error = "Codebase analysis did not produce a valid context file";
+    await args.notify({ phase: "codebase_analysis_failed", error });
+    return { success: false, error };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    await args.notify({ phase: "codebase_analysis_failed", error });
+    return { success: false, error };
+  }
+}
+
 // ─── Formatting ─────────────────────────────────────────────────────────────
 
 export function resolveAntonExecutionConfig(params: {
@@ -546,6 +701,7 @@ export function resolveAntonExecutionConfig(params: {
   directThinkLevel?: ThinkLevel;
   preflightPhase1ThinkLevel?: ThinkLevel;
   preflightPhase2ThinkLevel?: ThinkLevel;
+  codebaseSnapshot: boolean;
 } {
   const antonCfg = params.config ?? {};
   const preflightCfg = antonCfg.preflight ?? {};
@@ -567,6 +723,7 @@ export function resolveAntonExecutionConfig(params: {
   const directThinkLevel = thinkingCfg.direct;
   const preflightPhase1ThinkLevel = preflightThinkingCfg.phase1;
   const preflightPhase2ThinkLevel = preflightThinkingCfg.phase2;
+  const codebaseSnapshot = preflightCfg.codebaseSnapshot ?? true;
 
   return {
     mode,
@@ -578,6 +735,7 @@ export function resolveAntonExecutionConfig(params: {
     directThinkLevel,
     preflightPhase1ThinkLevel,
     preflightPhase2ThinkLevel,
+    codebaseSnapshot,
   };
 }
 
@@ -598,6 +756,12 @@ function formatDuration(ms: number): string {
 
 export function formatProgressMessage(event: AntonProgressEvent): string {
   switch (event.phase) {
+    case "codebase_analysis_start":
+      return "🔬 **Analyzing codebase** — building context for faster discovery...";
+    case "codebase_analysis_complete":
+      return `📚 Codebase context ready (\`${path.basename(event.contextFile)}\`, ${formatDuration(event.durationMs)})`;
+    case "codebase_analysis_failed":
+      return `⚠️ Codebase analysis failed: ${event.error}\n└ Falling back to per-task discovery`;
     case "start":
       return `🤚 **Anton activated**\n📄 Task file: \`${path.basename(event.taskFile)}\`\n📋 ${event.totalTasks} task${event.totalTasks === 1 ? "" : "s"} pending`;
     case "task_start":
@@ -962,6 +1126,7 @@ async function runDiscoveryPhase(args: {
   deps: CliDeps;
   notify: AntonProgressCallback;
   workspaceDir?: string;
+  codebaseContext?: string;
 }): Promise<{ status: "complete" | "plan_ready" | "failed"; planFile?: string; error?: string }> {
   const planFile = makePlanFilePath(args.planDir, args.taskNum);
   await ensurePlanDir(args.planDir);
@@ -991,7 +1156,14 @@ async function runDiscoveryPhase(args: {
       await ensureRepoCleanOrThrow(discoveryRepoCwd);
 
       const firstPass = await runAgentTask({
-        message: buildDiscoveryPrompt(formatTaskForPrompt(args.task), args.taskFile, planFile),
+        message: args.codebaseContext
+          ? buildDiscoveryPromptWithContext(
+              formatTaskForPrompt(args.task),
+              args.taskFile,
+              planFile,
+              args.codebaseContext,
+            )
+          : buildDiscoveryPrompt(formatTaskForPrompt(args.task), args.taskFile, planFile),
         sessionId,
         timeout: args.timeout,
         thinking: args.thinking,
@@ -1285,7 +1457,7 @@ export async function runAnton(args: {
   const cliThinkingOverride = normalizeThinkLevel(args.thinking);
   if (args.thinking && !cliThinkingOverride) {
     throw new Error(
-      'Invalid --thinking level. Use one of: off, minimal, low, medium, high, xhigh.',
+      "Invalid --thinking level. Use one of: off, minimal, low, medium, high, xhigh.",
     );
   }
   const mode = execution.mode;
@@ -1297,6 +1469,7 @@ export async function runAnton(args: {
   const directThinkLevel = cliThinkingOverride ?? execution.directThinkLevel;
   const preflightPhase1ThinkLevel = cliThinkingOverride ?? execution.preflightPhase1ThinkLevel;
   const preflightPhase2ThinkLevel = cliThinkingOverride ?? execution.preflightPhase2ThinkLevel;
+  const codebaseSnapshot = execution.codebaseSnapshot;
   const planDir = antonCfg.planDir
     ? path.resolve(antonCfg.planDir)
     : path.resolve(path.dirname(filePath), ".agents", "tasks");
@@ -1332,8 +1505,31 @@ export async function runAnton(args: {
 
   let completed = 0;
   let skipped = 0;
+  let codebaseContext: string | undefined;
 
   try {
+    // Run codebase analysis once before processing tasks (preflight mode only)
+    if (mode === "preflight" && codebaseSnapshot) {
+      const analysisResult = await runCodebaseAnalysis({
+        workspaceDir: repoCwd,
+        planDir,
+        timeout: String(discoveryTimeout),
+        agent: args.agent,
+        to: args.to,
+        runtime: args.runtime,
+        deps: args.deps,
+        notify,
+      });
+      if (analysisResult.success && analysisResult.context) {
+        codebaseContext = analysisResult.context;
+        args.runtime.log(
+          `[Anton] Codebase context loaded (${analysisResult.context.length} chars)`,
+        );
+      } else {
+        args.runtime.log("[Anton] Codebase analysis skipped or failed, continuing without context");
+      }
+    }
+
     for (let i = 0; i < pending.length; i++) {
       if (await shouldStop()) {
         args.runtime.log("Anton stop acknowledged.");
@@ -1403,6 +1599,7 @@ export async function runAnton(args: {
             deps: args.deps,
             notify,
             workspaceDir: args.workspaceDir,
+            codebaseContext,
           });
 
           if (discoveryResult.status === "complete") {
