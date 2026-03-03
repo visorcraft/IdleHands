@@ -2,6 +2,7 @@ import { execFile as execFileCb } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { normalizeThinkLevel, type ThinkLevel } from "../auto-reply/thinking.js";
 import type { CliDeps } from "../cli/deps.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { CONFIG_DIR } from "../utils.js";
@@ -69,6 +70,18 @@ export type AntonConfig = {
     reviewTimeoutSec?: number;
     /** Max retries for discovery/review before skipping. */
     maxRetries?: number;
+  };
+  /** Optional Anton-specific thinking defaults by execution phase. */
+  thinking?: {
+    /** Thinking level for direct mode. */
+    direct?: ThinkLevel;
+    /** Thinking levels for preflight mode. */
+    preflight?: {
+      /** Preflight phase 1 (discovery + review). */
+      phase1?: ThinkLevel;
+      /** Preflight phase 2 (implementation). */
+      phase2?: ThinkLevel;
+    };
   };
   /** Legacy top-level requirements review flag (backward compatibility). */
   requirementsReview?: boolean;
@@ -530,9 +543,14 @@ export function resolveAntonExecutionConfig(params: {
   discoveryTimeoutSec: number;
   reviewTimeoutSec: number;
   preflightMaxRetries: number;
+  directThinkLevel?: ThinkLevel;
+  preflightPhase1ThinkLevel?: ThinkLevel;
+  preflightPhase2ThinkLevel?: ThinkLevel;
 } {
   const antonCfg = params.config ?? {};
   const preflightCfg = antonCfg.preflight ?? {};
+  const thinkingCfg = antonCfg.thinking ?? {};
+  const preflightThinkingCfg = thinkingCfg.preflight ?? {};
 
   const requestedMode = params.modeOverride ?? antonCfg.mode ?? "direct";
   const mode =
@@ -546,6 +564,9 @@ export function resolveAntonExecutionConfig(params: {
   const reviewTimeoutSec =
     antonCfg.reviewTimeoutSec ?? preflightCfg.reviewTimeoutSec ?? taskTimeoutSec;
   const preflightMaxRetries = antonCfg.preflightMaxRetries ?? preflightCfg.maxRetries ?? 2;
+  const directThinkLevel = thinkingCfg.direct;
+  const preflightPhase1ThinkLevel = preflightThinkingCfg.phase1;
+  const preflightPhase2ThinkLevel = preflightThinkingCfg.phase2;
 
   return {
     mode,
@@ -554,6 +575,9 @@ export function resolveAntonExecutionConfig(params: {
     discoveryTimeoutSec,
     reviewTimeoutSec,
     preflightMaxRetries,
+    directThinkLevel,
+    preflightPhase1ThinkLevel,
+    preflightPhase2ThinkLevel,
   };
 }
 
@@ -663,6 +687,7 @@ async function runAgentTask(args: {
   message: string;
   sessionId: string;
   timeout: string;
+  thinking?: ThinkLevel;
   agent?: string;
   to?: string;
   runtime: RuntimeEnv;
@@ -679,6 +704,7 @@ async function runAgentTask(args: {
       agent: args.agent,
       to: args.to,
       sessionId: args.sessionId,
+      thinking: args.thinking,
       timeout: args.timeout,
       json: true,
       deliver: false,
@@ -928,6 +954,7 @@ async function runDiscoveryPhase(args: {
   taskFile: string;
   planDir: string;
   timeout: string;
+  thinking?: ThinkLevel;
   maxRetries: number;
   agent?: string;
   to?: string;
@@ -967,6 +994,7 @@ async function runDiscoveryPhase(args: {
         message: buildDiscoveryPrompt(formatTaskForPrompt(args.task), args.taskFile, planFile),
         sessionId,
         timeout: args.timeout,
+        thinking: args.thinking,
         agent: args.agent,
         to: args.to,
         runtime: args.runtime,
@@ -1047,6 +1075,7 @@ async function runDiscoveryPhase(args: {
         ),
         sessionId: repairSessionId,
         timeout: args.timeout,
+        thinking: args.thinking,
         agent: args.agent,
         to: args.to,
         runtime: args.runtime,
@@ -1131,6 +1160,7 @@ async function runReviewPhase(args: {
   total: number;
   planFile: string;
   timeout: string;
+  thinking?: ThinkLevel;
   agent?: string;
   to?: string;
   runtime: RuntimeEnv;
@@ -1164,6 +1194,7 @@ async function runReviewPhase(args: {
       message: buildReviewPrompt(args.planFile),
       sessionId,
       timeout: args.timeout,
+      thinking: args.thinking,
       agent: args.agent,
       to: args.to,
       runtime: args.runtime,
@@ -1198,6 +1229,8 @@ export async function runAnton(args: {
   taskFile: string;
   runtime: RuntimeEnv;
   deps: CliDeps;
+  /** Override thinking level for all Anton phases in this run. */
+  thinking?: string;
   agent?: string;
   to?: string;
   timeoutSec?: number;
@@ -1249,12 +1282,21 @@ export async function runAnton(args: {
     config: antonCfg,
     modeOverride: args.mode,
   });
+  const cliThinkingOverride = normalizeThinkLevel(args.thinking);
+  if (args.thinking && !cliThinkingOverride) {
+    throw new Error(
+      'Invalid --thinking level. Use one of: off, minimal, low, medium, high, xhigh.',
+    );
+  }
   const mode = execution.mode;
   const requirementsReview = execution.requirementsReview;
   const taskTimeout = execution.taskTimeoutSec;
   const discoveryTimeout = execution.discoveryTimeoutSec;
   const reviewTimeout = execution.reviewTimeoutSec;
   const preflightMaxRetries = execution.preflightMaxRetries;
+  const directThinkLevel = cliThinkingOverride ?? execution.directThinkLevel;
+  const preflightPhase1ThinkLevel = cliThinkingOverride ?? execution.preflightPhase1ThinkLevel;
+  const preflightPhase2ThinkLevel = cliThinkingOverride ?? execution.preflightPhase2ThinkLevel;
   const planDir = antonCfg.planDir
     ? path.resolve(antonCfg.planDir)
     : path.resolve(path.dirname(filePath), ".agents", "tasks");
@@ -1353,6 +1395,7 @@ export async function runAnton(args: {
             taskFile: filePath,
             planDir,
             timeout: String(discoveryTimeout),
+            thinking: preflightPhase1ThinkLevel,
             maxRetries: preflightMaxRetries,
             agent: args.agent,
             to: args.to,
@@ -1402,6 +1445,7 @@ export async function runAnton(args: {
                 total: pending.length,
                 planFile,
                 timeout: String(reviewTimeout),
+                thinking: preflightPhase1ThinkLevel,
                 agent: args.agent,
                 to: args.to,
                 runtime: args.runtime,
@@ -1441,6 +1485,8 @@ export async function runAnton(args: {
         const implPrompt = planFile
           ? buildImplementationPrompt(taskPromptText, planFile, { skipTests })
           : buildDirectTaskPrompt(taskPromptText, { skipTests });
+        const implementationThinkLevel =
+          mode === "preflight" ? preflightPhase2ThinkLevel : directThinkLevel;
 
         const gitCwd = args.workspaceDir ? path.resolve(args.workspaceDir) : path.dirname(filePath);
         const taskFileRel = path.relative(gitCwd, filePath).replace(/\\/g, "/");
@@ -1453,6 +1499,7 @@ export async function runAnton(args: {
           message: implPrompt,
           sessionId: implSessionId,
           timeout: defaultTimeout,
+          thinking: implementationThinkLevel,
           agent: args.agent,
           to: args.to,
           runtime: args.runtime,
@@ -1513,6 +1560,7 @@ export async function runAnton(args: {
               }),
               sessionId: retrySessionId,
               timeout: defaultTimeout,
+              thinking: implementationThinkLevel,
               agent: args.agent,
               to: args.to,
               runtime: args.runtime,

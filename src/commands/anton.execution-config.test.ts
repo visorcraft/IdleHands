@@ -37,6 +37,25 @@ describe("resolveAntonExecutionConfig", () => {
     expect(resolved.preflightMaxRetries).toBe(7);
   });
 
+  it("resolves Anton-specific thinking defaults per mode/phase", () => {
+    const resolved = resolveAntonExecutionConfig({
+      config: {
+        mode: "preflight",
+        thinking: {
+          direct: "off",
+          preflight: {
+            phase1: "minimal",
+            phase2: "high",
+          },
+        },
+      },
+    });
+
+    expect(resolved.directThinkLevel).toBe("off");
+    expect(resolved.preflightPhase1ThinkLevel).toBe("minimal");
+    expect(resolved.preflightPhase2ThinkLevel).toBe("high");
+  });
+
   it("supports legacy flat anton fields and prefers them over nested values", () => {
     const resolved = resolveAntonExecutionConfig({
       config: {

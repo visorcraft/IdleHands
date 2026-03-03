@@ -89,6 +89,10 @@ export function registerOrchestratorAntonCommands(program: Command) {
     .option("--agent <id>", "Agent id")
     .option("--to <e164>", "Session routing recipient")
     .option("--timeout <seconds>", "Per-task timeout in seconds")
+    .option(
+      "--thinking <level>",
+      "Thinking level override for all Anton phases: off | minimal | low | medium | high | xhigh",
+    )
     .option("--mode <mode>", "Execution mode: direct or preflight", undefined)
     .option("--workspace <dir>", "Workspace directory for spawned Anton agents")
     .option("--force", "Force lock takeover", false)
@@ -101,6 +105,7 @@ export function registerOrchestratorAntonCommands(program: Command) {
           taskFile,
           runtime: defaultRuntime,
           deps,
+          thinking: opts.thinking,
           agent: opts.agent,
           to: opts.to,
           timeoutSec,

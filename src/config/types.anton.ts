@@ -2,6 +2,8 @@
  * Anton configuration — autonomous task execution orchestrator.
  */
 
+export type AntonThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
 export type AntonPreflightConfig = {
   /** Enable two-phase preflight mode (discovery → review → implementation). */
   enabled?: boolean;
@@ -24,6 +26,18 @@ export type AntonConfig = {
   preflight?: AntonPreflightConfig;
   /** Mode: "direct" (immediate implementation) or "preflight" (discovery → implementation). */
   mode?: "direct" | "preflight";
+  /** Optional Anton-specific thinking defaults by execution phase. */
+  thinking?: {
+    /** Thinking level for direct mode runs. */
+    direct?: AntonThinkingLevel;
+    /** Thinking levels for preflight mode runs. */
+    preflight?: {
+      /** Preflight phase 1 (discovery + review). */
+      phase1?: AntonThinkingLevel;
+      /** Preflight phase 2 (implementation). */
+      phase2?: AntonThinkingLevel;
+    };
+  };
   /** Per-task timeout (seconds). Default: 1200. */
   taskTimeoutSec?: number;
   /** Total orchestrator timeout (seconds). Default: 7200. */
