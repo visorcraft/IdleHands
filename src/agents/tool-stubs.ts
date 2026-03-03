@@ -127,34 +127,56 @@ function extractParameterSummary(tool: AnyAgentTool): ParamSummary[] {
 /**
  * Build compact tool guidance for common coding tools.
  * This is optimized for local models with limited context.
+ * @param excludeTools - Tool names to exclude (e.g., tools with full schemas)
  */
-export function buildCompactToolGuidance(): string {
-  return `## Tools
+export function buildCompactToolGuidance(excludeTools?: string[]): string {
+  const excludeSet = new Set((excludeTools ?? []).map((name) => name.toLowerCase()));
 
-Call tools with JSON: {"tool": "name", "params": {...}}
-
-**exec** - Run shell commands
+  const toolDefs: Array<{ name: string; def: string }> = [
+    {
+      name: "exec",
+      def: `**exec** - Run shell commands
   command (required): Shell command to execute
   workdir: Working directory
   timeout: Timeout in seconds
-  background: Run in background (true/false)
-
-**read** - Read file contents  
+  background: Run in background (true/false)`,
+    },
+    {
+      name: "read",
+      def: `**read** - Read file contents  
   path (required): File path to read
   offset: Start line (1-indexed)
-  limit: Max lines to read
-
-**write** - Create/overwrite files
+  limit: Max lines to read`,
+    },
+    {
+      name: "write",
+      def: `**write** - Create/overwrite files
   path (required): File path to write
-  content (required): Content to write
-
-**edit** - Precise text replacement
+  content (required): Content to write`,
+    },
+    {
+      name: "edit",
+      def: `**edit** - Precise text replacement
   path (required): File path to edit
   old_string (required): Exact text to find
-  new_string (required): Replacement text
-
-**process** - Manage background processes
+  new_string (required): Replacement text`,
+    },
+    {
+      name: "process",
+      def: `**process** - Manage background processes
   action (required): list|poll|kill|log
   sessionId: Session ID for poll/kill/log
-  timeout: Poll timeout in ms`;
+  timeout: Poll timeout in ms`,
+    },
+  ];
+
+  const includedTools = toolDefs.filter(({ name }) => !excludeSet.has(name)).map(({ def }) => def);
+
+  if (includedTools.length === 0) {
+    return "";
+  }
+
+  return `## Tools
+
+${includedTools.join("\n\n")}`;
 }

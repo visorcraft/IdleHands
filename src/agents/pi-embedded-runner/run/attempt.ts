@@ -460,7 +460,7 @@ export async function runEmbeddedAttempt(
     const toolStubGuidance = stubModeConfig?.enabled
       ? (stubModeConfig.guidance ??
         (stubModeConfig.compactGuidance
-          ? buildCompactToolGuidance()
+          ? buildCompactToolGuidance(stubModeConfig.fullSchemaTools)
           : generateToolStubGuidance(toolsRaw)))
       : undefined;
     const allowedToolNames = collectAllowedToolNames({
