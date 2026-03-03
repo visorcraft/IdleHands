@@ -10,13 +10,13 @@ import { subscribeEmbeddedPiSession } from "./pi-embedded-subscribe.js";
 function createBlockReplyHarness(blockReplyBreak: "message_end" | "text_end") {
   const { session, emit } = createStubSessionHarness();
   const onBlockReply = vi.fn();
-  subscribeEmbeddedPiSession({
+  const subscription = subscribeEmbeddedPiSession({
     session,
     runId: "run",
     onBlockReply,
     blockReplyBreak,
   });
-  return { emit, onBlockReply };
+  return { emit, onBlockReply, subscription };
 }
 
 async function emitMessageToolLifecycle(params: {
@@ -57,6 +57,29 @@ function emitAssistantTextEndBlock(emit: (evt: unknown) => void, text: string) {
 }
 
 describe("subscribeEmbeddedPiSession", () => {
+  it("suppresses tool-planning assistant text when message includes tool calls", () => {
+    const { emit, onBlockReply, subscription } = createBlockReplyHarness("message_end");
+
+    const assistantMessage = {
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [
+        { type: "text", text: "Let me check the repo quickly." },
+        {
+          type: "toolCall",
+          id: "toolu_1",
+          name: "read",
+          arguments: { path: "README.md" },
+        },
+      ],
+    } as AssistantMessage;
+
+    emit({ type: "message_end", message: assistantMessage });
+
+    expect(onBlockReply).not.toHaveBeenCalled();
+    expect(subscription.assistantTexts).toEqual([]);
+  });
+
   it("suppresses message_end block replies when the message tool already sent", async () => {
     const { emit, onBlockReply } = createBlockReplyHarness("message_end");
 
