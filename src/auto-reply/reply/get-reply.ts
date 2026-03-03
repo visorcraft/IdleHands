@@ -4,6 +4,7 @@ import {
   resolveSessionAgentId,
   resolveAgentSkillsFilter,
 } from "../../agents/agent-scope.js";
+import { isAgentIdentityEnabled } from "../../agents/bootstrap-files.js";
 import { resolveModelRefFromString } from "../../agents/model-selection.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../../agents/workspace.js";
@@ -104,6 +105,7 @@ export async function getReplyFromConfig(
   const workspace = await ensureAgentWorkspace({
     dir: workspaceDirRaw,
     ensureBootstrapFiles: !agentCfg?.skipBootstrap && !isFastTestEnv,
+    agentIdentityEnabled: isAgentIdentityEnabled(cfg),
   });
   let workspaceDir = workspace.dir;
   const agentDir = resolveAgentDir(cfg, agentId);
