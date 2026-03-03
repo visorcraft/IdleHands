@@ -120,6 +120,15 @@ const MemorySchema = z
   .strict()
   .optional();
 
+const AntonThinkingLevelSchema = z.union([
+  z.literal("off"),
+  z.literal("minimal"),
+  z.literal("low"),
+  z.literal("medium"),
+  z.literal("high"),
+  z.literal("xhigh"),
+]);
+
 const AntonPreflightSchema = z
   .object({
     enabled: z.boolean().optional(),
@@ -133,9 +142,24 @@ const AntonPreflightSchema = z
   .strict()
   .optional();
 
+const AntonThinkingSchema = z
+  .object({
+    direct: AntonThinkingLevelSchema.optional(),
+    preflight: z
+      .object({
+        phase1: AntonThinkingLevelSchema.optional(),
+        phase2: AntonThinkingLevelSchema.optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .optional();
+
 const AntonSchema = z
   .object({
     mode: z.union([z.literal("direct"), z.literal("preflight")]).optional(),
+    thinking: AntonThinkingSchema,
     preflight: AntonPreflightSchema,
     taskTimeoutSec: z.number().int().positive().optional(),
     totalTimeoutSec: z.number().int().positive().optional(),
