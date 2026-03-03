@@ -2,6 +2,14 @@
 
 Docs: https://docs.idlehands.ai
 
+## 4.4.3
+
+### Changes
+
+- Add `agents.defaults.agentIdentity.enabled` config toggle (default `true`) to control identity bootstrap context.
+- When disabled, stop injecting identity bundle files (`SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`) into prompt context.
+- When disabled, stop auto-creating those identity bundle files during workspace bootstrap.
+
 ## 4.2.0
 
 ### Changes
