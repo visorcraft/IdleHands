@@ -566,6 +566,25 @@ export async function loadWorkspaceBootstrapFiles(dir: string): Promise<Workspac
   return result;
 }
 
+const IDENTITY_BOOTSTRAP_FILENAMES = new Set<WorkspaceBootstrapFileName>([
+  DEFAULT_SOUL_FILENAME,
+  DEFAULT_TOOLS_FILENAME,
+  DEFAULT_IDENTITY_FILENAME,
+  DEFAULT_USER_FILENAME,
+  DEFAULT_HEARTBEAT_FILENAME,
+  DEFAULT_BOOTSTRAP_FILENAME,
+]);
+
+export function filterBootstrapFilesForIdentityMode(
+  files: WorkspaceBootstrapFile[],
+  identityEnabled: boolean,
+): WorkspaceBootstrapFile[] {
+  if (identityEnabled) {
+    return files;
+  }
+  return files.filter((file) => !IDENTITY_BOOTSTRAP_FILENAMES.has(file.name));
+}
+
 const MINIMAL_BOOTSTRAP_ALLOWLIST = new Set([
   DEFAULT_AGENTS_FILENAME,
   DEFAULT_TOOLS_FILENAME,
