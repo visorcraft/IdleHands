@@ -154,6 +154,11 @@ export type SessionMaintenanceConfig = {
    */
   resetArchiveRetention?: string | number | false;
   /**
+   * Delete session transcripts immediately on /new or /reset instead of archiving.
+   * Default: false (archive).
+   */
+  deleteOnReset?: boolean;
+  /**
    * Optional per-agent sessions-directory disk budget (e.g. "500mb").
    * When exceeded, warn (mode=warn) or enforce oldest-first cleanup (mode=enforce).
    */

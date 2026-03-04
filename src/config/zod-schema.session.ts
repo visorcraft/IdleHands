@@ -78,6 +78,7 @@ export const SessionSchema = z
         maxEntries: z.number().int().positive().optional(),
         rotateBytes: z.union([z.string(), z.number()]).optional(),
         resetArchiveRetention: z.union([z.string(), z.number(), z.literal(false)]).optional(),
+        deleteOnReset: z.boolean().optional(),
         maxDiskBytes: z.union([z.string(), z.number()]).optional(),
         highWaterBytes: z.union([z.string(), z.number()]).optional(),
       })

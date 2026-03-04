@@ -226,6 +226,49 @@ export function archiveSessionTranscripts(opts: {
   return archived;
 }
 
+/**
+ * Delete session transcript files instead of archiving.
+ * Used when session.maintenance.deleteOnReset is true.
+ * Best-effort: silently skips files that don't exist or fail to delete.
+ */
+export function deleteSessionTranscripts(opts: {
+  sessionId: string;
+  storePath: string | undefined;
+  sessionFile?: string;
+  agentId?: string;
+  restrictToStoreDir?: boolean;
+}): string[] {
+  const deleted: string[] = [];
+  const storeDir =
+    opts.restrictToStoreDir && opts.storePath
+      ? canonicalizePathForComparison(path.dirname(opts.storePath))
+      : null;
+  for (const candidate of resolveSessionTranscriptCandidates(
+    opts.sessionId,
+    opts.storePath,
+    opts.sessionFile,
+    opts.agentId,
+  )) {
+    const candidatePath = canonicalizePathForComparison(candidate);
+    if (storeDir) {
+      const relative = path.relative(storeDir, candidatePath);
+      if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+        continue;
+      }
+    }
+    if (!fs.existsSync(candidatePath)) {
+      continue;
+    }
+    try {
+      fs.unlinkSync(candidatePath);
+      deleted.push(candidatePath);
+    } catch {
+      // Best-effort.
+    }
+  }
+  return deleted;
+}
+
 export async function cleanupArchivedSessionTranscripts(opts: {
   directories: string[];
   olderThanMs: number;

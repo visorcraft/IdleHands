@@ -26,7 +26,10 @@ import {
   updateSessionStore,
 } from "../../config/sessions.js";
 import type { TtsAutoMode } from "../../config/types.tts.js";
-import { archiveSessionTranscripts } from "../../gateway/session-utils.fs.js";
+import {
+  archiveSessionTranscripts,
+  deleteSessionTranscripts,
+} from "../../gateway/session-utils.fs.js";
 import { deliverSessionMaintenanceWarning } from "../../infra/session-maintenance-warning.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
@@ -490,17 +493,26 @@ export async function initSessionState(params: {
     },
   );
 
-  // Archive old transcript so it doesn't accumulate on disk (#14869).
+  // Delete or archive old transcript so it doesn't accumulate on disk (#14869).
   if (previousSessionEntry?.sessionId) {
-    archiveSessionTranscripts({
-      sessionId: previousSessionEntry.sessionId,
-      storePath,
-      sessionFile: previousSessionEntry.sessionFile,
-      agentId,
-      reason: "reset",
-    });
+    const deleteOnReset = cfg.session?.maintenance?.deleteOnReset ?? false;
+    if (deleteOnReset) {
+      deleteSessionTranscripts({
+        sessionId: previousSessionEntry.sessionId,
+        storePath,
+        sessionFile: previousSessionEntry.sessionFile,
+        agentId,
+      });
+    } else {
+      archiveSessionTranscripts({
+        sessionId: previousSessionEntry.sessionId,
+        storePath,
+        sessionFile: previousSessionEntry.sessionFile,
+        agentId,
+        reason: "reset",
+      });
+    }
   }
-
   const sessionCtx: TemplateContext = {
     ...ctx,
     // Keep BodyStripped aligned with Body (best default for agent prompts).
