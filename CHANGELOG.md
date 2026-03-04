@@ -2,6 +2,12 @@
 
 Docs: https://docs.idlehands.ai
 
+## 4.4.4
+
+### Changes
+
+- Version bump to 4.4.4.
+
 ## 4.4.3
 
 ### Changes
