@@ -54,7 +54,7 @@ export function createSessionsSpawnTool(opts?: {
       const cwd = readStringParam(params, "cwd");
       const mode = params.mode === "run" || params.mode === "session" ? params.mode : undefined;
       const cleanup =
-        params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "keep";
+        params.cleanup === "keep" || params.cleanup === "delete" ? params.cleanup : "delete";
       // Back-compat: older callers used timeoutSeconds for this tool.
       const timeoutSecondsCandidate =
         typeof params.runTimeoutSeconds === "number"
