@@ -1,6 +1,23 @@
-# 🤚 Idle Hands
+<h1 align="center">Idle Hands</h1>
 
-> _"The devil finds work for idle hands."_
+<p align="center">
+  <b>An autonomous AI coding agent built for running local LLMs.</b>
+  <br />
+  Connect your self-hosted model to your codebase and let it loose — reading files, writing code, running tests, executing commands — all without touching the cloud.
+  <br />
+  Local-first · agent autonomy · Telegram · Discord · CLI · TUI
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/npm-%40visorcraft%2Fidlehands-CB3837?logo=npm&logoColor=white" alt="npm: @visorcraft/idlehands" />
+  <img src="https://img.shields.io/badge/local%20LLMs-llama.cpp%20%C2%B7%20Ollama%20%C2%B7%20LM%20Studio-1f6feb" alt="Local LLMs" />
+  <img src="https://img.shields.io/badge/surfaces-Telegram%20%C2%B7%20Discord%20%C2%B7%20CLI%20%C2%B7%20TUI-5865F2" alt="Surfaces" />
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT" />
+</p>
+
+---
+
+## Overview
 
 **Idle Hands** is an autonomous AI coding agent built for running **local LLMs**. It connects your self-hosted model to your codebase and lets it loose — reading files, writing code, running tests, executing commands — all without touching the cloud.
 
@@ -8,7 +25,7 @@ Named after the 1999 cult classic where Anton's possessed hand develops a mind o
 
 ---
 
-## ✋ What Makes Idle Hands Different
+## What makes Idle Hands different
 
 **Your model. Your hardware. Your rules.**
 
@@ -21,11 +38,11 @@ Idle Hands is purpose-built for local inference. No API keys to OpenAI. No token
 
 ---
 
-## 🔪 /anton — The Possessed Hand
+## /anton — the possessed hand
 
 This is the flagship feature. Inspired by the movie, `/anton` is what happens when you chop the hand off and let it go.
 
-### How It Works
+### How it works
 
 You write a task document — a simple markdown checklist:
 
@@ -63,7 +80,7 @@ Then invoke it:
 
 The task document is the **single source of truth**. You can check it mid-run to see exactly where things stand. Every `[x]` was earned by a real agent execution with real test results.
 
-### Live Progress
+### Live progress
 
 Anton pushes real-time updates to whatever surface you invoked it from:
 
@@ -87,11 +104,11 @@ Anton pushes real-time updates to whatever surface you invoked it from:
 ⏱️ Duration: 42m 15s
 ```
 
-### Two Execution Modes
+### Two execution modes
 
 Anton supports two modes, configurable per-deployment:
 
-#### Direct Mode (default)
+#### Direct mode (default)
 
 Single agent per task. Fast, simple, good for straightforward changes:
 
@@ -99,7 +116,7 @@ Single agent per task. Fast, simple, good for straightforward changes:
 Task → Agent → Done
 ```
 
-#### Preflight Mode
+#### Preflight mode
 
 Two-phase pipeline inspired by how senior engineers work — **plan first, then execute**:
 
@@ -139,7 +156,7 @@ Or override per-run from CLI:
 idlehands anton run TASKS.md --mode preflight
 ```
 
-#### Preflight Progress in Chat
+#### Preflight progress in chat
 
 When running in preflight mode, you get granular updates for every phase:
 
@@ -156,7 +173,7 @@ When running in preflight mode, you get granular updates for every phase:
 ✅ Task 1/3 complete: Refactor session manager
 ```
 
-### Why This Matters
+### Why this matters
 
 Most AI coding tools give you a chat window and hope for the best. `/anton` gives you:
 
@@ -180,7 +197,7 @@ Most AI coding tools give you a chat window and hope for the best. `/anton` give
 
 ---
 
-## 🎛️ Runtime Orchestrator
+## Runtime orchestrator
 
 For those running multiple models across multiple machines, the **Runtime Orchestrator** manages your inference infrastructure:
 
@@ -208,7 +225,7 @@ Supports:
 
 ---
 
-## ⚡ Quick Start
+## Quick start
 
 ### 1. Install
 
@@ -256,7 +273,7 @@ Or go autonomous with `/anton`:
 
 ---
 
-## 🛠️ Local LLM Setup (Recommended)
+## Local LLM setup (recommended)
 
 Idle Hands works best with `llama-server` from the [visorcraft/llama.cpp](https://github.com/visorcraft/llama.cpp) fork, which includes fixes for hybrid Mamba-Transformer models.
 
@@ -294,7 +311,7 @@ See [`docs/SETUP_LOCAL_QWEN3_CODER_NEXT.md`](docs/SETUP_LOCAL_QWEN3_CODER_NEXT.m
 
 ---
 
-## 💬 Bot Commands (All Surfaces)
+## Bot commands (all surfaces)
 
 These work in **Telegram, Discord, TUI**, and every other connected chat surface:
 
@@ -315,7 +332,7 @@ These work in **Telegram, Discord, TUI**, and every other connected chat surface
 
 ---
 
-## 📂 Project Structure
+## Project structure
 
 ```
 src/
@@ -336,7 +353,7 @@ src/
 
 ---
 
-## 🔒 Security
+## Security
 
 - **No telemetry**. No analytics. No call-home behavior.
 - **No cloud dependency**. Your model, your data, your network.
@@ -346,15 +363,8 @@ src/
 
 ---
 
-## 📜 Attribution
+## License
 
-Idle Hands is a fork of [OpenClaw](https://github.com/openclaw/openclaw), licensed under the MIT License. See [LICENSE](LICENSE) for details.
+Idle Hands is licensed under the **MIT License** — see [`LICENSE`](LICENSE) for the full text.
 
----
-
-## 🎬
-
-> _"I'm not possessed! My hand is!"_
-> — Anton Tobias, _Idle Hands_ (1999)
-
-Your hand. Your model. Let it loose. 🤚
+© 2025 Peter Steinberger. Idle Hands is a fork of [OpenClaw](https://github.com/openclaw/openclaw); the original copyright and MIT terms are retained.
