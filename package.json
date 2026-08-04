@@ -249,7 +249,17 @@
       "qs": "6.14.2",
       "@sinclair/typebox": "0.34.48",
       "tar": "7.5.9",
-      "tough-cookie": "4.1.3"
+      "tough-cookie": "4.1.3",
+      "keyv": "5.6.0",
+      "@cacheable/utils": "2.4.0",
+      "@cacheable/memory": "2.0.8",
+      "@cacheable/node-cache": "1.7.6",
+      "@cacheable/net": "2.0.0",
+      "flat-cache": "4.0.1",
+      "file-entry-cache": "8.0.0",
+      "cacheable-request": "10.2.14",
+      "cacheable": "1.8.0",
+      "cache-manager": "5.7.6"
     },
     "onlyBuiltDependencies": [
       "@lydell/node-pty",
